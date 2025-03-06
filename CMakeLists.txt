@@ -38,3 +38,15 @@ else()
     target_compile_definitions(kaleido PRIVATE -DNDEBUG) # disable assert
     message(STATUS "Release mode enabled: assert is disabled.")
 endif()
+
+# copy assets
+set(SHADERS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/shaders")
+set(SHADERS_DEST_DIR "${CMAKE_BINARY_DIR}/shaders")
+
+add_custom_target(copy_shaders ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${SHADERS_SOURCE_DIR} ${SHADERS_DEST_DIR}
+    COMMENT "Copying shaders folder to build directory at runtime"
+)
+
+add_dependencies(kaleido copy_shaders)
