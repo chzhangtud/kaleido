@@ -17,13 +17,17 @@ endif()
 # add external libs
 add_subdirectory(external/glfw)
 
-add_executable(kaleido src/kaleido.cpp)
+# find all glsl files and add them to a folder
+file(GLOB GLSL_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.glsl")
+source_group("shaders" FILES ${GLSL_FILES})
+add_executable(kaleido src/kaleido.cpp ${GLSL_FILES})
 
 target_include_directories(kaleido PRIVATE ${VULKAN_INCLUDE_DIR})
 
 if (WIN32)
     target_compile_definitions(kaleido PRIVATE VK_USE_PLATFORM_WIN32_KHR
-                                                GLFW_EXPOSE_NATIVE_WIN32)
+                                                GLFW_EXPOSE_NATIVE_WIN32
+                                                NOMINMAX)
     message(STATUS "Windows platform detected: VK_USE_PLATFORM_WIN32_KHR defined.")
 else()
     # unsupported platform
@@ -40,7 +44,7 @@ else()
 endif()
 
 # copy assets
-set(SHADERS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/shaders")
+set(SHADERS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/shaders")
 set(SHADERS_DEST_DIR "${CMAKE_BINARY_DIR}/shaders")
 
 add_custom_target(copy_shaders ALL
