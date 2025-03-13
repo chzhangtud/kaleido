@@ -68,9 +68,9 @@ VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 	void* pUserData)
 {
 	const char* type =
-		(flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) ? "ERROR" :
-		(flags & (VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT)) ? "WARNING" :
-		"INFO";
+		(flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) ? "\33[31mERROR\33[0m" :
+		(flags & (VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT)) ? "\033[33mWARNING\33[0m" :
+		"\33[34mINFO\33[0m";
 
 	char message[4096];
 	snprintf(message, ARRAYSIZE(message), "%s: %s\n", type, pMessage);
@@ -80,7 +80,9 @@ VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 #ifdef _WIN32
 	OutputDebugStringA(message);
 #endif
-	if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
+
+	int xxx = flags & VK_DEBUG_REPORT_ERROR_BIT_EXT;
+	if (xxx)
 	{
 		assert(!"Validation error encountered!");
 	}
@@ -167,7 +169,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	{
 		VkPhysicalDeviceProperties props;
 		vkGetPhysicalDeviceProperties(result, &props);
-		printf("Selected GPU %s.", props.deviceName);
+		printf("Selected GPU %s.\n", props.deviceName);
 	}
 	else
 	{
@@ -188,20 +190,32 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	const char* extensions[] =
 	{
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME
+		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+		VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
+		VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
 	};
 
-	VkPhysicalDeviceFeatures features = {};
-	features.vertexPipelineStoresAndAtomics = VK_TRUE; // TODO: we aren't using this yet.
+	VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+	features.features.vertexPipelineStoresAndAtomics = VK_TRUE; // TODO: we aren't using this yet.
+
+	VkPhysicalDevice16BitStorageFeaturesKHR feature16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
+	feature16.storageBuffer16BitAccess = VK_TRUE;
+
+	VkPhysicalDeviceVulkan12Features feature12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+	feature12.shaderInt8 = VK_TRUE;
+	feature12.uniformAndStorageBuffer8BitAccess = VK_TRUE;
+
 
 	VkDeviceCreateInfo createInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	createInfo.queueCreateInfoCount = 1;
 	createInfo.pQueueCreateInfos = &queueInfo;
 
 	createInfo.ppEnabledExtensionNames = extensions;
-	createInfo.enabledExtensionCount = sizeof(extensions) / sizeof(extensions[0]);
+	createInfo.enabledExtensionCount = ARRAYSIZE(extensions);
 
-	createInfo.pEnabledFeatures = &features;
+	createInfo.pNext = &features;
+	features.pNext = &feature16;
+	feature16.pNext = &feature12;
 
 	VkDevice device = 0;
 	VK_CHECK(vkCreateDevice(physicalDevice, &createInfo, 0, &device));
@@ -394,7 +408,7 @@ VkShaderModule loadShader(VkDevice device, const char* path)
 	return shaderModule;
 }
 
-VkPipelineLayout createPipelineLayout(VkDevice device)
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device)
 {
 	VkDescriptorSetLayoutBinding setBindings[1] = {};
 	setBindings[0].binding = 0;
@@ -407,19 +421,20 @@ VkPipelineLayout createPipelineLayout(VkDevice device)
 	setCreateInfo.bindingCount = ARRAYSIZE(setBindings);
 	setCreateInfo.pBindings = setBindings;
 
-
 	VkDescriptorSetLayout setLayout = 0;
 	VK_CHECK(vkCreateDescriptorSetLayout(device, &setCreateInfo, 0, &setLayout));
+	
+	return setLayout;
+}
 
+VkPipelineLayout createPipelineLayout(VkDevice device, const VkDescriptorSetLayout descriptorSetLayout)
+{
 	VkPipelineLayoutCreateInfo createInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
 	createInfo.setLayoutCount = 1;
-	createInfo.pSetLayouts = &setLayout;
+	createInfo.pSetLayouts = &descriptorSetLayout;
 
 	VkPipelineLayout layout = 0;
 	VK_CHECK(vkCreatePipelineLayout(device, &createInfo, 0, &layout));
-
-	// TODO: is this safe?
-	vkDestroyDescriptorSetLayout(device, setLayout, 0);
 
 	return layout;
 }
@@ -607,7 +622,7 @@ void resizeSwapchainIfNecessary(Swapchain& result, VkPhysicalDevice physicalDevi
 struct Vertex
 {
 	float vx, vy, vz;
-	float nx, ny, nz;
+	uint8_t nx, ny, nz, nw;
 	float tu, tv;
 };
 
@@ -635,12 +650,16 @@ bool loadMesh(Mesh& result, const char* path)
 		int vti = file.f[i * 3 + 1];
 		int vni = file.f[i * 3 + 2];
 
+		float nx = vni < 0 ? 0.f : file.vn[vni * 3 + 0];
+		float ny = vni < 0 ? 0.f : file.vn[vni * 3 + 1];
+		float nz = vni < 0 ? 1.f : file.vn[vni * 3 + 2];
+
 		v.vx = file.v[vi * 3 + 0];
 		v.vy = file.v[vi * 3 + 1];
 		v.vz = file.v[vi * 3 + 2];
-		v.nx = vni < 0 ? 0.f : file.vn[vni * 3 + 0];
-		v.ny = vni < 0 ? 0.f : file.vn[vni * 3 + 1];
-		v.nz = vni < 0 ? 1.f : file.vn[vni * 3 + 2];
+		v.nx = uint8_t(nx * 127.f + 127.f); // TODO: fix rounding
+		v.ny = uint8_t(ny * 127.f + 127.f); // TODO: fix rounding
+		v.nz = uint8_t(nz * 127.f + 127.f); // TODO: fix rounding
 		v.tu = vti < 0 ? 0.f : file.vt[vti * 3 + 0];
 		v.tv = vti < 0 ? 0.f : file.vt[vti * 3 + 1];
 	}
@@ -796,7 +815,9 @@ int main(int argc, const char** argv)
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 
-	VkPipelineLayout triangleLayout = createPipelineLayout(device);
+	VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(device);
+
+	VkPipelineLayout triangleLayout = createPipelineLayout(device, descriptorSetLayout);
 	assert(triangleLayout);
 
 	VkPipeline trianglePipeline = createGraphicsPipeline(device, pipelineCache, renderPass, triangleVS, triangleFS, triangleLayout);
@@ -823,7 +844,7 @@ int main(int argc, const char** argv)
 	bool rcm = loadMesh(mesh, argv[1]);
 
 	Buffer vb = {};
-	createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+	createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 	Buffer ib = {};
 	createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
@@ -932,6 +953,7 @@ int main(int argc, const char** argv)
         
 	vkDestroyPipeline(device, trianglePipeline, 0);
 	vkDestroyPipelineLayout(device, triangleLayout, 0);
+	vkDestroyDescriptorSetLayout(device, descriptorSetLayout, 0);
 	vkDestroyShaderModule(device, triangleVS, 0);
 	vkDestroyShaderModule(device, triangleFS, 0);
 	vkDestroyRenderPass(device, renderPass, 0);
@@ -950,4 +972,4 @@ int main(int argc, const char** argv)
     return 0;
 }
 
-// video 4, 1:36:27
+// video 4, 2:03:28 
