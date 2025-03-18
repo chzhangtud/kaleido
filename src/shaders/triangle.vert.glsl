@@ -26,7 +26,7 @@ void main()
     vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
     vec2 texcoord = vec2(v.tu, v.tv);
 
-    gl_Position = vec4(position * 0.2 + 0.5, 1.0);
+    gl_Position = vec4(position * 0.5 + vec3(0.0, 0.0, 0.5), 1.0);
 
     color = vec4(normal * 0.5 + vec3(0.5), 1.0);
 }

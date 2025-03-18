@@ -12,12 +12,22 @@
 #include <objparser.h>
 #include <meshoptimizer.h>
 
+#define RTX 1
+
 #define VK_CHECK(call)                  \
     do                                  \
     {                                   \
         VkResult result_ = call;        \
         assert(result_ == VK_SUCCESS);  \
     } while(0)
+
+#define LOGI(str) ("\033[34m[INFO]: \033[0m" str)
+#define LOGW(str) ("\033[33m[WARNING]: \033[0m" str)
+#define LOGE(str) ("\033[31m[ERROR]: \033[0m" str)
+
+#define INFO_HEADER LOGI("")
+#define WARNING_HEADER LOGW("")
+#define ERROR_HEADER LOGE("")
 
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(array) (sizeof(array) / sizeof(array[0]))
@@ -68,9 +78,9 @@ VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 	void* pUserData)
 {
 	const char* type =
-		(flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) ? "\33[31mERROR\33[0m" :
-		(flags & (VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT)) ? "\033[33mWARNING\33[0m" :
-		"\33[34mINFO\33[0m";
+		(flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) ? ERROR_HEADER :
+		(flags & (VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT)) ? WARNING_HEADER :
+		INFO_HEADER;
 
 	char message[4096];
 	snprintf(message, ARRAYSIZE(message), "%s: %s\n", type, pMessage);
@@ -142,7 +152,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 		VkPhysicalDeviceProperties props;
 		vkGetPhysicalDeviceProperties(physicalDevices[i], &props);
 
-		printf("GPU%d: %s\n", i, props.deviceName);
+		printf(LOGI("GPU%d: %s\n"), i, props.deviceName);
 
 		uint32_t familyIndex = getGraphicsFamilyIndex(physicalDevices[i]);
 
@@ -150,6 +160,9 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 			continue;
 	
 		if (!supportsPresentation(physicalDevices[i], familyIndex))
+			continue;
+
+		if (props.apiVersion < VK_API_VERSION_1_4)
 			continue;
 
 		if (!discrete && props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
@@ -169,11 +182,11 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	{
 		VkPhysicalDeviceProperties props;
 		vkGetPhysicalDeviceProperties(result, &props);
-		printf("Selected GPU %s.\n", props.deviceName);
+		printf(LOGI("Selected GPU %s.\n"), props.deviceName);
 	}
 	else
 	{
-		printf("ERROR: No GPUs found!\n");
+		printf(LOGE("No GPUs found!\n"));
 	}
 	return result;
 }
@@ -193,18 +206,29 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 		VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
 		VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
+#if RTX
+		VK_EXT_MESH_SHADER_EXTENSION_NAME,
+#endif
 	};
 
 	VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 	features.features.vertexPipelineStoresAndAtomics = VK_TRUE; // TODO: we aren't using this yet.
 
-	VkPhysicalDevice16BitStorageFeaturesKHR feature16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
-	feature16.storageBuffer16BitAccess = VK_TRUE;
+	VkPhysicalDevice16BitStorageFeaturesKHR features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
+	features16.storageBuffer16BitAccess = VK_TRUE;
 
-	VkPhysicalDeviceVulkan12Features feature12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-	feature12.shaderInt8 = VK_TRUE;
-	feature12.uniformAndStorageBuffer8BitAccess = VK_TRUE;
+	VkPhysicalDeviceVulkan12Features features12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+	features12.shaderInt8 = VK_TRUE;
+	features12.uniformAndStorageBuffer8BitAccess = VK_TRUE;
+	features12.storageBuffer8BitAccess = VK_TRUE;
 
+	VkPhysicalDeviceMaintenance4Features featuresMaintenance4 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES };
+	featuresMaintenance4.maintenance4 = VK_TRUE;
+
+#if RTX
+	VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
+	featuresMesh.meshShader = VK_TRUE;
+#endif
 
 	VkDeviceCreateInfo createInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	createInfo.queueCreateInfoCount = 1;
@@ -214,9 +238,12 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	createInfo.enabledExtensionCount = ARRAYSIZE(extensions);
 
 	createInfo.pNext = &features;
-	features.pNext = &feature16;
-	feature16.pNext = &feature12;
-
+	features.pNext = &features16;
+	features16.pNext = &features12;
+	features12.pNext = &featuresMaintenance4;
+#if RTX
+	featuresMaintenance4.pNext = &featuresMesh;
+#endif
 	VkDevice device = 0;
 	VK_CHECK(vkCreateDevice(physicalDevice, &createInfo, 0, &device));
 
@@ -410,11 +437,23 @@ VkShaderModule loadShader(VkDevice device, const char* path)
 
 VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device)
 {
+#if RTX
+	VkDescriptorSetLayoutBinding setBindings[2] = {};
+	setBindings[0].binding = 0;
+	setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	setBindings[0].descriptorCount = 1;
+	setBindings[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT;
+	setBindings[1].binding = 1;
+	setBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	setBindings[1].descriptorCount = 1;
+	setBindings[1].stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT;
+#else
 	VkDescriptorSetLayoutBinding setBindings[1] = {};
 	setBindings[0].binding = 0;
 	setBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	setBindings[0].descriptorCount = 1;
 	setBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+#endif
 
 	VkDescriptorSetLayoutCreateInfo setCreateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
 	setCreateInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
@@ -445,7 +484,11 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 
 	VkPipelineShaderStageCreateInfo stages[2] = {};
 	stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+#if RTX
+	stages[0].stage = VK_SHADER_STAGE_MESH_BIT_EXT;
+#else
 	stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+#endif
 	stages[0].module = vs;
 	stages[0].pName = "main";
 	
@@ -475,6 +518,8 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 
 	VkPipelineRasterizationStateCreateInfo rasterizationState = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
 	rasterizationState.lineWidth = 1.f;
+	//rasterizationState.frontFace = VK_FRONT_FACE_CLOCKWISE;
+	rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
 	createInfo.pRasterizationState = &rasterizationState;
 
 	VkPipelineMultisampleStateCreateInfo multisampleState = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
@@ -619,6 +664,18 @@ void resizeSwapchainIfNecessary(Swapchain& result, VkPhysicalDevice physicalDevi
 	destroySwapchain(device, old);
 }
 
+VkQueryPool createQueryPool(VkDevice device, uint32_t queryCount)
+{
+	VkQueryPoolCreateInfo createInfo = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+	createInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+	createInfo.queryCount = queryCount;
+
+	VkQueryPool queryPool = 0;
+	VK_CHECK(vkCreateQueryPool(device, &createInfo, 0, &queryPool));
+
+	return queryPool;
+}
+
 struct Vertex
 {
 	float vx, vy, vz;
@@ -626,10 +683,19 @@ struct Vertex
 	float tu, tv;
 };
 
+struct Meshlet
+{
+	uint32_t vertices[64];
+	uint8_t indices[126]; // up to 42 triangles
+	uint8_t indexCount;
+	uint8_t vertexCount;
+};
+
 struct Mesh
 {
 	std::vector<Vertex> vertices;
 	std::vector<uint32_t> indices;
+	std::vector<Meshlet> meshlets;
 };
 
 bool loadMesh(Mesh& result, const char* path)
@@ -696,6 +762,58 @@ struct Buffer
 	size_t size;
 };
 
+void buildMeshlets(Mesh& mesh)
+{
+	Meshlet meshlet = {};
+	std::vector<uint8_t> meshletVertices(mesh.vertices.size(), 0xff);
+
+	for (size_t i = 0; i < mesh.indices.size(); i += 3)
+	{
+		unsigned int a = mesh.indices[i + 0];
+		unsigned int b = mesh.indices[i + 1];
+		unsigned int c = mesh.indices[i + 2];
+
+		uint8_t& av = meshletVertices[a];
+		uint8_t& bv = meshletVertices[b];
+		uint8_t& cv = meshletVertices[c];
+
+		if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.indexCount + 1 > 126)
+		{
+			mesh.meshlets.push_back(meshlet);
+
+			for (size_t j = 0; j < meshlet.vertexCount; ++j)
+				meshletVertices[meshlet.vertices[j]] = 0xff;
+
+			meshlet = {};
+		}
+
+		if (av == 0xff)
+		{
+			av = meshlet.vertexCount;
+			meshlet.vertices[meshlet.vertexCount++] = a;
+		}
+
+		if (bv == 0xff)
+		{
+			bv = meshlet.vertexCount;
+			meshlet.vertices[meshlet.vertexCount++] = b;
+		}
+
+		if (cv == 0xff)
+		{
+			cv = meshlet.vertexCount;
+			meshlet.vertices[meshlet.vertexCount++] = c;
+		}
+
+		meshlet.indices[meshlet.indexCount++] = av;
+		meshlet.indices[meshlet.indexCount++] = bv;
+		meshlet.indices[meshlet.indexCount++] = cv;
+	}
+
+	if (meshlet.indexCount)
+		mesh.meshlets.push_back(meshlet);
+}
+
 uint32_t selectMemoryTpe(const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t memoryTypeBits, VkMemoryPropertyFlags flags)
 {
 	for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
@@ -751,7 +869,7 @@ int main(int argc, const char** argv)
 {
 	if (argc < 2)
 	{
-		printf("Usage: %s [mesh]\n", argv[0]);
+		printf(LOGE("Usage: %s [mesh]\n"), argv[0]);
 		return 1;
 	}
 
@@ -774,6 +892,10 @@ int main(int argc, const char** argv)
 
 	VkPhysicalDevice physicalDevice = pickPhysicalDevice(physicalDevices, physicalDeviceCount);
 	assert(physicalDevice);
+
+	VkPhysicalDeviceProperties props = {};
+	vkGetPhysicalDeviceProperties(physicalDevice, &props);
+	assert(props.limits.timestampComputeAndGraphics);
 
 	uint32_t graphicsFamily = getGraphicsFamilyIndex(physicalDevice);
 	assert(familyIndex != VK_QUEUE_FAMILY_IGNORED);
@@ -806,8 +928,13 @@ int main(int argc, const char** argv)
 	VkRenderPass renderPass = createRenderPass(device, swapchainFormat);
 	assert(renderPass);
 
+#if RTX
+	VkShaderModule triangleVS = loadShader(device, "shaders/meshlet.mesh.spv");
+	assert(triangleVS);
+#else
 	VkShaderModule triangleVS = loadShader(device, "shaders/triangle.vert.spv");
 	assert(triangleVS);
+#endif
 
 	VkShaderModule triangleFS = loadShader(device, "shaders/triangle.frag.spv");
 	assert(triangleFS);
@@ -826,6 +953,9 @@ int main(int argc, const char** argv)
 	Swapchain swapchain;
 	createSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, swapchainFormat, renderPass);
 
+	VkQueryPool queryPool = createQueryPool(device, 128);
+	assert(queryPool);
+	
 	VkCommandPool commandPool = createCommandPool(device, graphicsFamily);
 	assert(commandPool);
 
@@ -842,11 +972,21 @@ int main(int argc, const char** argv)
 
 	Mesh mesh;
 	bool rcm = loadMesh(mesh, argv[1]);
+	assert(rcm);
+
+#if RTX
+	buildMeshlets(mesh);
+#endif
 
 	Buffer vb = {};
 	createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 	Buffer ib = {};
 	createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+#if RTX
+	Buffer mb = {};
+	createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+#endif
 
 	assert(vb.size >= mesh.vertices.size() * sizeof(Vertex));
 	memcpy(vb.data, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
@@ -854,8 +994,18 @@ int main(int argc, const char** argv)
 	assert(ib.size >= mesh.indices.size() * sizeof(uint32_t));
 	memcpy(ib.data, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
 
+#if RTX
+	assert(mb.size >= mesh.meshlets.size() * sizeof(Meshlet));
+	memcpy(mb.data, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
+#endif
+
+	double frameCPUAvg = 0.0;
+	double frameGPUAvg = 0.0;
+
 	while (!glfwWindowShouldClose(window))
 	{
+		double frameCPUBegin = glfwGetTime() * 1000.0;
+
 		glfwPollEvents();
 		
 		resizeSwapchainIfNecessary(swapchain, physicalDevice, device, surface, graphicsFamily, swapchainFormat, renderPass);
@@ -869,6 +1019,9 @@ int main(int argc, const char** argv)
 		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
 		VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+		vkCmdResetQueryPool(commandBuffer, queryPool, 0, 128);
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 0);
 
 		VkImageMemoryBarrier renderBeginBarrier = imageBarrier(swapchain.images[imageIndex], 0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &renderBeginBarrier);
@@ -894,27 +1047,54 @@ int main(int argc, const char** argv)
 
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline);
 
-		VkDescriptorBufferInfo bufferInfo = {};
-		bufferInfo.buffer = vb.buffer;
-		bufferInfo.offset = 0;
-		bufferInfo.range = vb.size;
+		VkDescriptorBufferInfo vbInfo = {};
+		vbInfo.buffer = vb.buffer;
+		vbInfo.offset = 0;
+		vbInfo.range = vb.size;
 
+#if RTX
+		VkDescriptorBufferInfo mbInfo = {};
+		mbInfo.buffer = mb.buffer;
+		mbInfo.offset = 0;
+		mbInfo.range = mb.size;
+
+		VkWriteDescriptorSet descriptors[2];
+		descriptors[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+		descriptors[0].dstBinding = 0;
+		descriptors[0].descriptorCount = 1;
+		descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		descriptors[0].pBufferInfo = &vbInfo;
+		descriptors[1] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+		descriptors[1].dstBinding = 1;
+		descriptors[1].descriptorCount = 1;
+		descriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		descriptors[1].pBufferInfo = &mbInfo;
+
+		vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, triangleLayout, 0, ARRAYSIZE(descriptors), descriptors);
+
+		//vkCmdDrawIndexed(commandBuffer, mesh.indices.size(), 1, 0, 0, 0);
+		vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()), 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
+#else
 		VkWriteDescriptorSet descriptors[1];
 		descriptors[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		descriptors[0].dstBinding = 0;
 		descriptors[0].descriptorCount = 1;
 		descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		descriptors[0].pBufferInfo = &bufferInfo;
+		descriptors[0].pBufferInfo = &vbInfo;
 
 		vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, triangleLayout, 0, ARRAYSIZE(descriptors), descriptors);
 
 		vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 		vkCmdDrawIndexed(commandBuffer, mesh.indices.size(), 1, 0, 0, 0);
+#endif
 
 		vkCmdEndRenderPass(commandBuffer);
 
 		VkImageMemoryBarrier renderEndBarrier = imageBarrier(swapchain.images[imageIndex], VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &renderEndBarrier);
+		
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 1);
+		
 		VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
 		VkPipelineStageFlags submitStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -940,6 +1120,21 @@ int main(int argc, const char** argv)
 		VK_CHECK(vkQueuePresentKHR(queue, &presentInfo));
 
 		VK_CHECK(vkDeviceWaitIdle(device));
+
+		uint64_t queryResults[2];
+		VK_CHECK(vkGetQueryPoolResults(device, queryPool, 0, 2, sizeof(queryResults), queryResults, sizeof(queryResults[0]), VK_QUERY_RESULT_64_BIT));
+
+		double frameGPUBegin = double(queryResults[0]) * props.limits.timestampPeriod * 1e-6;
+		double frameGPUEnd = double(queryResults[1]) * props.limits.timestampPeriod * 1e-6;
+		
+		double frameCPUEnd = glfwGetTime() * 1000.0;
+
+		frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
+		frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
+
+		char title[256];
+		sprintf(title, "cpu: %.2f ms; gpu %.2f ms; triangles %d; meshlets % d", frameCPUAvg, frameGPUAvg, int(mesh.indices.size() / 3), int(mesh.meshlets.size()));
+		glfwSetWindowTitle(window, title);
 	}
 
 	VK_CHECK(vkDeviceWaitIdle(device));
@@ -947,10 +1142,15 @@ int main(int argc, const char** argv)
 	destroyBuffer(vb, device);
 	destroyBuffer(ib, device);
 
+#if RTX
+	destroyBuffer(mb, device);
+#endif
+
 	vkDestroyCommandPool(device, commandPool, 0);
 
 	destroySwapchain(device, swapchain);
-        
+    
+	vkDestroyQueryPool(device, queryPool, 0);
 	vkDestroyPipeline(device, trianglePipeline, 0);
 	vkDestroyPipelineLayout(device, triangleLayout, 0);
 	vkDestroyDescriptorSetLayout(device, descriptorSetLayout, 0);
@@ -971,5 +1171,3 @@ int main(int argc, const char** argv)
 
     return 0;
 }
-
-// video 4, 2:03:28 
