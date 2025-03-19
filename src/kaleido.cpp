@@ -12,8 +12,8 @@
 #include <objparser.h>
 #include <meshoptimizer.h>
 
-#define RTX 0
-#define FVF 1
+#define FVF 0
+#define RTX 1
 
 #define VK_CHECK(call)                  \
     do                                  \
@@ -222,6 +222,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features12.shaderInt8 = VK_TRUE;
 	features12.uniformAndStorageBuffer8BitAccess = VK_TRUE;
 	features12.storageBuffer8BitAccess = VK_TRUE;
+	features12.shaderFloat16 = VK_TRUE;
 
 	VkPhysicalDeviceMaintenance4Features featuresMaintenance4 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES };
 	featuresMaintenance4.maintenance4 = VK_TRUE;
@@ -484,9 +485,9 @@ VkPipelineLayout createPipelineLayout(VkDevice device, const VkDescriptorSetLayo
 
 struct Vertex
 {
-	float vx, vy, vz;
+	uint16_t vx, vy, vz, vw;
 	uint8_t nx, ny, nz, nw;
-	float tu, tv;
+	uint16_t tu, tv;
 };
 
 VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout)
@@ -523,13 +524,13 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 
 	VkVertexInputAttributeDescription fvfAttributes[3] = {};
 	fvfAttributes[0].location = 0;
-	fvfAttributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+	fvfAttributes[0].format = VK_FORMAT_R16G16B16_SFLOAT;
 	fvfAttributes[0].offset = offsetof(Vertex, vx);
 	fvfAttributes[1].location = 1;
 	fvfAttributes[1].format = VK_FORMAT_R8G8B8A8_UINT;
 	fvfAttributes[1].offset = offsetof(Vertex, nx);
 	fvfAttributes[2].location = 2;
-	fvfAttributes[2].format = VK_FORMAT_R32G32_SFLOAT;
+	fvfAttributes[2].format = VK_FORMAT_R16G16_SFLOAT;
 	fvfAttributes[2].offset = offsetof(Vertex, tu);
 
 	vertexInput.vertexBindingDescriptionCount = ARRAYSIZE(fvfBindings);
@@ -607,6 +608,20 @@ VkImageMemoryBarrier imageBarrier(VkImage image, VkAccessFlags srcAccessMask, Vk
 	result.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
 	result.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
 
+
+	return result;
+}
+
+VkBufferMemoryBarrier bufferBarrier(VkBuffer buffer, VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask)
+{
+	VkBufferMemoryBarrier result = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+	result.srcAccessMask = srcAccessMask;
+	result.dstAccessMask = dstAccessMask;
+	result.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	result.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	result.buffer = buffer;
+	result.offset = 0;
+	result.size = VK_WHOLE_SIZE;
 
 	return result;
 }
@@ -715,8 +730,8 @@ VkQueryPool createQueryPool(VkDevice device, uint32_t queryCount)
 struct Meshlet
 {
 	uint32_t vertices[64];
-	uint8_t indices[126]; // up to 42 triangles
-	uint8_t indexCount;
+	uint8_t indices[126 * 3]; // up to 126 triangles
+	uint8_t triangleCount;
 	uint8_t vertexCount;
 };
 
@@ -749,37 +764,31 @@ bool loadMesh(Mesh& result, const char* path)
 		float ny = vni < 0 ? 0.f : file.vn[vni * 3 + 1];
 		float nz = vni < 0 ? 1.f : file.vn[vni * 3 + 2];
 
-		v.vx = file.v[vi * 3 + 0];
-		v.vy = file.v[vi * 3 + 1];
-		v.vz = file.v[vi * 3 + 2];
+		v.vx = meshopt_quantizeHalf(file.v[vi * 3 + 0]);
+		v.vy = meshopt_quantizeHalf(file.v[vi * 3 + 1]);
+		v.vz = meshopt_quantizeHalf(file.v[vi * 3 + 2]);
 		v.nx = uint8_t(nx * 127.f + 127.f); // TODO: fix rounding
 		v.ny = uint8_t(ny * 127.f + 127.f); // TODO: fix rounding
 		v.nz = uint8_t(nz * 127.f + 127.f); // TODO: fix rounding
-		v.tu = vti < 0 ? 0.f : file.vt[vti * 3 + 0];
-		v.tv = vti < 0 ? 0.f : file.vt[vti * 3 + 1];
+		v.tu = meshopt_quantizeHalf(vti < 0 ? 0.f : file.vt[vti * 3 + 0]);
+		v.tv = meshopt_quantizeHalf(vti < 0 ? 0.f : file.vt[vti * 3 + 1]);
 	}
+
+	std::vector<uint32_t> remap(index_count);
+	size_t vertex_count = meshopt_generateVertexRemap(remap.data(), 0, index_count, vertices.data(), index_count, sizeof(Vertex));
+
+	result.vertices.resize(vertex_count);
+	result.indices.resize(index_count);
+
+	meshopt_remapVertexBuffer(result.vertices.data(), vertices.data(), index_count, sizeof(Vertex), remap.data());
+	meshopt_remapIndexBuffer(result.indices.data(), 0, index_count, remap.data());
 
 	if (0)
 	{
-		result.vertices = vertices;
-		result.indices.resize(index_count);
-
-		for (size_t i = 0; i < index_count; ++i)
-			result.indices[i] = uint32_t(i);
-	}
-	else
-	{
-		std::vector<uint32_t> remap(index_count);
-		size_t vertex_count = meshopt_generateVertexRemap(remap.data(), 0, index_count, vertices.data(), index_count, sizeof(Vertex));
-
-		result.vertices.resize(vertex_count);
-		result.indices.resize(index_count);
-
-		meshopt_remapVertexBuffer(result.vertices.data(), vertices.data(), index_count, sizeof(Vertex), remap.data());
-		meshopt_remapIndexBuffer(result.indices.data(), 0, index_count, remap.data());
+		meshopt_optimizeVertexCache(result.indices.data(), result.indices.data(), index_count, vertex_count);
+		meshopt_optimizeVertexFetch(result.vertices.data(), result.indices.data(), index_count, result.vertices.data(), vertex_count, sizeof(Vertex));
 	}
 
-	// TODO: optimize the mesh for more efficient GPU rendering
 	return true;
 }
 
@@ -806,7 +815,7 @@ void buildMeshlets(Mesh& mesh)
 		uint8_t& bv = meshletVertices[b];
 		uint8_t& cv = meshletVertices[c];
 
-		if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.indexCount + 1 > 126)
+		if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.triangleCount >= 126)
 		{
 			mesh.meshlets.push_back(meshlet);
 
@@ -834,12 +843,13 @@ void buildMeshlets(Mesh& mesh)
 			meshlet.vertices[meshlet.vertexCount++] = c;
 		}
 
-		meshlet.indices[meshlet.indexCount++] = av;
-		meshlet.indices[meshlet.indexCount++] = bv;
-		meshlet.indices[meshlet.indexCount++] = cv;
+		meshlet.indices[meshlet.triangleCount * 3 + 0] = av;
+		meshlet.indices[meshlet.triangleCount * 3 + 1] = bv;
+		meshlet.indices[meshlet.triangleCount * 3 + 2] = cv;
+		meshlet.triangleCount++;
 	}
 
-	if (meshlet.indexCount)
+	if (meshlet.triangleCount)
 		mesh.meshlets.push_back(meshlet);
 }
 
@@ -855,7 +865,7 @@ uint32_t selectMemoryTpe(const VkPhysicalDeviceMemoryProperties& memoryPropertie
 	return ~0u;
 }
 
-void createBuffer(Buffer& result, VkDevice device, const VkPhysicalDeviceMemoryProperties& memoryProperties, size_t size, VkBufferUsageFlags usage)
+void createBuffer(Buffer& result, VkDevice device, const VkPhysicalDeviceMemoryProperties& memoryProperties, size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryFlags)
 {
 	VkBufferCreateInfo createInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
 	createInfo.size = size;
@@ -867,7 +877,7 @@ void createBuffer(Buffer& result, VkDevice device, const VkPhysicalDeviceMemoryP
 	VkMemoryRequirements memoryRequirements;
 	vkGetBufferMemoryRequirements(device, buffer, &memoryRequirements);
 
-	uint32_t memoryTypeIndex = selectMemoryTpe(memoryProperties, memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	uint32_t memoryTypeIndex = selectMemoryTpe(memoryProperties, memoryRequirements.memoryTypeBits, memoryFlags);
 	assert(memoryTypeIndex != ~0u);
 
 	VkMemoryAllocateInfo allocateInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
@@ -880,12 +890,44 @@ void createBuffer(Buffer& result, VkDevice device, const VkPhysicalDeviceMemoryP
 	VK_CHECK(vkBindBufferMemory(device, buffer, memory, 0));
 
 	void* data = 0;
-	VK_CHECK(vkMapMemory(device, memory, 0, size, 0, &data));
+	if (memoryFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+		VK_CHECK(vkMapMemory(device, memory, 0, size, 0, &data));
 
 	result.buffer = buffer;
 	result.memory = memory;
 	result.data = data;
 	result.size = size;
+}
+
+void uploadBuffer(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const Buffer& buffer, const Buffer& scratch, const void* data, size_t size)
+{
+	// TODO: this function is submitting a command buffer and waiting for device idle for each buffer upload, this is obviously suboptimal and we need to batch this later.
+	assert(scratch.data);
+	assert(scratch.size >= size);
+	memcpy(scratch.data, data, size);
+
+	VK_CHECK(vkResetCommandPool(device, commandPool, 0));
+
+	VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+	VkBufferCopy region = { 0, 0, VkDeviceSize(size) };
+	vkCmdCopyBuffer(commandBuffer, scratch.buffer, buffer.buffer, 1, &region);
+
+	VkBufferMemoryBarrier copyBarrier = bufferBarrier(buffer.buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+	vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 1, &copyBarrier, 0, 0);
+
+	VK_CHECK(vkEndCommandBuffer(commandBuffer));
+
+	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
+
+	VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+
+	VK_CHECK(vkQueueWaitIdle(queue));
 }
 
 void destroyBuffer(const Buffer& buffer, VkDevice device)
@@ -1009,29 +1051,28 @@ int main(int argc, const char** argv)
 	buildMeshlets(mesh);
 #endif
 
+	Buffer scratch = {};
+	createBuffer(scratch, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
 	Buffer vb = {};
 #if FVF
-	createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+	createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 #else
-	createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+	createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 #endif
 	Buffer ib = {};
-	createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+	createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 #if RTX
 	Buffer mb = {};
-	createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+	createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 #endif
 
-	assert(vb.size >= mesh.vertices.size() * sizeof(Vertex));
-	memcpy(vb.data, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
-
-	assert(ib.size >= mesh.indices.size() * sizeof(uint32_t));
-	memcpy(ib.data, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
+	uploadBuffer(device, commandPool, commandBuffer, queue, vb, scratch, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
+	uploadBuffer(device, commandPool, commandBuffer, queue, ib, scratch, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
 
 #if RTX
-	assert(mb.size >= mesh.meshlets.size() * sizeof(Meshlet));
-	memcpy(mb.data, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
+	uploadBuffer(device, commandPool, commandBuffer, queue, mb, scratch, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
 #endif
 
 	double frameCPUAvg = 0.0;
@@ -1112,7 +1153,6 @@ int main(int argc, const char** argv)
 
 		vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, ARRAYSIZE(descriptors), descriptors);
 
-		//vkCmdDrawIndexed(commandBuffer, mesh.indices.size(), 1, 0, 0, 0);
 		vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()), 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
 #else
 		VkDescriptorBufferInfo vbInfo = {};
@@ -1182,14 +1222,15 @@ int main(int argc, const char** argv)
 		glfwSetWindowTitle(window, title);
 	}
 
-	VK_CHECK(vkDeviceWaitIdle(device));
-
-	destroyBuffer(vb, device);
-	destroyBuffer(ib, device);
+	VK_CHECK(vkDeviceWaitIdle(device));	
 
 #if RTX
 	destroyBuffer(mb, device);
 #endif
+
+	destroyBuffer(ib, device);
+	destroyBuffer(vb, device);
+	destroyBuffer(scratch, device);
 
 	vkDestroyCommandPool(device, commandPool, 0);
 
@@ -1216,3 +1257,4 @@ int main(int argc, const char** argv)
 
     return 0;
 }
+
