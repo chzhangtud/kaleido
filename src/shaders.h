@@ -8,6 +8,8 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, bool rtxEnabled
 
 VkPipelineLayout createPipelineLayout(VkDevice device, const VkDescriptorSetLayout descriptorSetLayout);
 
+VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkDescriptorSetLayout setLayout, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, bool rtxEnabled);
+
 VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout, bool rtxEnabled);
 
 struct DescriptorInfo

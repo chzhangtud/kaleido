@@ -79,6 +79,53 @@ VkPipelineLayout createPipelineLayout(VkDevice device, const VkDescriptorSetLayo
 	return layout;
 }
 
+VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkDescriptorSetLayout setLayout, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, bool rtxEnabled)
+{
+	std::vector<VkDescriptorUpdateTemplateEntry> entries;
+
+	if (rtxEnabled)
+	{
+		entries.resize(2);
+		entries[0].dstBinding = 0;
+		entries[0].dstArrayElement = 0;
+		entries[0].descriptorCount = 1;
+		entries[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		entries[0].offset = sizeof(DescriptorInfo) * 0;
+		entries[0].stride = sizeof(DescriptorInfo);
+		entries[1].dstBinding = 1;
+		entries[1].dstArrayElement = 0;
+		entries[1].descriptorCount = 1;
+		entries[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		entries[1].offset = sizeof(DescriptorInfo) * 1;
+		entries[1].stride = sizeof(DescriptorInfo);
+	}
+	else
+	{
+		entries.resize(1);
+		entries[0].dstBinding = 0;
+		entries[0].dstArrayElement = 0;
+		entries[0].descriptorCount = 1;
+		entries[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		entries[0].offset = sizeof(DescriptorInfo) * 0;
+		entries[0].stride = sizeof(DescriptorInfo);
+	}
+
+	VkDescriptorUpdateTemplateCreateInfo createInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
+
+	createInfo.descriptorUpdateEntryCount = uint32_t(entries.size());
+	createInfo.pDescriptorUpdateEntries = entries.data();
+
+	createInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
+	createInfo.descriptorSetLayout = setLayout;
+	createInfo.pipelineBindPoint = bindPoint;
+	createInfo.pipelineLayout = layout;
+
+	VkDescriptorUpdateTemplate updateTemplate = 0;
+	VK_CHECK(vkCreateDescriptorUpdateTemplate(device, &createInfo, 0, &updateTemplate));
+
+	return updateTemplate;
+}
+
 VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout, bool rtxEnabled)
 {
 	VkGraphicsPipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };

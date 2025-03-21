@@ -856,13 +856,20 @@ int main(int argc, const char** argv)
 	VkPipelineLayout meshLayout = createPipelineLayout(device, descriptorSetLayout);
 	assert(meshLayout);
 
+	VkDescriptorUpdateTemplate meshUpdateTemplate = createUpdateTemplate(device, descriptorSetLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, /* rtxEnabled = */ false);
+	assert(meshUpdateTemplate);
+
 	VkDescriptorSetLayout descriptorSetLayoutRTX = 0;
 	VkPipelineLayout meshLayoutRTX = 0;
+	VkDescriptorUpdateTemplate meshUpdateTemplateRTX = 0;
 	if (rtxEnabled)
 	{
 		descriptorSetLayoutRTX = createDescriptorSetLayout(device,/* rtxEnabled = */ true);
 		meshLayoutRTX = createPipelineLayout(device, descriptorSetLayoutRTX);
 		assert(meshLayoutRTX);
+
+		meshUpdateTemplateRTX = createUpdateTemplate(device, descriptorSetLayoutRTX, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayoutRTX, /* rtxEnabled = */ true);
+		assert(meshUpdateTemplateRTX);
 	}
 
 	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, meshLayout, /* rtxEnabled = */ false);
@@ -977,29 +984,8 @@ int main(int argc, const char** argv)
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineRTX);
 
-			VkDescriptorBufferInfo vbInfo = {};
-			vbInfo.buffer = vb.buffer;
-			vbInfo.offset = 0;
-			vbInfo.range = vb.size;
-
-			VkDescriptorBufferInfo mbInfo = {};
-			mbInfo.buffer = mb.buffer;
-			mbInfo.offset = 0;
-			mbInfo.range = mb.size;
-
-			VkWriteDescriptorSet descriptors[2];
-			descriptors[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-			descriptors[0].dstBinding = 0;
-			descriptors[0].descriptorCount = 1;
-			descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			descriptors[0].pBufferInfo = &vbInfo;
-			descriptors[1] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-			descriptors[1].dstBinding = 1;
-			descriptors[1].descriptorCount = 1;
-			descriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			descriptors[1].pBufferInfo = &mbInfo;
-
-			vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayoutRTX, 0, ARRAYSIZE(descriptors), descriptors);
+			DescriptorInfo descriptors[] = { vb.buffer, mb.buffer };
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplateRTX, meshLayoutRTX, 0, descriptors);
 
 			vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()), 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
 		}
@@ -1007,19 +993,9 @@ int main(int argc, const char** argv)
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
 
-			VkDescriptorBufferInfo vbInfo = {};
-			vbInfo.buffer = vb.buffer;
-			vbInfo.offset = 0;
-			vbInfo.range = vb.size;
+			DescriptorInfo descriptors[] = { vb.buffer };
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplate, meshLayout, 0, descriptors);
 
-			VkWriteDescriptorSet descriptors[1];
-			descriptors[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-			descriptors[0].dstBinding = 0;
-			descriptors[0].descriptorCount = 1;
-			descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			descriptors[0].pBufferInfo = &vbInfo;
-
-			vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, ARRAYSIZE(descriptors), descriptors);
 
 			vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 			vkCmdDrawIndexed(commandBuffer, mesh.indices.size(), 1, 0, 0, 0);
@@ -1093,12 +1069,14 @@ int main(int argc, const char** argv)
 
 	vkDestroyPipeline(device, meshPipeline, 0);
 	vkDestroyPipelineLayout(device, meshLayout, 0);
+	vkDestroyDescriptorUpdateTemplate(device, meshUpdateTemplate, 0);
 	vkDestroyDescriptorSetLayout(device, descriptorSetLayout, 0);
 
 	if (rtxEnabled)
 	{
 		vkDestroyPipeline(device, meshPipelineRTX, 0);
 		vkDestroyPipelineLayout(device, meshLayoutRTX, 0);
+		vkDestroyDescriptorUpdateTemplate(device, meshUpdateTemplateRTX, 0);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayoutRTX, 0);
 	}
 	vkDestroyShaderModule(device, meshVS, 0);
