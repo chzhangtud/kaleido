@@ -19,9 +19,12 @@ if (MSVC)
 endif()
 
 # find all glsl files and add them to a folder
-file(GLOB GLSL_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.glsl")
+file(GLOB GLSL_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.glsl" "${CMAKE_SOURCE_DIR}/src/shaders/*.h")
 source_group("shaders" FILES ${GLSL_FILES})
-add_executable(kaleido src/kaleido.cpp ${GLSL_FILES})
+
+file(GLOB_RECURSE SRC_FILES "src/*.cpp" "src/*.h")
+list(FILTER SRC_FILES EXCLUDE REGEX "src/shaders/.*")
+add_executable(kaleido ${SRC_FILES} ${GLSL_FILES})
 
 # target_include_directories(kaleido PRIVATE ${VULKAN_INCLUDE_DIR})
 
