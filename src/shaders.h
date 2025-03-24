@@ -2,15 +2,20 @@
 
 #include "common.h"
 
-VkShaderModule loadShader(VkDevice device, const char* path);
+struct Shader
+{
+	VkShaderModule module;
+	VkShaderStageFlagBits stage;
+	uint32_t storageBufferMask;
+};
 
-VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, bool rtxEnabled);
+bool loadShader(Shader& shader, VkDevice device, const char* path);
+void destroyShader(Shader& shader, VkDevice device);
 
-VkPipelineLayout createPipelineLayout(VkDevice device, const VkDescriptorSetLayout descriptorSetLayout);
-
-VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkDescriptorSetLayout setLayout, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, bool rtxEnabled);
-
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout, bool rtxEnabled);
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, const Shader& vs, const Shader& fs);
+VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout);
+VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, const Shader& vs, const Shader& fs);
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, const Shader& vs, const Shader& fs, VkPipelineLayout layout);
 
 struct DescriptorInfo
 {
@@ -19,6 +24,10 @@ struct DescriptorInfo
 		VkDescriptorImageInfo image;
 		VkDescriptorBufferInfo buffer;
 	};
+
+	DescriptorInfo()
+	{
+	}
 
 	DescriptorInfo(VkSampler sampler, VkImageView imageView, VkImageLayout imageLayout)
 	{

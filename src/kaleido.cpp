@@ -836,27 +836,33 @@ int main(int argc, const char** argv)
 
 	VkRenderPass renderPass = createRenderPass(device, swapchainFormat);
 	
-	VkShaderModule meshletMS = 0;
+	Shader meshletMS = {};
 	if (rtxEnabled)
 	{
-		meshletMS = loadShader(device, "shaders/meshlet.mesh.spv");
-		assert(meshletMS);
+		bool rc = loadShader(meshletMS, device, "shaders/meshlet.mesh.spv");
+		assert(rc);
 	}
 	
-	VkShaderModule meshVS = loadShader(device, "shaders/mesh.vert.spv");
-	assert(meshVS);
+	Shader meshVS = {};
+	{
+		bool rc = loadShader(meshVS, device, "shaders/mesh.vert.spv");
+		assert(cS);
+	}
 
-	VkShaderModule meshFS = loadShader(device, "shaders/mesh.frag.spv");
-	assert(meshFS);
+	Shader meshFS = {};
+	{
+		bool rc = loadShader(meshFS, device, "shaders/mesh.frag.spv");
+		assert(rc);
+	}
 
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 
-	VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(device,/* rtxEnabled = */ false);
+	VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(device, meshVS, meshFS);
 	VkPipelineLayout meshLayout = createPipelineLayout(device, descriptorSetLayout);
 	assert(meshLayout);
 
-	VkDescriptorUpdateTemplate meshUpdateTemplate = createUpdateTemplate(device, descriptorSetLayout, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, /* rtxEnabled = */ false);
+	VkDescriptorUpdateTemplate meshUpdateTemplate = createUpdateTemplate(device, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, meshVS, meshFS);
 	assert(meshUpdateTemplate);
 
 	VkDescriptorSetLayout descriptorSetLayoutRTX = 0;
@@ -864,21 +870,21 @@ int main(int argc, const char** argv)
 	VkDescriptorUpdateTemplate meshUpdateTemplateRTX = 0;
 	if (rtxEnabled)
 	{
-		descriptorSetLayoutRTX = createDescriptorSetLayout(device,/* rtxEnabled = */ true);
+		descriptorSetLayoutRTX = createDescriptorSetLayout(device, meshletMS, meshFS);
 		meshLayoutRTX = createPipelineLayout(device, descriptorSetLayoutRTX);
 		assert(meshLayoutRTX);
 
-		meshUpdateTemplateRTX = createUpdateTemplate(device, descriptorSetLayoutRTX, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayoutRTX, /* rtxEnabled = */ true);
+		meshUpdateTemplateRTX = createUpdateTemplate(device, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayoutRTX, meshletMS, meshFS);
 		assert(meshUpdateTemplateRTX);
 	}
 
-	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, meshLayout, /* rtxEnabled = */ false);
+	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, meshVS, meshFS, meshLayout);
 	assert(meshPipeline);
 
 	VkPipeline meshPipelineRTX = 0;
 	if (rtxEnabled)
 	{
-		meshPipelineRTX = createGraphicsPipeline(device, pipelineCache, renderPass, meshletMS, meshFS, meshLayoutRTX, /* rtxEnabled = */ true);
+		meshPipelineRTX = createGraphicsPipeline(device, pipelineCache, renderPass, meshletMS, meshFS, meshLayoutRTX);
 		assert(meshPipelineRTX);
 	}
 
@@ -1052,7 +1058,6 @@ int main(int argc, const char** argv)
 
 	VK_CHECK(vkDeviceWaitIdle(device));	
 
-	if (rtxEnabled)
 	{
 		destroyBuffer(mb, device);
 	}
@@ -1072,19 +1077,18 @@ int main(int argc, const char** argv)
 	vkDestroyDescriptorUpdateTemplate(device, meshUpdateTemplate, 0);
 	vkDestroyDescriptorSetLayout(device, descriptorSetLayout, 0);
 
-	if (rtxEnabled)
 	{
 		vkDestroyPipeline(device, meshPipelineRTX, 0);
 		vkDestroyPipelineLayout(device, meshLayoutRTX, 0);
 		vkDestroyDescriptorUpdateTemplate(device, meshUpdateTemplateRTX, 0);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayoutRTX, 0);
 	}
-	vkDestroyShaderModule(device, meshVS, 0);
-	vkDestroyShaderModule(device, meshFS, 0);
 
-	if (rtxEnabled)
+	destroyShader(meshVS, device);
+	destroyShader(meshFS, device);
+
 	{
-		vkDestroyShaderModule(device, meshletMS, 0);
+		destroyShader(meshletMS, device);
 	}
 
 	vkDestroyRenderPass(device, renderPass, 0);
@@ -1102,4 +1106,3 @@ int main(int argc, const char** argv)
 
     return 0;
 }
-
