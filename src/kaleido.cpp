@@ -527,8 +527,9 @@ VkQueryPool createQueryPool(VkDevice device, uint32_t queryCount)
 	return queryPool;
 }
 
-struct Meshlet
+struct alignas(16) Meshlet
 {
+	float cone[4];
 	uint32_t vertices[64];
 	uint8_t indices[126 * 3]; // up to 126 triangles
 	uint8_t triangleCount;
@@ -590,13 +591,120 @@ bool loadMesh(Mesh& result, const char* path)
 	meshopt_remapVertexBuffer(result.vertices.data(), vertices.data(), index_count, sizeof(Vertex), remap.data());
 	meshopt_remapIndexBuffer(result.indices.data(), 0, index_count, remap.data());
 
-	if (1)
-	{
-		meshopt_optimizeVertexCache(result.indices.data(), result.indices.data(), index_count, vertex_count);
-		meshopt_optimizeVertexFetch(result.vertices.data(), result.indices.data(), index_count, result.vertices.data(), vertex_count, sizeof(Vertex));
-	}
+	meshopt_optimizeVertexCache(result.indices.data(), result.indices.data(), index_count, vertex_count);
+	meshopt_optimizeVertexFetch(result.vertices.data(), result.indices.data(), index_count, result.vertices.data(), vertex_count, sizeof(Vertex));
 
 	return true;
+}
+
+float halfToFloat(uint16_t v)
+{
+	// This function is AI generated.
+	int s = (v >> 15) & 0x1;
+	int e = (v >> 10) & 0x1f;
+	int f = v & 0x3ff;
+
+	assert(e != 31);
+
+	if (e == 0)
+	{
+		if (f == 0)
+			return s ? -0.f : 0.f;
+		while ((f & 0x400) == 0)
+		{
+			f <<= 1;
+			e -= 1;
+		}
+		e += 1;
+		f &= ~0x400;
+	}
+	else if (e == 31)
+	{
+		if (f == 0)
+			return s ? -INFINITY : INFINITY;
+		return f ? NAN : s ? -INFINITY : INFINITY;
+	}
+	e = e + (127 - 15);
+	f = f << 13;
+	union { uint32_t u; float f; } result;
+	result.u = (s << 31) | (e << 23) | f;
+	return result.f;
+}
+
+void buildMeshletCones(Mesh& mesh)
+{
+	for (Meshlet& meshlet : mesh.meshlets)
+	{
+		float normals[126][3] = {};
+
+		for (size_t i = 0; i < meshlet.triangleCount; ++i)
+		{
+			uint32_t a = meshlet.indices[i * 3 + 0];
+			uint32_t b = meshlet.indices[i * 3 + 1];
+			uint32_t c = meshlet.indices[i * 3 + 2];
+			
+			const Vertex& va = mesh.vertices[meshlet.vertices[a]];
+			const Vertex& vb = mesh.vertices[meshlet.vertices[b]];
+			const Vertex& vc = mesh.vertices[meshlet.vertices[c]];
+
+			float p0[3] = { halfToFloat(va.vx), halfToFloat(va.vy), halfToFloat(va.vz) };
+			float p1[3] = { halfToFloat(vb.vx), halfToFloat(vb.vy), halfToFloat(vb.vz) };
+			float p2[3] = { halfToFloat(vc.vx), halfToFloat(vc.vy), halfToFloat(vc.vz) };
+
+			float p10[3] = { p1[0] - p0[0],p1[1] - p0[1], p1[2] - p0[2] };
+			float p20[3] = { p2[0] - p0[0],p2[1] - p0[1], p2[2] - p0[2] };
+
+			float normalx = p10[1] * p20[2] - p10[2] * p20[1];
+			float normaly = p10[2] * p20[0] - p10[0] * p20[2];
+			float normalz = p10[0] * p20[1] - p10[1] * p20[0];
+
+			float area = sqrtf(normalx * normalx + normaly * normaly + normalz * normalz);
+			float invarea = area == 0.f ? 0.f : 1.f / area;
+
+			normals[i][0] = normalx * invarea;
+			normals[i][1] = normaly * invarea;
+			normals[i][2] = normalz * invarea;
+		}
+
+		float avgnormal[3] = {};
+
+		for (size_t i = 0; i < meshlet.triangleCount; ++i)
+		{
+			avgnormal[0] += normals[i][0];
+			avgnormal[1] += normals[i][1];
+			avgnormal[2] += normals[i][2];
+		}
+
+		float avglength = sqrtf(avgnormal[0] * avgnormal[0] + avgnormal[1] * avgnormal[1] + avgnormal[2] * avgnormal[2]);
+		if (avglength == 0.f)
+		{
+			avgnormal[0] = 1.f;
+			avgnormal[1] = 0.f;
+			avgnormal[2] = 0.f;
+		}
+		else
+		{
+			avgnormal[0] /= avglength;
+			avgnormal[1] /= avglength;
+			avgnormal[2] /= avglength;
+		}
+
+		float mindp = 1.f;
+
+		for (size_t i = 0; i < meshlet.triangleCount; ++i)
+		{
+			float dp = normals[i][0] * avgnormal[0] + normals[i][1] * avgnormal[1] + normals[i][2] * avgnormal[2];
+			mindp = std::min(mindp, dp);
+		}
+
+		// for cone to be backfacing, the angle between view vector and cone axis should be > (mindp angle + 90 degrees)
+		float conew = mindp < 0.f ? -1.0f : -sqrtf(1.f - mindp * mindp);
+
+		meshlet.cone[0] = avgnormal[0];
+		meshlet.cone[1] = avgnormal[1];
+		meshlet.cone[2] = avgnormal[2];
+		meshlet.cone[3] = conew;
+	}
 }
 
 struct Buffer
@@ -915,6 +1023,7 @@ int main(int argc, const char** argv)
 	if (rtxEnabled)
 	{
 		buildMeshlets(mesh);
+		buildMeshletCones(mesh);
 	}
 
 	Buffer scratch = {};
@@ -993,6 +1102,8 @@ int main(int argc, const char** argv)
 			DescriptorInfo descriptors[] = { vb.buffer, mb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplateRTX, meshLayoutRTX, 0, descriptors);
 
+			uint32_t drawCount = 1;
+			for (uint32_t i = 0; i< drawCount; ++i)
 			vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()), 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
 		}
 		else

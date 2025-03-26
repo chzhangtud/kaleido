@@ -12,7 +12,7 @@
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 layout(triangles, max_vertices = 64, max_primitives = 126) out;
 
-#define DEBUG 1
+#define DEBUG 0
 
 layout(binding = 0) readonly buffer Vertices
 {
@@ -39,11 +39,22 @@ uint hash( uint a)
    return a;
 }
 
+bool coneCull(vec4 cone, vec3 view)
+{
+    return dot(cone.xyz, view) < cone.w - 0.05; // 0.05 is EPSILON offset.
+}
+
 void main()
 {
     uint mi = gl_WorkGroupID.x;
 
     uint ti = gl_LocalInvocationID.x;
+
+    if (coneCull(meshlets[mi].cone, vec3(0.0, 0.0, 1.0)))
+    {
+        SetMeshOutputsEXT(0, 0);
+        return;
+    }
 
 #if DEBUG
     uint mhash = hash(mi);
