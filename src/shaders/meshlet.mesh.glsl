@@ -24,6 +24,8 @@ layout(binding = 1) readonly buffer Meshlets
     Meshlet meshlets[];
 };
 
+taskPayloadSharedEXT TaskPayload payload;
+
 layout(location = 0) out vec4 color[];
 
 layout(location = 1) perprimitiveEXT out vec3 triangleNormal[];
@@ -39,22 +41,12 @@ uint hash( uint a)
    return a;
 }
 
-bool coneCull(vec4 cone, vec3 view)
-{
-    return dot(cone.xyz, view) < cone.w - 0.05; // 0.05 is EPSILON offset.
-}
 
 void main()
 {
-    uint mi = gl_WorkGroupID.x;
+    uint mi = payload.meshletIndices[gl_WorkGroupID.x];
 
     uint ti = gl_LocalInvocationID.x;
-
-    if (coneCull(meshlets[mi].cone, vec3(0.0, 0.0, 1.0)))
-    {
-        SetMeshOutputsEXT(0, 0);
-        return;
-    }
 
 #if DEBUG
     uint mhash = hash(mi);

@@ -13,3 +13,7 @@ struct Meshlet
 	uint8_t triangleCount;
 	uint8_t vertexCount;
 };
+
+struct TaskPayload {
+	uint meshletIndices[32];
+};

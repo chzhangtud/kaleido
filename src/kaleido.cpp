@@ -213,6 +213,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 
 	// This will only be used if rtxEnabled = true (see below)
 	VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
+	featuresMesh.taskShader = VK_TRUE;
 	featuresMesh.meshShader = VK_TRUE;
 
 	VkDeviceCreateInfo createInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
@@ -766,6 +767,10 @@ void buildMeshlets(Mesh& mesh)
 
 	if (meshlet.triangleCount)
 		mesh.meshlets.push_back(meshlet);
+
+	// TODO: we don't really need this but this makes sure we can assume that we need all 32 meshlets in task shader.
+	while (mesh.meshlets.size() % 32)
+		mesh.meshlets.push_back({});
 }
 
 uint32_t selectMemoryTpe(const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t memoryTypeBits, VkMemoryPropertyFlags flags)
@@ -944,9 +949,13 @@ int main(int argc, const char** argv)
 
 	VkRenderPass renderPass = createRenderPass(device, swapchainFormat);
 	
+	Shader meshletTS = {};
 	Shader meshletMS = {};
 	if (rtxEnabled)
 	{
+		bool tc = loadShader(meshletTS, device, "shaders/meshlet.task.spv");
+		assert(tc);
+
 		bool rc = loadShader(meshletMS, device, "shaders/meshlet.mesh.spv");
 		assert(rc);
 	}
@@ -978,11 +987,11 @@ int main(int argc, const char** argv)
 	VkDescriptorUpdateTemplate meshUpdateTemplateRTX = 0;
 	if (rtxEnabled)
 	{
-		descriptorSetLayoutRTX = createDescriptorSetLayout(device, { &meshletMS, &meshFS });
+		descriptorSetLayoutRTX = createDescriptorSetLayout(device, { &meshletTS, &meshletMS, &meshFS });
 		meshLayoutRTX = createPipelineLayout(device, descriptorSetLayoutRTX);
 		assert(meshLayoutRTX);
 
-		meshUpdateTemplateRTX = createUpdateTemplate(device, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayoutRTX, { &meshletMS, &meshFS });
+		meshUpdateTemplateRTX = createUpdateTemplate(device, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayoutRTX, { &meshletTS, &meshletMS, &meshFS });
 		assert(meshUpdateTemplateRTX);
 	}
 
@@ -992,7 +1001,7 @@ int main(int argc, const char** argv)
 	VkPipeline meshPipelineRTX = 0;
 	if (rtxEnabled)
 	{
-		meshPipelineRTX = createGraphicsPipeline(device, pipelineCache, renderPass, { &meshletMS, &meshFS }, meshLayoutRTX);
+		meshPipelineRTX = createGraphicsPipeline(device, pipelineCache, renderPass, { &meshletTS, &meshletMS, &meshFS }, meshLayoutRTX);
 		assert(meshPipelineRTX);
 	}
 
@@ -1102,9 +1111,9 @@ int main(int argc, const char** argv)
 			DescriptorInfo descriptors[] = { vb.buffer, mb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplateRTX, meshLayoutRTX, 0, descriptors);
 
-			uint32_t drawCount = 1;
+			uint32_t drawCount = 100;
 			for (uint32_t i = 0; i< drawCount; ++i)
-			vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()), 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
+			vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()) / 32, 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
 		}
 		else
 		{
@@ -1199,6 +1208,7 @@ int main(int argc, const char** argv)
 	destroyShader(meshFS, device);
 
 	{
+		destroyShader(meshletTS, device);
 		destroyShader(meshletMS, device);
 	}
 
@@ -1217,3 +1227,5 @@ int main(int argc, const char** argv)
 
     return 0;
 }
+
+// video 8: 1:34:52
