@@ -7,6 +7,8 @@
 
 #extension GL_GOOGLE_include_directive: require
 
+#extension GL_KHR_shader_subgroup_ballot: require
+
 #include "mesh.h"
 
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
@@ -25,8 +27,6 @@ bool coneCull(vec4 cone, vec3 view)
     return dot(cone.xyz, view) < cone.w - 0.05; // 0.05 is EPSILON offset.
 }
 
-shared uint meshletCount;
-
 void main()
 {
     uint mgi = gl_WorkGroupID.x;
@@ -34,21 +34,19 @@ void main()
     uint mi = mgi * 32 + ti;
 
 #if CULL
-    meshletCount = 0;
-    memoryBarrierShared();
-    
-    if (!coneCull(meshlets[mi].cone, vec3(0.0, 0.0, 1.0)))
-    {
-        uint index = atomicAdd(meshletCount, 1);
+    // TODO: we assume that gl_SubgroupSize is 32 (same as workgroup size).
+    bool accept = !coneCull(meshlets[mi].cone, vec3(0.0, 0.0, 1.0));
+    uvec4 ballot = subgroupBallot(accept);
+    uint index = subgroupBallotExclusiveBitCount(ballot);
 
+    if (accept)
         payload.meshletIndices[index] = mi;
-    }
-    
-    memoryBarrierShared();
+
+    uint count = subgroupBallotBitCount(ballot);
 
     if (ti == 0)
     {
-        EmitMeshTasksEXT(meshletCount, 1, 1);
+        EmitMeshTasksEXT(count, 1, 1);
     }
 #else
     payload.meshletIndices[ti] = mi;
