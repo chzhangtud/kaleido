@@ -539,7 +539,7 @@ struct alignas(16) Meshlet
 
 struct Vertex
 {
-	uint16_t vx, vy, vz, vw;
+	float vx, vy, vz;
 	uint8_t nx, ny, nz, nw;
 	uint16_t tu, tv;
 };
@@ -573,9 +573,9 @@ bool loadMesh(Mesh& result, const char* path)
 		float ny = vni < 0 ? 0.f : file.vn[vni * 3 + 1];
 		float nz = vni < 0 ? 1.f : file.vn[vni * 3 + 2];
 
-		v.vx = meshopt_quantizeHalf(file.v[vi * 3 + 0]);
-		v.vy = meshopt_quantizeHalf(file.v[vi * 3 + 1]);
-		v.vz = meshopt_quantizeHalf(file.v[vi * 3 + 2]);
+		v.vx = file.v[vi * 3 + 0];
+		v.vy = file.v[vi * 3 + 1];
+		v.vz = file.v[vi * 3 + 2];
 		v.nx = uint8_t(nx * 127.f + 127.f); // TODO: fix rounding
 		v.ny = uint8_t(ny * 127.f + 127.f); // TODO: fix rounding
 		v.nz = uint8_t(nz * 127.f + 127.f); // TODO: fix rounding
@@ -598,6 +598,7 @@ bool loadMesh(Mesh& result, const char* path)
 	return true;
 }
 
+// deprecated
 float halfToFloat(uint16_t v)
 {
 	// This function is AI generated.
@@ -634,6 +635,7 @@ float halfToFloat(uint16_t v)
 
 void buildMeshletCones(Mesh& mesh)
 {
+	size_t culledMeshlets = 0;
 	for (Meshlet& meshlet : mesh.meshlets)
 	{
 		float normals[126][3] = {};
@@ -648,9 +650,9 @@ void buildMeshletCones(Mesh& mesh)
 			const Vertex& vb = mesh.vertices[meshlet.vertices[b]];
 			const Vertex& vc = mesh.vertices[meshlet.vertices[c]];
 
-			float p0[3] = { halfToFloat(va.vx), halfToFloat(va.vy), halfToFloat(va.vz) };
-			float p1[3] = { halfToFloat(vb.vx), halfToFloat(vb.vy), halfToFloat(vb.vz) };
-			float p2[3] = { halfToFloat(vc.vx), halfToFloat(vc.vy), halfToFloat(vc.vz) };
+			float p0[3] = { va.vx, va.vy, va.vz };
+			float p1[3] = { vb.vx, vb.vy, vb.vz };
+			float p2[3] = { vc.vx, vc.vy, vc.vz };
 
 			float p10[3] = { p1[0] - p0[0],p1[1] - p0[1], p1[2] - p0[2] };
 			float p20[3] = { p2[0] - p0[0],p2[1] - p0[1], p2[2] - p0[2] };
@@ -705,7 +707,14 @@ void buildMeshletCones(Mesh& mesh)
 		meshlet.cone[1] = avgnormal[1];
 		meshlet.cone[2] = avgnormal[2];
 		meshlet.cone[3] = conew;
+
+		// dot(cone.xyz, view) < cone.w;
+		if (meshlet.cone[2] < meshlet.cone[3])
+		{
+			culledMeshlets++;
+		}
 	}
+	printf(LOGI("Culled meshlets: %d/%d.\n"), culledMeshlets, mesh.meshlets.size());
 }
 
 struct Buffer
