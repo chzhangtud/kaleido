@@ -12,7 +12,7 @@
 #include "common.h"
 #include "shaders.h"
 
-#define RTX 1
+#define VSYNC 0
 
 bool rtxEnabled = false;
 
@@ -300,7 +300,7 @@ VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, VkSurfaceC
 	createInfo.pQueueFamilyIndices = &familyIndex;
 	createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 	createInfo.compositeAlpha = surfaceComposite;
-	createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR; // TODO: use immediate mode if available
+	createInfo.presentMode = VSYNC ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
 	createInfo.oldSwapchain = oldSwapchain;
 
 	VkSwapchainKHR swapchain = 0;
@@ -532,7 +532,7 @@ struct alignas(16) Meshlet
 {
 	float cone[4];
 	uint32_t vertices[64];
-	uint8_t indices[126 * 3]; // up to 126 triangles
+	uint8_t indices[124 * 3]; // up to 124 triangles
 	uint8_t triangleCount;
 	uint8_t vertexCount;
 };
@@ -638,7 +638,7 @@ void buildMeshletCones(Mesh& mesh)
 	size_t culledMeshlets = 0;
 	for (Meshlet& meshlet : mesh.meshlets)
 	{
-		float normals[126][3] = {};
+		float normals[124][3] = {};
 
 		for (size_t i = 0; i < meshlet.triangleCount; ++i)
 		{
@@ -727,59 +727,39 @@ struct Buffer
 
 void buildMeshlets(Mesh& mesh)
 {
-	Meshlet meshlet = {};
-	std::vector<uint8_t> meshletVertices(mesh.vertices.size(), 0xff);
+	size_t max_vertices = 64;
+	size_t max_triangles = 124;
 
-	for (size_t i = 0; i < mesh.indices.size(); i += 3)
-	{
-		unsigned int a = mesh.indices[i + 0];
-		unsigned int b = mesh.indices[i + 1];
-		unsigned int c = mesh.indices[i + 2];
-
-		uint8_t& av = meshletVertices[a];
-		uint8_t& bv = meshletVertices[b];
-		uint8_t& cv = meshletVertices[c];
-
-		if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.triangleCount >= 126)
-		{
-			mesh.meshlets.push_back(meshlet);
-
-			for (size_t j = 0; j < meshlet.vertexCount; ++j)
-				meshletVertices[meshlet.vertices[j]] = 0xff;
-
-			meshlet = {};
-		}
-
-		if (av == 0xff)
-		{
-			av = meshlet.vertexCount;
-			meshlet.vertices[meshlet.vertexCount++] = a;
-		}
-
-		if (bv == 0xff)
-		{
-			bv = meshlet.vertexCount;
-			meshlet.vertices[meshlet.vertexCount++] = b;
-		}
-
-		if (cv == 0xff)
-		{
-			cv = meshlet.vertexCount;
-			meshlet.vertices[meshlet.vertexCount++] = c;
-		}
-
-		meshlet.indices[meshlet.triangleCount * 3 + 0] = av;
-		meshlet.indices[meshlet.triangleCount * 3 + 1] = bv;
-		meshlet.indices[meshlet.triangleCount * 3 + 2] = cv;
-		meshlet.triangleCount++;
-	}
-
-	if (meshlet.triangleCount)
-		mesh.meshlets.push_back(meshlet);
+	//*meshlet_vertices must contain enough space for all meshlets, worst case size is equal to max_meshlets* max_vertices
+	//* meshlet_triangles must contain enough space for all meshlets, worst case size is equal to max_meshlets* max_triangles * 3
+	
+	std::vector<meshopt_Meshlet> meshlets(meshopt_buildMeshletsBound(mesh.indices.size(), max_vertices, max_triangles));
+	std::vector<unsigned int> meshlet_vertices(meshlets.size() * max_vertices);
+	std::vector<unsigned char> meshlet_triangles(meshlets.size() * max_triangles * 3);
+	meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshlet_vertices.data(), meshlet_triangles.data(), mesh.indices.data(), mesh.indices.size(),
+		&mesh.vertices[0].vx, mesh.vertices.size(), sizeof(Vertex), max_vertices, max_triangles, 0.5f));
 
 	// TODO: we don't really need this but this makes sure we can assume that we need all 32 meshlets in task shader.
-	while (mesh.meshlets.size() % 32)
-		mesh.meshlets.push_back({});
+	while (meshlets.size() % 32)
+		meshlets.push_back({});
+
+	for (auto& meshlet : meshlets)
+	{
+		Meshlet m = {};
+		memcpy(m.vertices, (void *)(meshlet_vertices.data() + meshlet.vertex_offset), sizeof(unsigned int) * meshlet.vertex_count);
+		memcpy(m.indices, (void *)(meshlet_triangles.data() + meshlet.triangle_offset), sizeof(unsigned char) * meshlet.triangle_count * 3);
+		m.triangleCount = uint8_t(meshlet.triangle_count);
+		m.vertexCount = uint8_t(meshlet.vertex_count);
+
+		meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshlet_vertices[meshlet.vertex_offset], &meshlet_triangles[meshlet.triangle_offset], meshlet.triangle_count,
+			&mesh.vertices[0].vx, mesh.vertices.size(), sizeof(Vertex));
+	
+		m.cone[0] = bounds.cone_axis[0];
+		m.cone[1] = bounds.cone_axis[1];
+		m.cone[2] = bounds.cone_axis[2];
+		m.cone[3] = bounds.cone_cutoff;
+		mesh.meshlets.emplace_back(m);
+	}
 }
 
 uint32_t selectMemoryTpe(const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t memoryTypeBits, VkMemoryPropertyFlags flags)
@@ -1041,7 +1021,7 @@ int main(int argc, const char** argv)
 	if (rtxEnabled)
 	{
 		buildMeshlets(mesh);
-		buildMeshletCones(mesh);
+		//buildMeshletCones(mesh);
 	}
 
 	Buffer scratch = {};
@@ -1112,17 +1092,16 @@ int main(int argc, const char** argv)
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-
+		uint32_t drawCount = 100;
 		if (rtxEnabled)
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineRTX);
 
 			DescriptorInfo descriptors[] = { vb.buffer, mb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplateRTX, meshLayoutRTX, 0, descriptors);
-
-			uint32_t drawCount = 100;
+			
 			for (uint32_t i = 0; i< drawCount; ++i)
-			vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()) / 32, 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
+				vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()) / 32, 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
 		}
 		else
 		{
@@ -1133,7 +1112,8 @@ int main(int argc, const char** argv)
 
 
 			vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
-			vkCmdDrawIndexed(commandBuffer, mesh.indices.size(), 1, 0, 0, 0);
+			for (uint32_t i = 0; i < drawCount; ++i)
+				vkCmdDrawIndexed(commandBuffer, mesh.indices.size(), 1, 0, 0, 0);
 		}
 
 		vkCmdEndRenderPass(commandBuffer);
@@ -1177,11 +1157,14 @@ int main(int argc, const char** argv)
 		
 		double frameCPUEnd = glfwGetTime() * 1000.0;
 
+		double trianglesPerSec = double(drawCount * mesh.indices.size() / 3) / double((frameGPUEnd - frameGPUBegin) * 1e-3);
+
 		frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
 		frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
 
 		char title[256];
-		sprintf(title, "cpu: %.2f ms; gpu %.2f ms; triangles %d; meshlets % d; RTX %s", frameCPUAvg, frameGPUAvg, int(mesh.indices.size() / 3), int(mesh.meshlets.size()), rtxEnabled ? "ON" : "OFF");
+		sprintf(title, "cpu: %.2f ms; gpu %.2f ms; triangles %d; meshlets % d; mesh shading %s; %.1fB tri/sec", frameCPUAvg, frameGPUAvg,
+			int(mesh.indices.size() / 3), int(mesh.meshlets.size()), rtxEnabled ? "ON" : "OFF", trianglesPerSec * 1e-9);
 		glfwSetWindowTitle(window, title);
 	}
 
@@ -1237,4 +1220,3 @@ int main(int argc, const char** argv)
     return 0;
 }
 
-// video 8: 1:34:52

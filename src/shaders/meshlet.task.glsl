@@ -24,7 +24,8 @@ taskPayloadSharedEXT TaskPayload payload;
 
 bool coneCull(vec4 cone, vec3 view)
 {
-    return dot(cone.xyz, view) < cone.w - 0.05; // 0.05 is EPSILON offset.
+    //Reference: https://github.com/zeux/meshoptimizer/blob/8764552531e55588a049b2d5f171db33200ac512/demo/main.cpp#L1126
+    return dot(cone.xyz, -view) >= cone.w;
 }
 
 void main()
