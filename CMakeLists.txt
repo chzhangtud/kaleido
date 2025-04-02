@@ -54,10 +54,19 @@ endif()
 set(SHADERS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/shaders")
 set(SHADERS_DEST_DIR "${CMAKE_BINARY_DIR}/shaders")
 
+file(GLOB SPV_FILES "${SHADERS_SOURCE_DIR}/*.spv")
+
 add_custom_target(copy_shaders ALL
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${SHADERS_SOURCE_DIR} ${SHADERS_DEST_DIR}
-    COMMENT "Copying shaders folder to build directory at runtime"
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DEST_DIR}
+    COMMENT "Copying .spv files to build directory"
 )
 
+foreach(SPV_FILE ${SPV_FILES})
+    add_custom_command(TARGET copy_shaders PRE_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SPV_FILE} ${SHADERS_DEST_DIR}
+        COMMENT "Copying ${SPV_FILE} to ${SHADERS_DEST_DIR}"
+    )
+endforeach()
+
 add_dependencies(kaleido copy_shaders)
+

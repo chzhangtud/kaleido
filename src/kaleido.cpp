@@ -531,10 +531,10 @@ VkQueryPool createQueryPool(VkDevice device, uint32_t queryCount)
 struct alignas(16) Meshlet
 {
 	float cone[4];
-	uint32_t vertices[64];
-	uint8_t indices[124 * 3]; // up to 124 triangles
-	uint8_t triangleCount;
+	uint32_t vertexOffset;
+	uint32_t triangleOffset;
 	uint8_t vertexCount;
+	uint8_t triangleCount;
 };
 
 struct Vertex
@@ -549,6 +549,8 @@ struct Mesh
 	std::vector<Vertex> vertices;
 	std::vector<uint32_t> indices;
 	std::vector<Meshlet> meshlets;
+	std::vector<unsigned int> meshletVertexData;
+	std::vector<unsigned char> meshletIndexData;
 };
 
 bool loadMesh(Mesh& result, const char* path)
@@ -633,89 +635,6 @@ float halfToFloat(uint16_t v)
 	return result.f;
 }
 
-void buildMeshletCones(Mesh& mesh)
-{
-	size_t culledMeshlets = 0;
-	for (Meshlet& meshlet : mesh.meshlets)
-	{
-		float normals[124][3] = {};
-
-		for (size_t i = 0; i < meshlet.triangleCount; ++i)
-		{
-			uint32_t a = meshlet.indices[i * 3 + 0];
-			uint32_t b = meshlet.indices[i * 3 + 1];
-			uint32_t c = meshlet.indices[i * 3 + 2];
-			
-			const Vertex& va = mesh.vertices[meshlet.vertices[a]];
-			const Vertex& vb = mesh.vertices[meshlet.vertices[b]];
-			const Vertex& vc = mesh.vertices[meshlet.vertices[c]];
-
-			float p0[3] = { va.vx, va.vy, va.vz };
-			float p1[3] = { vb.vx, vb.vy, vb.vz };
-			float p2[3] = { vc.vx, vc.vy, vc.vz };
-
-			float p10[3] = { p1[0] - p0[0],p1[1] - p0[1], p1[2] - p0[2] };
-			float p20[3] = { p2[0] - p0[0],p2[1] - p0[1], p2[2] - p0[2] };
-
-			float normalx = p10[1] * p20[2] - p10[2] * p20[1];
-			float normaly = p10[2] * p20[0] - p10[0] * p20[2];
-			float normalz = p10[0] * p20[1] - p10[1] * p20[0];
-
-			float area = sqrtf(normalx * normalx + normaly * normaly + normalz * normalz);
-			float invarea = area == 0.f ? 0.f : 1.f / area;
-
-			normals[i][0] = normalx * invarea;
-			normals[i][1] = normaly * invarea;
-			normals[i][2] = normalz * invarea;
-		}
-
-		float avgnormal[3] = {};
-
-		for (size_t i = 0; i < meshlet.triangleCount; ++i)
-		{
-			avgnormal[0] += normals[i][0];
-			avgnormal[1] += normals[i][1];
-			avgnormal[2] += normals[i][2];
-		}
-
-		float avglength = sqrtf(avgnormal[0] * avgnormal[0] + avgnormal[1] * avgnormal[1] + avgnormal[2] * avgnormal[2]);
-		if (avglength == 0.f)
-		{
-			avgnormal[0] = 1.f;
-			avgnormal[1] = 0.f;
-			avgnormal[2] = 0.f;
-		}
-		else
-		{
-			avgnormal[0] /= avglength;
-			avgnormal[1] /= avglength;
-			avgnormal[2] /= avglength;
-		}
-
-		float mindp = 1.f;
-
-		for (size_t i = 0; i < meshlet.triangleCount; ++i)
-		{
-			float dp = normals[i][0] * avgnormal[0] + normals[i][1] * avgnormal[1] + normals[i][2] * avgnormal[2];
-			mindp = std::min(mindp, dp);
-		}
-
-		// for cone to be backfacing, the angle between view vector and cone axis should be > (mindp angle + 90 degrees)
-		float conew = mindp < 0.f ? -1.0f : -sqrtf(1.f - mindp * mindp);
-
-		meshlet.cone[0] = avgnormal[0];
-		meshlet.cone[1] = avgnormal[1];
-		meshlet.cone[2] = avgnormal[2];
-		meshlet.cone[3] = conew;
-
-		// dot(cone.xyz, view) < cone.w;
-		if (meshlet.cone[2] < meshlet.cone[3])
-		{
-			culledMeshlets++;
-		}
-	}
-	printf(LOGI("Culled meshlets: %d/%d.\n"), culledMeshlets, mesh.meshlets.size());
-}
 
 struct Buffer
 {
@@ -729,14 +648,11 @@ void buildMeshlets(Mesh& mesh)
 {
 	size_t max_vertices = 64;
 	size_t max_triangles = 124;
-
-	//*meshlet_vertices must contain enough space for all meshlets, worst case size is equal to max_meshlets* max_vertices
-	//* meshlet_triangles must contain enough space for all meshlets, worst case size is equal to max_meshlets* max_triangles * 3
 	
 	std::vector<meshopt_Meshlet> meshlets(meshopt_buildMeshletsBound(mesh.indices.size(), max_vertices, max_triangles));
-	std::vector<unsigned int> meshlet_vertices(meshlets.size() * max_vertices);
-	std::vector<unsigned char> meshlet_triangles(meshlets.size() * max_triangles * 3);
-	meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshlet_vertices.data(), meshlet_triangles.data(), mesh.indices.data(), mesh.indices.size(),
+	mesh.meshletVertexData.resize(meshlets.size() * max_vertices);
+	mesh.meshletIndexData.resize(meshlets.size() * max_triangles * 3);
+	meshlets.resize(meshopt_buildMeshlets(meshlets.data(), mesh.meshletVertexData.data(), mesh.meshletIndexData.data(), mesh.indices.data(), mesh.indices.size(),
 		&mesh.vertices[0].vx, mesh.vertices.size(), sizeof(Vertex), max_vertices, max_triangles, 0.5f));
 
 	// TODO: we don't really need this but this makes sure we can assume that we need all 32 meshlets in task shader.
@@ -746,13 +662,14 @@ void buildMeshlets(Mesh& mesh)
 	for (auto& meshlet : meshlets)
 	{
 		Meshlet m = {};
-		memcpy(m.vertices, (void *)(meshlet_vertices.data() + meshlet.vertex_offset), sizeof(unsigned int) * meshlet.vertex_count);
-		memcpy(m.indices, (void *)(meshlet_triangles.data() + meshlet.triangle_offset), sizeof(unsigned char) * meshlet.triangle_count * 3);
-		m.triangleCount = uint8_t(meshlet.triangle_count);
-		m.vertexCount = uint8_t(meshlet.vertex_count);
 
-		meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshlet_vertices[meshlet.vertex_offset], &meshlet_triangles[meshlet.triangle_offset], meshlet.triangle_count,
-			&mesh.vertices[0].vx, mesh.vertices.size(), sizeof(Vertex));
+		m.vertexOffset = meshlet.vertex_offset;
+		m.triangleOffset = meshlet.triangle_offset;
+		m.vertexCount = uint8_t(meshlet.vertex_count);
+		m.triangleCount = uint8_t(meshlet.triangle_count);
+
+		meshopt_Bounds bounds = meshopt_computeMeshletBounds(&mesh.meshletVertexData[meshlet.vertex_offset], &mesh.meshletIndexData[meshlet.triangle_offset],
+			meshlet.triangle_count, &mesh.vertices[0].vx, mesh.vertices.size(), sizeof(Vertex));
 	
 		m.cone[0] = bounds.cone_axis[0];
 		m.cone[1] = bounds.cone_axis[1];
@@ -1033,9 +950,13 @@ int main(int argc, const char** argv)
 	createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	Buffer mb = {};
+	Buffer mvdb = {};
+	Buffer midb = {};
 	if (rtxEnabled)
 	{
 		createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		createBuffer(mvdb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		createBuffer(midb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	}
 
 	uploadBuffer(device, commandPool, commandBuffer, queue, vb, scratch, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
@@ -1044,6 +965,8 @@ int main(int argc, const char** argv)
 	if (rtxEnabled)
 	{
 		uploadBuffer(device, commandPool, commandBuffer, queue, mb, scratch, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
+		uploadBuffer(device, commandPool, commandBuffer, queue, mvdb, scratch, mesh.meshletVertexData.data(), mesh.meshletVertexData.size() * sizeof(unsigned int));
+		uploadBuffer(device, commandPool, commandBuffer, queue, midb, scratch, mesh.meshletIndexData.data(), mesh.meshletIndexData.size() * sizeof(unsigned char));
 	}
 
 	double frameCPUAvg = 0.0;
@@ -1097,7 +1020,7 @@ int main(int argc, const char** argv)
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineRTX);
 
-			DescriptorInfo descriptors[] = { vb.buffer, mb.buffer };
+			DescriptorInfo descriptors[] = { vb.buffer, mb.buffer, mvdb.buffer, midb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplateRTX, meshLayoutRTX, 0, descriptors);
 			
 			for (uint32_t i = 0; i< drawCount; ++i)
@@ -1157,10 +1080,10 @@ int main(int argc, const char** argv)
 		
 		double frameCPUEnd = glfwGetTime() * 1000.0;
 
-		double trianglesPerSec = double(drawCount * mesh.indices.size() / 3) / double((frameGPUEnd - frameGPUBegin) * 1e-3);
-
 		frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
 		frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
+		
+		double trianglesPerSec = double(drawCount * mesh.indices.size() / 3) / double(frameGPUAvg * 1e-3);
 
 		char title[256];
 		sprintf(title, "cpu: %.2f ms; gpu %.2f ms; triangles %d; meshlets % d; mesh shading %s; %.1fB tri/sec", frameCPUAvg, frameGPUAvg,
@@ -1172,6 +1095,8 @@ int main(int argc, const char** argv)
 
 	{
 		destroyBuffer(mb, device);
+		destroyBuffer(mvdb, device);
+		destroyBuffer(midb, device);
 	}
 
 	destroyBuffer(ib, device);

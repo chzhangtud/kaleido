@@ -8,10 +8,10 @@ struct Vertex
 struct Meshlet
 {
 	vec4 cone;
-	uint vertices[64];
-	uint8_t indices[124 * 3]; // up to 126 triangles
-	uint8_t triangleCount;
+	uint vertexOffset;
+	uint triangleOffset;
 	uint8_t vertexCount;
+	uint8_t triangleCount;
 };
 
 struct TaskPayload {

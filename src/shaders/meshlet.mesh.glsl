@@ -13,6 +13,7 @@ layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
 #define DEBUG 0
+#define TRIANGLE_NORMAL 0
 
 layout(binding = 0) readonly buffer Vertices
 {
@@ -24,11 +25,23 @@ layout(binding = 1) readonly buffer Meshlets
     Meshlet meshlets[];
 };
 
+layout(binding = 2) readonly buffer MeshletVertexData
+{
+    uint meshletVertexData[];
+};
+
+layout(binding = 3) readonly buffer MeshletIndexData
+{
+    uint8_t meshletIndexData[];
+};
+
 taskPayloadSharedEXT TaskPayload payload;
 
 layout(location = 0) out vec4 color[];
 
+#if TRIANGLE_NORMAL
 layout(location = 1) perprimitiveEXT out vec3 triangleNormal[];
+#endif
 
 uint hash( uint a)
 {
@@ -54,10 +67,13 @@ void main()
 #endif
 
     SetMeshOutputsEXT(meshlets[mi].vertexCount, meshlets[mi].triangleCount);
+
+    uint vertexOffset = meshlets[mi].vertexOffset;
+    uint triangleOffset = meshlets[mi].triangleOffset;
     
     for (uint i = ti; i < uint(meshlets[mi].vertexCount); i += 32)
     {
-        uint vi = meshlets[mi].vertices[i];
+        uint vi = meshletVertexData[vertexOffset + i];
 
         Vertex v = vertices[vi];
 
@@ -72,12 +88,13 @@ void main()
         color[i] = vec4(mcolor, 1.0);
 #endif
     }
-    
+
+#if TRIANGLE_NORMAL
     for (uint i = ti; i < uint(meshlets[mi].triangleCount); i += 32)
     {
-        uint vi0 = meshlets[mi].vertices[uint(meshlets[mi].indices[3 * i + 0])];
-        uint vi1 = meshlets[mi].vertices[uint(meshlets[mi].indices[3 * i + 1])];
-        uint vi2 = meshlets[mi].vertices[uint(meshlets[mi].indices[3 * i + 2])];
+        uint vi0 = meshletVertexData[vertexOffset + meshletIndexData[triangleOffset + 3 * i + 0]];
+        uint vi1 = meshletVertexData[vertexOffset + meshletIndexData[triangleOffset + 3 * i + 1]];
+        uint vi2 = meshletVertexData[vertexOffset + meshletIndexData[triangleOffset + 3 * i + 2]];
         
         vec3 position0 = vec3(vertices[vi0].vx, vertices[vi0].vy, vertices[vi0].vz);
         vec3 position1 = vec3(vertices[vi1].vx, vertices[vi1].vy, vertices[vi1].vz);
@@ -87,10 +104,12 @@ void main()
 
         triangleNormal[i] = normal;
     }
+#endif
     
     for (uint i = ti; i < meshlets[mi].triangleCount; i += 32)
     {
         // Notice: In GL_NV_mesh_shader people can use writePackedPrimitiveIndices4x8NV for saving packed indices more tightly (4 uint8_t index -> uint), but this doesn't seem to have significant impact on fps here.
-        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(meshlets[mi].indices[3*i], meshlets[mi].indices[3*i+1], meshlets[mi].indices[3*i+2]);
+        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(meshletIndexData[triangleOffset+3*i],meshletIndexData[triangleOffset+3*i+1], meshletIndexData[triangleOffset+3*i+2]);
     }
 }
+
