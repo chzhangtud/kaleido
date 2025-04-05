@@ -15,7 +15,7 @@ void destroyShader(Shader& shader, VkDevice device);
 using Shaders = std::initializer_list<const Shader*>;
 
 VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders);
-VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout);
+VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, size_t pushConstantSize);
 VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, Shaders shaders);
 VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, Shaders shaders, VkPipelineLayout layout);
 
