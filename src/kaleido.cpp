@@ -1,4 +1,4 @@
-#include <iostream>
+﻿#include <iostream>
 #include <stdio.h>
 #include <algorithm>
 
@@ -884,36 +884,35 @@ int main(int argc, const char** argv)
 		assert(rc);
 	}
 
-	// TODO: this is critical for performance!
-	VkPipelineCache pipelineCache = 0;
-
-	VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(device, { &meshVS, &meshFS });
-	VkPipelineLayout meshLayout = createPipelineLayout(device, descriptorSetLayout, sizeof(MeshDraw));
-	assert(meshLayout);
-
-	VkDescriptorUpdateTemplate meshUpdateTemplate = createUpdateTemplate(device, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, { &meshVS, &meshFS });
-	assert(meshUpdateTemplate);
-
-	VkDescriptorSetLayout descriptorSetLayoutRTX = 0;
-	VkPipelineLayout meshLayoutRTX = 0;
-	VkDescriptorUpdateTemplate meshUpdateTemplateRTX = 0;
-	if (rtxEnabled)
+	uint32_t drawCount = 100;
+	std::vector<MeshDraw> draws(drawCount);
+	for (size_t i = 0; i < drawCount; ++i)
 	{
-		descriptorSetLayoutRTX = createDescriptorSetLayout(device, { &meshletTS, &meshletMS, &meshFS });
-		meshLayoutRTX = createPipelineLayout(device, descriptorSetLayoutRTX, sizeof(MeshDraw));
-		assert(meshLayoutRTX);
-
-		meshUpdateTemplateRTX = createUpdateTemplate(device, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayoutRTX, { &meshletTS, &meshletMS, &meshFS });
-		assert(meshUpdateTemplateRTX);
+		draws[i].offset[0] = float(i % 10) * 0.2f - 1.f + 0.1f;
+		draws[i].offset[1] = float(i / 10) * 0.2f - 1.f;
+		draws[i].scale[0] = 0.1f;
+		draws[i].scale[1] = 0.1f;
 	}
 
-	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, { &meshVS, &meshFS }, meshLayout);
+	// TODO: this is critical for performance!
+	VkPipelineCache pipelineCache = 0;
+	Shaders shaders = { &meshVS, &meshFS };
+	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(draws));
+
+	Program meshProgramRTX;
+	if (rtxEnabled)
+	{
+		Shaders shadersRTX = { &meshletTS, &meshletMS, &meshFS };
+		meshProgramRTX = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shadersRTX, sizeof(draws));
+	}
+
+	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, shaders, meshProgram.layout);
 	assert(meshPipeline);
 
 	VkPipeline meshPipelineRTX = 0;
 	if (rtxEnabled)
 	{
-		meshPipelineRTX = createGraphicsPipeline(device, pipelineCache, renderPass, { &meshletTS, &meshletMS, &meshFS }, meshLayoutRTX);
+		meshPipelineRTX = createGraphicsPipeline(device, pipelineCache, renderPass, { &meshletTS, &meshletMS, &meshFS }, meshProgramRTX.layout);
 		assert(meshPipelineRTX);
 	}
 
@@ -1019,28 +1018,18 @@ int main(int argc, const char** argv)
 		VkRect2D scissor = { { 0, 0 }, { uint32_t(swapchain.width), uint32_t(swapchain.height) } };
 
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
-		uint32_t drawCount = 100;
-		std::vector<MeshDraw> draws(drawCount);
-		for (size_t i = 0; i < drawCount; ++i)
-		{
-			draws[i].offset[0] = float(i % 10) * 0.2f - 1.f + 0.1f;
-			draws[i].offset[1] = float(i / 10) * 0.2f - 1.f;
-			draws[i].scale[0] = 0.1f;
-			draws[i].scale[1] = 0.1f;
-		}
+		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);	
 
 		if (rtxEnabled)
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineRTX);
 
 			DescriptorInfo descriptors[] = { vb.buffer, mb.buffer, mvdb.buffer, midb.buffer };
-			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplateRTX, meshLayoutRTX, 0, descriptors);
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramRTX.updateTemplate, meshProgramRTX.layout, 0, descriptors);
 			
 			for (const auto& draw : draws)
 			{
-				vkCmdPushConstants(commandBuffer, meshLayoutRTX, VK_SHADER_STAGE_ALL, 0, sizeof(draws), &draw);
+				vkCmdPushConstants(commandBuffer, meshProgramRTX.layout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(draws), &draw);
 				vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()) / 32, 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
 			}
 		}
@@ -1049,13 +1038,13 @@ int main(int argc, const char** argv)
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
 
 			DescriptorInfo descriptors[] = { vb.buffer };
-			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshUpdateTemplate, meshLayout, 0, descriptors);
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
 
 
 			vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 			for (const auto& draw : draws)
 			{
-				vkCmdPushConstants(commandBuffer, meshLayout, VK_SHADER_STAGE_ALL, 0, sizeof(draws), &draw);
+				vkCmdPushConstants(commandBuffer, meshProgram.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draws), &draw);
 				vkCmdDrawIndexed(commandBuffer, mesh.indices.size(), 1, 0, 0, 0);
 			}
 		}
@@ -1131,15 +1120,10 @@ int main(int argc, const char** argv)
 	vkDestroyQueryPool(device, queryPool, 0);
 
 	vkDestroyPipeline(device, meshPipeline, 0);
-	vkDestroyPipelineLayout(device, meshLayout, 0);
-	vkDestroyDescriptorUpdateTemplate(device, meshUpdateTemplate, 0);
-	vkDestroyDescriptorSetLayout(device, descriptorSetLayout, 0);
-
+	destroyProgram(device, meshProgram);
 	{
 		vkDestroyPipeline(device, meshPipelineRTX, 0);
-		vkDestroyPipelineLayout(device, meshLayoutRTX, 0);
-		vkDestroyDescriptorUpdateTemplate(device, meshUpdateTemplateRTX, 0);
-		vkDestroyDescriptorSetLayout(device, descriptorSetLayoutRTX, 0);
+		destroyProgram(device, meshProgramRTX);
 	}
 
 	destroyShader(meshVS, device);

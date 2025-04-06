@@ -99,12 +99,17 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 	{
 		if (id.kind == Id::Variable && id.storageClass == SpvStorageClassStorageBuffer)
 		{
-			// assume that id.type refers to a pointer to a storage buffer
+			// TODO: we currently assume that id.type refers to a pointer to a storage buffer
 			assert(id.set == 0);
 			assert(id.binding < 32);
 			assert((shader.storageBufferMask & (1 << id.binding)) == 0);
 
 			shader.storageBufferMask |= 1 << id.binding;
+		}
+
+		if (id.kind == Id::Variable && id.storageClass == SpvStorageClassPushConstant)
+		{
+			shader.usePushConstants = true;
 		}
 	}
 }
@@ -189,7 +194,7 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders
 	return setLayout;
 }
 
-VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, size_t pushConstantSize)
+VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, Shaders shaders, VkShaderStageFlags pushConstantStages, size_t pushConstantSize)
 {
 	VkPipelineLayoutCreateInfo createInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
 	createInfo.setLayoutCount = 1;
@@ -199,8 +204,8 @@ VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout des
 
 	if (pushConstantSize)
 	{
-		pushConstantRange.stageFlags = VK_SHADER_STAGE_ALL;
-		pushConstantRange.size = pushConstantSize;
+		pushConstantRange.stageFlags = pushConstantStages;
+		pushConstantRange.size = uint32_t(pushConstantSize);
 
 		createInfo.pushConstantRangeCount = 1;
 		createInfo.pPushConstantRanges = &pushConstantRange;
@@ -325,3 +330,27 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	return pipeline;
 }
 
+Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize)
+{
+	Program program = {};
+	for (const auto& shader : shaders)
+		if (shader->usePushConstants)
+			program.pushConstantStages |= shader->stage;
+
+	program.descriptorSetLayout = createDescriptorSetLayout(device, shaders);
+	assert(program.descriptorSetLayout);
+	program.layout = createPipelineLayout(device, program.descriptorSetLayout, shaders, program.pushConstantStages, pushConstantSize);
+	assert(program.layout);
+	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders);
+	assert(program.updateTemplate);
+
+	
+	return program; 
+}
+
+void destroyProgram(VkDevice device, Program& program)
+{
+	vkDestroyDescriptorUpdateTemplate(device, program.updateTemplate, 0);
+	vkDestroyPipelineLayout(device, program.layout, 0);
+	vkDestroyDescriptorSetLayout(device, program.descriptorSetLayout, 0);
+}
