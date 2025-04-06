@@ -14,7 +14,7 @@
 
 #define VSYNC 0
 
-bool rtxEnabled = false;
+bool meshShadingEnabled = false;
 
 VkInstance createInstance()
 {
@@ -174,7 +174,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	return result;
 }
 
-VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool rtxEnabled)
+VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool meshShadingEnabled)
 {
 	float queuePriorities[] = { 1.0f };
 
@@ -191,7 +191,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 		VK_KHR_8BIT_STORAGE_EXTENSION_NAME
 	};
 
-	if (rtxEnabled)
+	if (meshShadingEnabled)
 	{
 		extensions.emplace_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
 	}
@@ -211,7 +211,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	VkPhysicalDeviceMaintenance4Features featuresMaintenance4 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES };
 	featuresMaintenance4.maintenance4 = VK_TRUE;
 
-	// This will only be used if rtxEnabled = true (see below)
+	// This will only be used if meshShadingEnabled = true (see below)
 	VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
 	featuresMesh.taskShader = VK_TRUE;
 	featuresMesh.meshShader = VK_TRUE;
@@ -228,7 +228,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features16.pNext = &features12;
 	features12.pNext = &featuresMaintenance4;
 
-	if (rtxEnabled)
+	if (meshShadingEnabled)
 		featuresMaintenance4.pNext = &featuresMesh;
 	
 	VkDevice device = 0;
@@ -774,7 +774,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 	{
 		if (key == GLFW_KEY_R)
 		{
-			rtxEnabled = !rtxEnabled;
+			meshShadingEnabled = !meshShadingEnabled;
 		}
 	}
 }
@@ -813,17 +813,17 @@ int main(int argc, const char** argv)
 	std::vector<VkExtensionProperties> extensions(extensionCount);
 	VK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, 0, &extensionCount, extensions.data()));
 
-	bool rtxSupported = false;
+	bool meshShadingSupported = false;
 	for (const auto& ext : extensions)
 	{
 		if (strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0)
 		{
-			rtxSupported = true;
+			meshShadingSupported = true;
 			break;
 		}
 	}
 
-	rtxEnabled = rtxSupported;
+	meshShadingEnabled = meshShadingSupported;
 
 	VkPhysicalDeviceProperties props = {};
 	vkGetPhysicalDeviceProperties(physicalDevice, &props);
@@ -832,7 +832,7 @@ int main(int argc, const char** argv)
 	uint32_t graphicsFamily = getGraphicsFamilyIndex(physicalDevice);
 	assert(familyIndex != VK_QUEUE_FAMILY_IGNORED);
 
-	VkDevice device = createDevice(instance, physicalDevice, graphicsFamily, rtxEnabled);
+	VkDevice device = createDevice(instance, physicalDevice, graphicsFamily, meshShadingEnabled);
 	assert(device);
 
 	GLFWwindow* window = glfwCreateWindow(1024, 768, "kaleido", 0 ,0);
@@ -863,7 +863,7 @@ int main(int argc, const char** argv)
 	
 	Shader meshletTS = {};
 	Shader meshletMS = {};
-	if (rtxEnabled)
+	if (meshShadingEnabled)
 	{
 		bool tc = loadShader(meshletTS, device, "shaders/meshlet.task.spv");
 		assert(tc);
@@ -899,21 +899,21 @@ int main(int argc, const char** argv)
 	Shaders shaders = { &meshVS, &meshFS };
 	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(draws));
 
-	Program meshProgramRTX;
-	if (rtxEnabled)
+	Program meshProgramMS;
+	if (meshShadingEnabled)
 	{
-		Shaders shadersRTX = { &meshletTS, &meshletMS, &meshFS };
-		meshProgramRTX = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shadersRTX, sizeof(draws));
+		Shaders shadersMS = { &meshletTS, &meshletMS, &meshFS };
+		meshProgramMS = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shadersMS, sizeof(draws));
 	}
 
 	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, shaders, meshProgram.layout);
 	assert(meshPipeline);
 
-	VkPipeline meshPipelineRTX = 0;
-	if (rtxEnabled)
+	VkPipeline meshPipelineMS = 0;
+	if (meshShadingEnabled)
 	{
-		meshPipelineRTX = createGraphicsPipeline(device, pipelineCache, renderPass, { &meshletTS, &meshletMS, &meshFS }, meshProgramRTX.layout);
-		assert(meshPipelineRTX);
+		meshPipelineMS = createGraphicsPipeline(device, pipelineCache, renderPass, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout);
+		assert(meshPipelineMS);
 	}
 
 	Swapchain swapchain;
@@ -940,7 +940,7 @@ int main(int argc, const char** argv)
 	bool rcm = loadMesh(mesh, argv[1]);
 	assert(rcm);
 
-	if (rtxEnabled)
+	if (meshShadingEnabled)
 	{
 		buildMeshlets(mesh);
 		//buildMeshletCones(mesh);
@@ -957,7 +957,7 @@ int main(int argc, const char** argv)
 	Buffer mb = {};
 	Buffer mvdb = {};
 	Buffer midb = {};
-	if (rtxEnabled)
+	if (meshShadingEnabled)
 	{
 		createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 		createBuffer(mvdb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -967,7 +967,7 @@ int main(int argc, const char** argv)
 	uploadBuffer(device, commandPool, commandBuffer, queue, vb, scratch, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
 	uploadBuffer(device, commandPool, commandBuffer, queue, ib, scratch, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
 
-	if (rtxEnabled)
+	if (meshShadingEnabled)
 	{
 		uploadBuffer(device, commandPool, commandBuffer, queue, mb, scratch, mesh.meshlets.data(), mesh.meshlets.size() * sizeof(Meshlet));
 		uploadBuffer(device, commandPool, commandBuffer, queue, mvdb, scratch, mesh.meshletVertexData.data(), mesh.meshletVertexData.size() * sizeof(unsigned int));
@@ -1020,16 +1020,16 @@ int main(int argc, const char** argv)
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);	
 
-		if (rtxEnabled)
+		if (meshShadingEnabled)
 		{
-			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineRTX);
+			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineMS);
 
 			DescriptorInfo descriptors[] = { vb.buffer, mb.buffer, mvdb.buffer, midb.buffer };
-			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramRTX.updateTemplate, meshProgramRTX.layout, 0, descriptors);
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramMS.updateTemplate, meshProgramMS.layout, 0, descriptors);
 			
 			for (const auto& draw : draws)
 			{
-				vkCmdPushConstants(commandBuffer, meshProgramRTX.layout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(draws), &draw);
+				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(draws), &draw);
 				vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()) / 32, 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
 			}
 		}
@@ -1097,7 +1097,7 @@ int main(int argc, const char** argv)
 
 		char title[256];
 		sprintf(title, "cpu: %.2f ms; gpu %.2f ms; triangles %d; meshlets % d; mesh shading %s; %.1fB tri/sec", frameCPUAvg, frameGPUAvg,
-			int(mesh.indices.size() / 3), int(mesh.meshlets.size()), rtxEnabled ? "ON" : "OFF", trianglesPerSec * 1e-9);
+			int(mesh.indices.size() / 3), int(mesh.meshlets.size()), meshShadingEnabled ? "ON" : "OFF", trianglesPerSec * 1e-9);
 		glfwSetWindowTitle(window, title);
 	}
 
@@ -1122,8 +1122,8 @@ int main(int argc, const char** argv)
 	vkDestroyPipeline(device, meshPipeline, 0);
 	destroyProgram(device, meshProgram);
 	{
-		vkDestroyPipeline(device, meshPipelineRTX, 0);
-		destroyProgram(device, meshProgramRTX);
+		vkDestroyPipeline(device, meshPipelineMS, 0);
+		destroyProgram(device, meshProgramMS);
 	}
 
 	destroyShader(meshVS, device);
