@@ -524,7 +524,11 @@ VkQueryPool createQueryPool(VkDevice device, uint32_t queryCount)
 
 struct alignas(16) Meshlet
 {
-	float cone[4];
+	glm::vec3 center;
+	float radius;
+	int8_t coneAxis[3];
+	int8_t coneCutoff;
+
 	uint32_t vertexOffset;
 	uint32_t triangleOffset;
 	uint8_t vertexCount;
@@ -673,10 +677,12 @@ void buildMeshlets(Mesh& mesh)
 		meshopt_Bounds bounds = meshopt_computeMeshletBounds(&mesh.meshletVertexData[meshlet.vertex_offset], &mesh.meshletIndexData[meshlet.triangle_offset],
 			meshlet.triangle_count, &mesh.vertices[0].vx, mesh.vertices.size(), sizeof(Vertex));
 	
-		m.cone[0] = bounds.cone_axis[0];
-		m.cone[1] = bounds.cone_axis[1];
-		m.cone[2] = bounds.cone_axis[2];
-		m.cone[3] = bounds.cone_cutoff;
+		m.center = glm::vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
+		m.radius = bounds.radius;
+		m.coneAxis[0] = bounds.cone_axis_s8[0];
+		m.coneAxis[1] = bounds.cone_axis_s8[1];
+		m.coneAxis[2] = bounds.cone_axis_s8[2];
+		m.coneCutoff = bounds.cone_cutoff_s8;
 		mesh.meshlets.emplace_back(m);
 	}
 }
@@ -1125,7 +1131,7 @@ int main(int argc, const char** argv)
 			
 			for (const auto& draw : draws)
 			{
-				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(MeshDraw), &draw);
+				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(MeshDraw), &draw);
 				vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()) / 32, 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
 			}
 		}

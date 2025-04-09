@@ -8,7 +8,11 @@ struct Vertex
 struct Meshlet
 {
 	// vec4 keeps Mrshlet aligned 10 16 bytes which is important because C++ has an alignas() directive
-	vec4 cone;
+	vec3 center;
+	float radius;
+	int8_t coneAxis[3];
+	int8_t coneCutoff;
+
 	uint vertexOffset;
 	uint triangleOffset;
 	uint8_t vertexCount;

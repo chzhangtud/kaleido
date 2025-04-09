@@ -27,10 +27,9 @@ layout(binding = 1) readonly buffer Meshlets
 
 taskPayloadSharedEXT TaskPayload payload;
 
-bool coneCull(vec4 cone, vec3 view)
+bool coneCull(vec3 center, float radius, vec3 cone_axis, float cone_cutoff, vec3 camera_position)
 {
-    //Reference: https://github.com/zeux/meshoptimizer/blob/8764552531e55588a049b2d5f171db33200ac512/demo/main.cpp#L1126
-    return dot(cone.xyz, -view) >= cone.w;
+    return dot(camera_position - center, cone_axis) >= cone_cutoff * length(center - camera_position) + radius;
 }
 
 void main()
@@ -41,7 +40,14 @@ void main()
 
 #if CULL
     // TODO: we assume that gl_SubgroupSize is 32 (same as workgroup size).
-    bool accept = !coneCull(meshlets[mi].cone, vec3(0.0, 0.0, 1.0));
+    vec3 center = rotateQuat(meshlets[mi].center, meshDraw.orientation) * meshDraw.scale + meshDraw.position;
+    float radius = meshlets[mi].radius * meshDraw.scale;
+    vec3 coneAxis = rotateQuat(vec3(int(meshlets[mi].coneAxis[0]) / 127.0,
+                                    int(meshlets[mi].coneAxis[1]) / 127.0,
+                                    int(meshlets[mi].coneAxis[2]) / 127.0), meshDraw.orientation);
+    float coneCutoff = int(meshlets[mi].coneCutoff) / 127.0;
+    bool accept = !coneCull(center, radius, coneAxis, coneCutoff, vec3(0.0, 0.0, 0.0));
+
     uvec4 ballot = subgroupBallot(accept);
     uint index = subgroupBallotExclusiveBitCount(ballot);
 
