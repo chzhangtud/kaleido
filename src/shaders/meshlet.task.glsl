@@ -15,6 +15,11 @@ layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 #define CULL 1
 
+layout(push_constant) uniform block
+{
+    MeshDraw meshDraw;
+};
+
 layout(binding = 1) readonly buffer Meshlets
 {
     Meshlet meshlets[];

@@ -9,6 +9,12 @@
 #include <objparser.h>
 #include <meshoptimizer.h>
 
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
+#include <glm/mat4x4.hpp>
+#include <glm/ext/quaternion_float.hpp>
+#include <glm/ext/quaternion_transform.hpp>
+
 #include "common.h"
 #include "shaders.h"
 
@@ -129,7 +135,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 {
 	VkPhysicalDevice discrete = 0;
 	VkPhysicalDevice fallback = 0;
-
+	
 	for (uint32_t i = 0; i < physicalDeviceCount; ++i)
 	{
 		VkPhysicalDeviceProperties props;
@@ -527,8 +533,10 @@ struct alignas(16) Meshlet
 
 struct alignas(16) MeshDraw
 {
-	float offset[2];
-	float scale[2];
+	glm::mat4 projection;
+	glm::vec3 position;
+	float scale;
+	glm::quat orientation;
 };
 
 struct Vertex
@@ -817,6 +825,16 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 	}
 }
 
+glm::mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
+{
+	float f = 1.0f / tanf(fovY/ 2.0f);
+	return glm::mat4(
+		f / aspectWbyH, 0.0f, 0.0f, 0.0f,
+		0.0f, f, 0.0f, 0.0f,
+		0.0f, 0.0f, 0.0f, 1.0f,
+		0.0f, 0.0f, zNear, 0.0f);
+}
+
 int main(int argc, const char** argv)
 {
 	if (argc < 2)
@@ -923,26 +941,19 @@ int main(int argc, const char** argv)
 		assert(rc);
 	}
 
-	uint32_t drawCount = 100;
-	std::vector<MeshDraw> draws(drawCount);
-	for (size_t i = 0; i < drawCount; ++i)
-	{
-		draws[i].offset[0] = float(i % 10) * 0.2f - 1.f + 0.1f;
-		draws[i].offset[1] = float(i / 10) * 0.2f - 1.f;
-		draws[i].scale[0] = 0.1f;
-		draws[i].scale[1] = 0.1f;
-	}
+	Swapchain swapchain;
+	createSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, swapchainFormat, renderPass);
 
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 	Shaders shaders = { &meshVS, &meshFS };
-	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(draws));
+	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(MeshDraw));
 
 	Program meshProgramMS;
 	if (meshShadingEnabled)
 	{
 		Shaders shadersMS = { &meshletTS, &meshletMS, &meshFS };
-		meshProgramMS = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shadersMS, sizeof(draws));
+		meshProgramMS = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shadersMS, sizeof(MeshDraw));
 	}
 
 	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, shaders, meshProgram.layout);
@@ -954,9 +965,6 @@ int main(int argc, const char** argv)
 		meshPipelineMS = createGraphicsPipeline(device, pipelineCache, renderPass, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout);
 		assert(meshPipelineMS);
 	}
-
-	Swapchain swapchain;
-	createSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, swapchainFormat, renderPass);
 
 	VkQueryPool queryPool = createQueryPool(device, 128);
 	assert(queryPool);
@@ -1020,6 +1028,24 @@ int main(int argc, const char** argv)
 	double frameCPUAvg = 0.0;
 	double frameGPUAvg = 0.0;
 
+	uint32_t drawCount = 100;
+	std::vector<MeshDraw> draws(drawCount);
+
+	srand(42);
+
+	for (size_t i = 0; i < drawCount; ++i)
+	{
+		draws[i].projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.01f);
+		draws[i].position[0] = (float(rand()) / RAND_MAX) * 2.f - 1.f;
+		draws[i].position[1] = (float(rand()) / RAND_MAX) * 2.f - 1.f;
+		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f - 1.f;
+		draws[i].scale = (float(rand()) / RAND_MAX) * 0.2f;
+
+		glm::vec3 axis(float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1);
+		float angle = glm::radians(float(rand()) / RAND_MAX * 90.f);
+		draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis);
+	}
+
 	while (!glfwWindowShouldClose(window))
 	{
 		double frameCPUBegin = glfwGetTime() * 1000.0;
@@ -1082,9 +1108,15 @@ int main(int argc, const char** argv)
 		VkRect2D scissor = { { 0, 0 }, { uint32_t(swapchain.width), uint32_t(swapchain.height) } };
 
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);	
+		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-		if (meshShadingEnabled)
+		glm::mat4x4 projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.01f);
+		for (size_t i = 0; i < drawCount; ++i)
+		{
+			draws[i].projection = projection;
+		}
+
+		if (meshShadingSupported && meshShadingEnabled)
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineMS);
 
@@ -1093,7 +1125,7 @@ int main(int argc, const char** argv)
 			
 			for (const auto& draw : draws)
 			{
-				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(draws), &draw);
+				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(MeshDraw), &draw);
 				vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()) / 32, 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
 			}
 		}
@@ -1108,7 +1140,7 @@ int main(int argc, const char** argv)
 			vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 			for (const auto& draw : draws)
 			{
-				vkCmdPushConstants(commandBuffer, meshProgram.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draws), &draw);
+				vkCmdPushConstants(commandBuffer, meshProgram.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshDraw), &draw);
 				vkCmdDrawIndexed(commandBuffer, mesh.indices.size(), 1, 0, 0, 0);
 			}
 		}
