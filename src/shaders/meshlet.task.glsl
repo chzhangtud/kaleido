@@ -4,10 +4,9 @@
 #extension GL_EXT_shader_8bit_storage: require
 #extension GL_EXT_shader_explicit_arithmetic_types: require
 #extension GL_EXT_mesh_shader: require
-
 #extension GL_GOOGLE_include_directive: require
-
 #extension GL_KHR_shader_subgroup_ballot: require
+#extension GL_ARB_shader_draw_parameters: require
 
 #include "mesh.h"
 
@@ -15,9 +14,9 @@ layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 #define CULL 1
 
-layout(push_constant) uniform block
+layout(binding = 0) readonly buffer Draws
 {
-    MeshDraw meshDraw;
+    MeshDraw draws[];
 };
 
 layout(binding = 1) readonly buffer Meshlets
@@ -37,6 +36,9 @@ void main()
     uint mgi = gl_WorkGroupID.x;
     uint ti = gl_LocalInvocationID.x;
     uint mi = mgi * 32 + ti;
+
+    MeshDraw meshDraw = draws[gl_DrawIDARB];
+    payload.drawId = gl_DrawIDARB;
 
 #if CULL
     // TODO: we assume that gl_SubgroupSize is 32 (same as workgroup size).

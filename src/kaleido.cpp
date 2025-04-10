@@ -20,7 +20,7 @@
 
 #define VSYNC 0
 
-bool meshShadingEnabled = false;
+bool meshShadingEnabled = true;
 
 VkInstance createInstance()
 {
@@ -204,6 +204,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 
 	VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 	features.features.vertexPipelineStoresAndAtomics = VK_TRUE; // TODO: we aren't using this yet.
+	features.features.multiDrawIndirect = VK_TRUE;
 
 	VkPhysicalDevice16BitStorageFeaturesKHR features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
 	features16.storageBuffer16BitAccess = VK_TRUE;
@@ -216,6 +217,9 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 
 	VkPhysicalDeviceMaintenance4Features featuresMaintenance4 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES };
 	featuresMaintenance4.maintenance4 = VK_TRUE;
+
+	VkPhysicalDeviceShaderDrawParameterFeatures featuresShaderDrawParameter = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES };
+	featuresShaderDrawParameter.shaderDrawParameters = VK_TRUE;
 
 	// This will only be used if meshShadingEnabled = true (see below)
 	VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
@@ -233,9 +237,10 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features.pNext = &features16;
 	features16.pNext = &features12;
 	features12.pNext = &featuresMaintenance4;
+	featuresMaintenance4.pNext = &featuresShaderDrawParameter;
 
 	if (meshShadingEnabled)
-		featuresMaintenance4.pNext = &featuresMesh;
+		featuresShaderDrawParameter.pNext = &featuresMesh;
 	
 	VkDevice device = 0;
 	VK_CHECK(vkCreateDevice(physicalDevice, &createInfo, 0, &device));
@@ -535,12 +540,27 @@ struct alignas(16) Meshlet
 	uint8_t triangleCount;
 };
 
-struct alignas(16) MeshDraw
+struct alignas(16) Globals
 {
 	glm::mat4 projection;
+};
+
+struct alignas(16) MeshDraw
+{
 	glm::vec3 position;
 	float scale;
 	glm::quat orientation;
+
+	union
+	{
+		uint32_t commandData[7];
+
+		struct
+		{
+			VkDrawIndirectCommand commandIndirect; // 5 uint32_t
+			VkDrawMeshTasksIndirectCommandEXT commandIndirectMS; // 2 uint32_t
+		};
+	};
 };
 
 struct Vertex
@@ -897,7 +917,7 @@ int main(int argc, const char** argv)
 	VkDevice device = createDevice(instance, physicalDevice, graphicsFamily, meshShadingEnabled);
 	assert(device);
 
-	GLFWwindow* window = glfwCreateWindow(1024, 768, "kaleido", 0 ,0);
+	GLFWwindow* window = glfwCreateWindow(1024, 768, "kaleido", 0, 0);
 	assert(window);
 
 	glfwSetKeyCallback(window, keyCallback);
@@ -906,9 +926,9 @@ int main(int argc, const char** argv)
 	assert(surface);
 
 	// Check if VkSurfaceKHR is supported in physical device.
-    VkBool32 presentSupported = VK_FALSE;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, graphicsFamily, surface, &presentSupported));
-    assert(presentSupported);
+	VkBool32 presentSupported = VK_FALSE;
+	VK_CHECK(vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, graphicsFamily, surface, &presentSupported));
+	assert(presentSupported);
 
 	VkFormat swapchainFormat = getSwapchainFormat(physicalDevice, surface);
 	VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
@@ -923,7 +943,7 @@ int main(int argc, const char** argv)
 	vkGetDeviceQueue(device, graphicsFamily, 0, &queue);
 
 	VkRenderPass renderPass = createRenderPass(device, swapchainFormat, depthFormat);
-	
+
 	Shader meshletTS = {};
 	Shader meshletMS = {};
 	if (meshShadingEnabled)
@@ -934,7 +954,7 @@ int main(int argc, const char** argv)
 		bool rc = loadShader(meshletMS, device, "shaders/meshlet.mesh.spv");
 		assert(rc);
 	}
-	
+
 	Shader meshVS = {};
 	{
 		bool rc = loadShader(meshVS, device, "shaders/mesh.vert.spv");
@@ -953,13 +973,13 @@ int main(int argc, const char** argv)
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 	Shaders shaders = { &meshVS, &meshFS };
-	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(MeshDraw));
+	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(Globals));
 
 	Program meshProgramMS;
 	if (meshShadingEnabled)
 	{
 		Shaders shadersMS = { &meshletTS, &meshletMS, &meshFS };
-		meshProgramMS = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shadersMS, sizeof(MeshDraw));
+		meshProgramMS = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shadersMS, sizeof(Globals));
 	}
 
 	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderPass, shaders, meshProgram.layout);
@@ -974,7 +994,7 @@ int main(int argc, const char** argv)
 
 	VkQueryPool queryPool = createQueryPool(device, 128);
 	assert(queryPool);
-	
+
 	VkCommandPool commandPool = createCommandPool(device, graphicsFamily);
 	assert(commandPool);
 
@@ -1027,13 +1047,6 @@ int main(int argc, const char** argv)
 		uploadBuffer(device, commandPool, commandBuffer, queue, midb, scratch, mesh.meshletIndexData.data(), mesh.meshletIndexData.size() * sizeof(unsigned char));
 	}
 
-	Image colorTarget = {};
-	Image depthTarget = {};
-	VkFramebuffer targetFB = 0;
-
-	double frameCPUAvg = 0.0;
-	double frameGPUAvg = 0.0;
-
 	uint32_t drawCount = 100;
 	std::vector<MeshDraw> draws(drawCount);
 
@@ -1041,7 +1054,6 @@ int main(int argc, const char** argv)
 
 	for (size_t i = 0; i < drawCount; ++i)
 	{
-		draws[i].projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.01f);
 		draws[i].position[0] = (float(rand()) / RAND_MAX) * 2.f - 1.f;
 		draws[i].position[1] = (float(rand()) / RAND_MAX) * 2.f - 1.f;
 		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f - 1.f;
@@ -1050,7 +1062,26 @@ int main(int argc, const char** argv)
 		glm::vec3 axis(float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1);
 		float angle = glm::radians(float(rand()) / RAND_MAX * 90.f);
 		draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis);
+
+		memset(draws[i].commandData, 0, sizeof(draws[i].commandData));
+		draws[i].commandIndirect.vertexCount = uint32_t(mesh.indices.size());
+		draws[i].commandIndirect.instanceCount = 1;
+		draws[i].commandIndirectMS.groupCountX = uint32_t(mesh.meshlets.size()) / 32;
+		draws[i].commandIndirectMS.groupCountY = 1;
+		draws[i].commandIndirectMS.groupCountZ = 1;
 	}
+
+	Buffer db = {};
+	createBuffer(db, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	uploadBuffer(device, commandPool, commandBuffer, queue, db, scratch, draws.data(), draws.size() * sizeof(MeshDraw));
+
+	Image colorTarget = {};
+	Image depthTarget = {};
+	VkFramebuffer targetFB = 0;
+
+	double frameCPUAvg = 0.0;
+	double frameGPUAvg = 0.0;
 
 	while (!glfwWindowShouldClose(window))
 	{
@@ -1116,39 +1147,30 @@ int main(int argc, const char** argv)
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-		glm::mat4x4 projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.01f);
-		for (size_t i = 0; i < drawCount; ++i)
-		{
-			draws[i].projection = projection;
-		}
+		Globals globals = {};
+		globals.projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.01f);
 
 		if (meshShadingSupported && meshShadingEnabled)
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineMS);
 
-			DescriptorInfo descriptors[] = { vb.buffer, mb.buffer, mvdb.buffer, midb.buffer };
+			DescriptorInfo descriptors[] = { db.buffer, mb.buffer, mvdb.buffer, midb.buffer, vb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramMS.updateTemplate, meshProgramMS.layout, 0, descriptors);
-			
-			for (const auto& draw : draws)
-			{
-				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(MeshDraw), &draw);
-				vkCmdDrawMeshTasksEXT(commandBuffer, uint32_t(mesh.meshlets.size()) / 32, 1, 1); // TODO: use more meaning full group size, and this extension is now standard, not only for NV
-			}
+
+			vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(Globals), &globals);
+			vkCmdDrawMeshTasksIndirectEXT(commandBuffer, db.buffer, offsetof(MeshDraw, commandIndirectMS), uint32_t(draws.size()), sizeof(MeshDraw));
 		}
 		else
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
 
-			DescriptorInfo descriptors[] = { vb.buffer };
+			DescriptorInfo descriptors[] = { db.buffer, vb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
 
-
 			vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
-			for (const auto& draw : draws)
-			{
-				vkCmdPushConstants(commandBuffer, meshProgram.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshDraw), &draw);
-				vkCmdDrawIndexed(commandBuffer, mesh.indices.size(), 1, 0, 0, 0);
-			}
+
+			vkCmdPushConstants(commandBuffer, meshProgram.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Globals), &globals);
+			vkCmdDrawIndexedIndirect(commandBuffer, db.buffer, offsetof(MeshDraw, commandIndirect), uint32_t(draws.size()), sizeof(MeshDraw));
 		}
 
 		vkCmdEndRenderPass(commandBuffer);
@@ -1214,10 +1236,11 @@ int main(int argc, const char** argv)
 		frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
 		
 		double trianglesPerSec = double(drawCount * mesh.indices.size() / 3) / double(frameGPUAvg * 1e-3);
+		double modelsPerSec = double(drawCount) / double(frameGPUAvg * 1e-3);
 
 		char title[256];
-		sprintf(title, "cpu: %.2f ms; gpu %.2f ms; triangles %d; meshlets % d; mesh shading %s; %.1fB tri/sec", frameCPUAvg, frameGPUAvg,
-			int(mesh.indices.size() / 3), int(mesh.meshlets.size()), meshShadingEnabled ? "ON" : "OFF", trianglesPerSec * 1e-9);
+		sprintf(title, "mesh shading %s; cpu: %.2f ms; gpu %.2f ms; triangles %d; meshlets % d; %.1fB tri/sec,%.1fM models/sec", meshShadingEnabled ? "ON" : "OFF", 
+			frameCPUAvg, frameGPUAvg, int(mesh.indices.size() / 3), int(mesh.meshlets.size()), trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);
 	}
 
@@ -1226,7 +1249,8 @@ int main(int argc, const char** argv)
 	vkDestroyFramebuffer(device, targetFB, 0);
 	destroyImage(colorTarget, device);
 	destroyImage(depthTarget, device);
-
+	
+	destroyBuffer(db, device);
 	{
 		destroyBuffer(mb, device);
 		destroyBuffer(mvdb, device);
@@ -1273,4 +1297,5 @@ int main(int argc, const char** argv)
 
     return 0;
 }
+
 

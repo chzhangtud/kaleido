@@ -4,7 +4,6 @@
 #extension GL_EXT_shader_8bit_storage: require
 #extension GL_EXT_shader_explicit_arithmetic_types: require
 #extension GL_EXT_mesh_shader: require
-
 #extension GL_GOOGLE_include_directive: require
 
 #include "mesh.h"
@@ -17,12 +16,12 @@ layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
 layout(push_constant) uniform block
 {
-    MeshDraw meshDraw;
+    Globals globals;
 };
 
-layout(binding = 0) readonly buffer Vertices
+layout(binding = 0) readonly buffer Draws
 {
-    Vertex vertices[];
+    MeshDraw draws[];
 };
 
 layout(binding = 1) readonly buffer Meshlets
@@ -38,6 +37,11 @@ layout(binding = 2) readonly buffer MeshletVertexData
 layout(binding = 3) readonly buffer MeshletIndexData
 {
     uint8_t meshletIndexData[];
+};
+
+layout(binding = 4) readonly buffer Vertices
+{
+    Vertex vertices[];
 };
 
 taskPayloadSharedEXT TaskPayload payload;
@@ -59,12 +63,12 @@ uint hash( uint a)
    return a;
 }
 
-
 void main()
 {
     uint mi = payload.meshletIndices[gl_WorkGroupID.x];
-
     uint ti = gl_LocalInvocationID.x;
+
+    MeshDraw meshDraw = draws[payload.drawId];
 
 #if DEBUG
     uint mhash = hash(mi);
@@ -86,7 +90,7 @@ void main()
         vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
         vec2 texcoord = vec2(v.tu, v.tv);
 
-        gl_MeshVerticesEXT[i].gl_Position = meshDraw.projection * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1.0);
+        gl_MeshVerticesEXT[i].gl_Position = globals.projection * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1.0);
 
         color[i] = vec4(normal * 0.5 + vec3(0.5), 1.0);
 #if DEBUG
