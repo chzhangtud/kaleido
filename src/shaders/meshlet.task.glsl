@@ -35,20 +35,26 @@ void main()
 {
     uint mgi = gl_WorkGroupID.x;
     uint ti = gl_LocalInvocationID.x;
-    uint mi = mgi * 32 + ti;
 
     MeshDraw meshDraw = draws[gl_DrawIDARB];
     payload.drawId = gl_DrawIDARB;
 
+    uint mi = mgi * 32 + ti + meshDraw.meshletOffset;
+
 #if CULL
-    // TODO: we assume that gl_SubgroupSize is 32 (same as workgroup size).
-    vec3 center = rotateQuat(meshlets[mi].center, meshDraw.orientation) * meshDraw.scale + meshDraw.position;
-    float radius = meshlets[mi].radius * meshDraw.scale;
-    vec3 coneAxis = rotateQuat(vec3(int(meshlets[mi].coneAxis[0]) / 127.0,
-                                    int(meshlets[mi].coneAxis[1]) / 127.0,
-                                    int(meshlets[mi].coneAxis[2]) / 127.0), meshDraw.orientation);
-    float coneCutoff = int(meshlets[mi].coneCutoff) / 127.0;
-    bool accept = !coneCull(center, radius, coneAxis, coneCutoff, vec3(0.0, 0.0, 0.0));
+    bool accept = false;
+
+    if (mi < meshDraw.meshletCount + meshDraw.meshletOffset)
+    {
+		// TODO: we assume that gl_SubgroupSize is 32 (same as workgroup size).
+		vec3 center = rotateQuat(meshlets[mi].center, meshDraw.orientation) * meshDraw.scale + meshDraw.position;
+		float radius = meshlets[mi].radius * meshDraw.scale;
+		vec3 coneAxis = rotateQuat(vec3(int(meshlets[mi].coneAxis[0]) / 127.0,
+										int(meshlets[mi].coneAxis[1]) / 127.0,
+										int(meshlets[mi].coneAxis[2]) / 127.0), meshDraw.orientation);
+		float coneCutoff = int(meshlets[mi].coneCutoff) / 127.0;
+		accept = !coneCull(center, radius, coneAxis, coneCutoff, vec3(0.0, 0.0, 0.0));
+    }
 
     uvec4 ballot = subgroupBallot(accept);
     uint index = subgroupBallotExclusiveBitCount(ballot);
@@ -66,7 +72,7 @@ void main()
     payload.meshletIndices[ti] = mi;
     if (ti == 0)
     {
-        EmitMeshTasksEXT(32, 1, 1);
+        EmitMeshTasksEXT(min(32, meshDraw.meshletCount + meshDraw.meshletOffset), 1, 1);
     }
 #endif
 }

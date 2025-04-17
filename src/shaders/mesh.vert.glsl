@@ -29,7 +29,7 @@ void main()
 {
     MeshDraw meshDraw = draws[gl_DrawIDARB];
 
-    Vertex v = vb.vertices[gl_VertexIndex];
+    Vertex v = vb.vertices[gl_VertexIndex + meshDraw.vertexOffset];
 
     vec3 position = vec3(v.vx, v.vy, v.vz);
     vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;

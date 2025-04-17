@@ -4,7 +4,7 @@
 #include "common.h"
 #include "swapchain.h"
 
-#define VSYNC 0
+#define VSYNC 1
 
 VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow* window)
 {
@@ -32,13 +32,13 @@ VkFormat getSwapchainFormat(VkPhysicalDevice physicalDevice, VkSurfaceKHR surfac
 	if (formatCount == 1 && formats[0].format == VK_FORMAT_UNDEFINED)
 		return VK_FORMAT_R8G8B8A8_UNORM;
 
-	for (int32_t i = 0; i < formatCount; ++i)
+	for (uint32_t i = 0; i < formatCount; ++i)
 	{
 		if (formats[i].format == VK_FORMAT_A2R10G10B10_UNORM_PACK32 || formats[i].format == VK_FORMAT_A2B10G10R10_UNORM_PACK32)
 			return formats[i].format;
 	}
 
-	for (int32_t i = 0; i < formatCount; ++i)
+	for (uint32_t i = 0; i < formatCount; ++i)
 	{
 		if (formats[i].format == VK_FORMAT_R8G8B8A8_UNORM || formats[i].format == VK_FORMAT_B8G8R8A8_UNORM)
 			return formats[i].format;
