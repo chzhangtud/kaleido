@@ -140,6 +140,9 @@ struct alignas(16) MeshDraw
 	float scale;
 	glm::quat orientation;
 
+	glm::vec3 center;
+	float radius;
+
 	uint32_t vertexOffset;
 	uint32_t indexOffset;
 	uint32_t indexCount;
@@ -162,6 +165,9 @@ struct Vertex
 
 struct Mesh
 {
+	glm::vec3 center;
+	float radius;
+
 	uint32_t meshletOffset;
 	uint32_t meshletCount;
 
@@ -279,6 +285,20 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 	}
 
 	Mesh mesh = {};
+
+	glm::vec3 center = glm::vec3(0.f);
+
+	for (const auto& v : vertices)
+		center += glm::vec3(v.vx, v.vy, v.vz);
+	center /= float(vertices.size());
+
+	float radius = 0.f;
+	for (const auto& v : vertices)
+		radius = glm::max(radius, glm::distance(center, glm::vec3(v.vx, v.vy, v.vz)));
+
+	mesh.center = center;
+	mesh.radius = radius;
+
 	mesh.meshletOffset = meshletOffset;
 	mesh.meshletCount = meshletCount;
 
@@ -467,7 +487,7 @@ int main(int argc, const char** argv)
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 
-	Program drawcmdProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcmdCS }, 0);
+	Program drawcmdProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcmdCS }, 6 * sizeof(glm::vec4));
 
 	VkPipeline drawcmdPipeline = createComputePipeline(device, pipelineCache, drawcmdCS, drawcmdProgram.layout);
 
@@ -546,7 +566,7 @@ int main(int argc, const char** argv)
 		uploadBuffer(device, commandPool, commandBuffer, queue, midb, scratch, geometry.meshletIndexData.data(), geometry.meshletIndexData.size() * sizeof(unsigned char));
 	}
 
-	uint32_t drawCount = 1000;
+	uint32_t drawCount = 100000;
 	std::vector<MeshDraw> draws(drawCount);
 
 	srand(42);
@@ -556,15 +576,19 @@ int main(int argc, const char** argv)
 	for (size_t i = 0; i < drawCount; ++i)
 	{
 		const Mesh& mesh = geometry.meshes[rand() % geometry.meshes.size()];
+		float ratio = 5.f;
 
-		draws[i].position[0] = (float(rand()) / RAND_MAX) * 2.f - 1.f;
-		draws[i].position[1] = (float(rand()) / RAND_MAX) * 2.f - 1.f;
-		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f - 1.f;
+		draws[i].position[0] = (float(rand()) / RAND_MAX) * 2.f * ratio - ratio;
+		draws[i].position[1] = (float(rand()) / RAND_MAX) * 2.f * ratio - ratio;
+		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f * ratio - ratio;
 		draws[i].scale = (float(rand()) / RAND_MAX) * 0.2f;
 
 		glm::vec3 axis(float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1);
 		float angle = glm::radians(float(rand()) / RAND_MAX * 90.f);
 		draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis);
+
+		draws[i].center = mesh.center;
+		draws[i].radius = mesh.radius;
 
 		draws[i].vertexOffset = mesh.vertexOffset;
 		draws[i].indexOffset = mesh.indexOffset;
@@ -623,16 +647,34 @@ int main(int argc, const char** argv)
 		vkCmdResetQueryPool(commandBuffer, queryPool, 0, 128);
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 0);
 
+		glm::mat4 projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.1f);
+
+		float drawDistance = 10.f;
 		{
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 2);
+
+			glm::mat4 projectionT = glm::transpose(projection);
+			glm::vec4 frustum[6];
+			frustum[0] = projectionT[3] + projectionT[0]; // x + w < 0
+			frustum[1] = projectionT[3] - projectionT[0]; // x - w < 0
+			frustum[2] = projectionT[3] + projectionT[1]; // y + w < 0
+			frustum[3] = projectionT[3] - projectionT[1]; // y - w < 0
+			frustum[4] = projectionT[3] - projectionT[2]; // z - w < 0 -- reverse z
+			frustum[5] = glm::vec4(0.f, 0.f, -1.f, drawDistance); // -- reverse z, infinite far plane
+
+
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmdPipeline);
 
 			DescriptorInfo descriptors[] = { db.buffer, dcb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, drawcmdProgram.updateTemplate, drawcmdProgram.layout, 0, descriptors);
 
+			vkCmdPushConstants(commandBuffer, drawcmdProgram.layout, drawcmdProgram.pushConstantStages, 0, sizeof(frustum), frustum);
 			vkCmdDispatch(commandBuffer, uint32_t((draws.size() + 31) / 32), 1, 1);
 
 			VkBufferMemoryBarrier cmdEndBarrier = bufferBarrier(dcb.buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &cmdEndBarrier, 0, 0);
+		
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 3);
 		}
 
 		VkImageMemoryBarrier renderBeginBarriers[] =
@@ -667,7 +709,7 @@ int main(int argc, const char** argv)
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
 		Globals globals = {};
-		globals.projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.01f);
+		globals.projection = projection;
 
 		if (meshShadingSupported && meshShadingEnabled)
 		{
@@ -743,11 +785,12 @@ int main(int argc, const char** argv)
 
 		VK_CHECK(vkDeviceWaitIdle(device));
 
-		uint64_t queryResults[2];
-		VK_CHECK(vkGetQueryPoolResults(device, queryPool, 0, 2, sizeof(queryResults), queryResults, sizeof(queryResults[0]), VK_QUERY_RESULT_64_BIT));
+		uint64_t queryResults[4];
+		VK_CHECK(vkGetQueryPoolResults(device, queryPool, 0, ARRAYSIZE(queryResults), sizeof(queryResults), queryResults, sizeof(queryResults[0]), VK_QUERY_RESULT_64_BIT));
 
 		double frameGPUBegin = double(queryResults[0]) * props.limits.timestampPeriod * 1e-6;
 		double frameGPUEnd = double(queryResults[1]) * props.limits.timestampPeriod * 1e-6;
+		double cullGPUTime = double(queryResults[3] - queryResults[2]) * props.limits.timestampPeriod * 1e-6;
 		
 		double frameCPUEnd = glfwGetTime() * 1000.0;
 
@@ -758,8 +801,8 @@ int main(int argc, const char** argv)
 		double modelsPerSec = double(drawCount) / double(frameGPUAvg * 1e-3);
 
 		char title[256];
-		sprintf(title, "mesh shading %s; cpu: %.2f ms; gpu %.2f ms; triangles %.1fM; %.1fB tri/sec,%.1fM models/sec", meshShadingEnabled ? "ON" : "OFF", 
-			frameCPUAvg, frameGPUAvg, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
+		sprintf(title, "mesh shading %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2fms); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec", meshShadingEnabled ? "ON" : "OFF", 
+			frameCPUAvg, frameGPUAvg, cullGPUTime, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);
 	}
 

@@ -30,6 +30,9 @@ struct MeshDraw
 	float scale;
 	vec4 orientation;
 
+	vec3 center;
+	float radius;
+
 	uint vertexOffset;
 	uint indexOffset;
 	uint indexCount;
