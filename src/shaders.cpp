@@ -333,6 +333,25 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	return pipeline;
 }
 
+VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Shader& shader, VkPipelineLayout layout)
+{
+	assert(shader.stage == VK_SHADER_STAGE_COMPUTE_BIT);
+	VkComputePipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+	
+	VkPipelineShaderStageCreateInfo stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+	stage.stage = shader.stage;
+	stage.module = shader.module;
+	stage.pName = "main";
+
+	createInfo.stage = stage;
+	createInfo.layout = layout;
+
+	VkPipeline pipeline = 0;
+	vkCreateComputePipelines(device, pipelineCache, 1, &createInfo, 0, &pipeline);
+
+	return pipeline;
+}
+
 Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize)
 {
 	Program program = {};
@@ -347,7 +366,7 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders);
 	assert(program.updateTemplate);
 
-	
+
 	return program; 
 }
 

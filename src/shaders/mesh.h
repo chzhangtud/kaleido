@@ -31,11 +31,23 @@ struct MeshDraw
 	vec4 orientation;
 
 	uint vertexOffset;
-
+	uint indexOffset;
+	uint indexCount;
 	uint meshletOffset;
 	uint meshletCount;
+};
 
-	uint commandData[7];
+struct MeshDrawCommand
+{
+	uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
+
+	//	VkDrawMeshTasksIndirectCommandEXT
+	uint groupCountX;
+	uint groupCountY;
+	uint groupCountZ;
 };
 
 vec3 rotateQuat(vec3 v, vec4 q)
