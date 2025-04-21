@@ -277,6 +277,9 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 			result.meshlets.emplace_back(m);
 		}
 
+		while (result.meshlets.size() % 32)
+			result.meshlets.push_back(Meshlet());
+
 		meshletCount = uint32_t(meshlets.size());
 	}
 
@@ -571,7 +574,7 @@ int main(int argc, const char** argv)
 		uploadBuffer(device, commandPool, commandBuffer, queue, midb, scratch, geometry.meshletIndexData.data(), geometry.meshletIndexData.size() * sizeof(unsigned char));
 	}
 
-	uint32_t drawCount = 10000;
+	uint32_t drawCount = 10'000;
 	std::vector<MeshDraw> draws(drawCount);
 
 	srand(42);
