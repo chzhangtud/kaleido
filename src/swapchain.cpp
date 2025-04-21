@@ -4,7 +4,7 @@
 #include "common.h"
 #include "swapchain.h"
 
-#define VSYNC 1
+#define VSYNC 0
 
 VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow* window)
 {

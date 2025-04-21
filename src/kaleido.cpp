@@ -9,19 +9,15 @@
 #include <objparser.h>
 #include <meshoptimizer.h>
 
-#include <glm/vec3.hpp>
-#include <glm/vec4.hpp>
-#include <glm/mat4x4.hpp>
-#include <glm/ext/quaternion_float.hpp>
-#include <glm/ext/quaternion_transform.hpp>
-
 #include "common.h"
 #include "device.h"
 #include "swapchain.h"
 #include "resources.h"
 #include "shaders.h"
+#include "math.h"
 
 bool meshShadingEnabled = true;
+bool cullingEnabled = true;
 
 VkSemaphore createSemaphore(VkDevice device)
 {
@@ -118,7 +114,7 @@ VkQueryPool createQueryPool(VkDevice device, uint32_t queryCount)
 
 struct alignas(16) Meshlet
 {
-	glm::vec3 center;
+	vec3 center;
 	float radius;
 	int8_t coneAxis[3];
 	int8_t coneCutoff;
@@ -131,16 +127,16 @@ struct alignas(16) Meshlet
 
 struct alignas(16) Globals
 {
-	glm::mat4 projection;
+	mat4 projection;
 };
 
 struct alignas(16) MeshDraw
 {
-	glm::vec3 position;
+	vec3 position;
 	float scale;
-	glm::quat orientation;
+	quat orientation;
 
-	glm::vec3 center;
+	vec3 center;
 	float radius;
 
 	uint32_t vertexOffset;
@@ -165,7 +161,7 @@ struct Vertex
 
 struct Mesh
 {
-	glm::vec3 center;
+	vec3 center;
 	float radius;
 
 	uint32_t meshletOffset;
@@ -272,7 +268,7 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 			meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshletVertexData[meshlet.vertex_offset], &meshletIndexData[meshlet.triangle_offset],
 				meshlet.triangle_count, &vertices[0].vx, vertices.size(), sizeof(Vertex));
 
-			m.center = glm::vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
+			m.center = vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
 			m.radius = bounds.radius;
 			m.coneAxis[0] = bounds.cone_axis_s8[0];
 			m.coneAxis[1] = bounds.cone_axis_s8[1];
@@ -286,15 +282,15 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 
 	Mesh mesh = {};
 
-	glm::vec3 center = glm::vec3(0.f);
+	vec3 center = vec3(0.f);
 
 	for (const auto& v : vertices)
-		center += glm::vec3(v.vx, v.vy, v.vz);
+		center += vec3(v.vx, v.vy, v.vz);
 	center /= float(vertices.size());
 
 	float radius = 0.f;
 	for (const auto& v : vertices)
-		radius = glm::max(radius, glm::distance(center, glm::vec3(v.vx, v.vy, v.vz)));
+		radius = glm::max(radius, distance(center, vec3(v.vx, v.vy, v.vz)));
 
 	mesh.center = center;
 	mesh.radius = radius;
@@ -356,17 +352,26 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		{
 			meshShadingEnabled = !meshShadingEnabled;
 		}
+		if (key == GLFW_KEY_C)
+		{
+			cullingEnabled = !cullingEnabled;
+		}
 	}
 }
 
-glm::mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
+mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
 {
 	float f = 1.0f / tanf(fovY/ 2.0f);
-	return glm::mat4(
-		f / aspectWbyH, 0.0f, 0.0f, 0.0f,
-		0.0f, f, 0.0f, 0.0f,
-		0.0f, 0.0f, 0.0f, 1.0f,
-		0.0f, 0.0f, zNear, 0.0f);
+	return mat4(
+		f / aspectWbyH, 0.0f,	0.0f,	0.0f,
+		0.0f,			f,		0.0f,	0.0f,
+		0.0f,			0.0f,	0.0f,	1.0f,
+		0.0f,			0.0f,	zNear,	0.0f);
+}
+
+vec4 normalizePlane(vec4 p)
+{
+	return p / length(vec3(p));
 }
 
 int main(int argc, const char** argv)
@@ -487,7 +492,7 @@ int main(int argc, const char** argv)
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 
-	Program drawcmdProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcmdCS }, 6 * sizeof(glm::vec4));
+	Program drawcmdProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcmdCS }, 6 * sizeof(vec4));
 
 	VkPipeline drawcmdPipeline = createComputePipeline(device, pipelineCache, drawcmdCS, drawcmdProgram.layout);
 
@@ -566,7 +571,7 @@ int main(int argc, const char** argv)
 		uploadBuffer(device, commandPool, commandBuffer, queue, midb, scratch, geometry.meshletIndexData.data(), geometry.meshletIndexData.size() * sizeof(unsigned char));
 	}
 
-	uint32_t drawCount = 100000;
+	uint32_t drawCount = 10000;
 	std::vector<MeshDraw> draws(drawCount);
 
 	srand(42);
@@ -583,9 +588,9 @@ int main(int argc, const char** argv)
 		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f * ratio - ratio;
 		draws[i].scale = (float(rand()) / RAND_MAX) * 0.2f;
 
-		glm::vec3 axis(float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1);
+		vec3 axis(float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1);
 		float angle = glm::radians(float(rand()) / RAND_MAX * 90.f);
-		draws[i].orientation = glm::rotate(glm::quat(1, 0, 0, 0), angle, axis);
+		draws[i].orientation = rotate(quat(1, 0, 0, 0), angle, axis);
 
 		draws[i].center = mesh.center;
 		draws[i].radius = mesh.radius;
@@ -647,21 +652,23 @@ int main(int argc, const char** argv)
 		vkCmdResetQueryPool(commandBuffer, queryPool, 0, 128);
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 0);
 
-		glm::mat4 projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.1f);
+		mat4 projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.1f);
 
 		float drawDistance = 10.f;
 		{
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 2);
 
-			glm::mat4 projectionT = glm::transpose(projection);
-			glm::vec4 frustum[6];
-			frustum[0] = projectionT[3] + projectionT[0]; // x + w < 0
-			frustum[1] = projectionT[3] - projectionT[0]; // x - w < 0
-			frustum[2] = projectionT[3] + projectionT[1]; // y + w < 0
-			frustum[3] = projectionT[3] - projectionT[1]; // y - w < 0
-			frustum[4] = projectionT[3] - projectionT[2]; // z - w < 0 -- reverse z
-			frustum[5] = glm::vec4(0.f, 0.f, -1.f, drawDistance); // -- reverse z, infinite far plane
-
+			mat4 projectionT = transpose(projection);
+			vec4 frustum[6] = {};
+			if (cullingEnabled)
+			{
+				frustum[0] = normalizePlane(projectionT[3] + projectionT[0]); // x + w < 0
+				frustum[1] = normalizePlane(projectionT[3] - projectionT[0]); // x - w < 0
+				frustum[2] = normalizePlane(projectionT[3] + projectionT[1]); // y + w < 0
+				frustum[3] = normalizePlane(projectionT[3] - projectionT[1]); // y - w < 0
+				frustum[4] = normalizePlane(projectionT[3] - projectionT[2]); // z - w < 0 -- reverse z
+				frustum[5] = vec4(0.f, 0.f, -1.f, drawDistance); // -- reverse z, infinite far plane
+			}
 
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmdPipeline);
 
@@ -801,7 +808,8 @@ int main(int argc, const char** argv)
 		double modelsPerSec = double(drawCount) / double(frameGPUAvg * 1e-3);
 
 		char title[256];
-		sprintf(title, "mesh shading %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2fms); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec", meshShadingEnabled ? "ON" : "OFF", 
+		sprintf(title, "mesh shading %s; culling: %s cpu: %.2f ms; gpu %.2f ms (cull: %.2fms); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec",
+			meshShadingEnabled ? "ON" : "OFF", cullingEnabled ? "ON" : "OFF",
 			frameCPUAvg, frameGPUAvg, cullGPUTime, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);
 	}
