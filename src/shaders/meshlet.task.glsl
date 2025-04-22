@@ -14,12 +14,17 @@ layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 #define CULL 1
 
-layout(binding = 0) readonly buffer Draws
+layout(binding = 0) readonly buffer DrawCommands
+{
+    MeshDrawCommand drawCommands[];
+};
+
+layout(binding = 1) readonly buffer Draws
 {
     MeshDraw draws[];
 };
 
-layout(binding = 1) readonly buffer Meshlets
+layout(binding = 2) readonly buffer Meshlets
 {
     Meshlet meshlets[];
 };
@@ -36,8 +41,8 @@ void main()
     uint mgi = gl_WorkGroupID.x;
     uint ti = gl_LocalInvocationID.x;
 
-    MeshDraw meshDraw = draws[gl_DrawIDARB];
-    payload.drawId = gl_DrawIDARB;
+    MeshDraw meshDraw = draws[drawCommands[gl_DrawIDARB].drawId];
+    payload.drawId = drawCommands[gl_DrawIDARB].drawId;
 
     uint mi = mgi * 32 + ti + meshDraw.meshletOffset;
 

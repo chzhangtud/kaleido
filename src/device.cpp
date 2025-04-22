@@ -176,7 +176,8 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 		VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
-		VK_KHR_8BIT_STORAGE_EXTENSION_NAME
+		VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
+		VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
 	};
 
 	if (meshShadingEnabled)
@@ -196,6 +197,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features12.uniformAndStorageBuffer8BitAccess = VK_TRUE;
 	features12.storageBuffer8BitAccess = VK_TRUE;
 	features12.shaderFloat16 = VK_TRUE;
+	features12.drawIndirectCount = VK_TRUE;
 
 	VkPhysicalDeviceMaintenance4Features featuresMaintenance4 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES };
 	featuresMaintenance4.maintenance4 = VK_TRUE;

@@ -42,6 +42,8 @@ struct MeshDraw
 
 struct MeshDrawCommand
 {
+	uint drawId;
+
 	uint vertexCount;
     uint instanceCount;
     uint firstVertex;

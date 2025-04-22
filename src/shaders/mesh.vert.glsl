@@ -13,12 +13,17 @@ layout(push_constant) uniform block
     Globals globals;
 };
 
-layout(binding = 0) readonly buffer Draws
+layout(binding = 0) readonly buffer DrawCommands
+{
+    MeshDrawCommand drawCommands[];
+};
+
+layout(binding = 1) readonly buffer Draws
 {
     MeshDraw draws[];
 };
 
-layout(binding = 1) readonly buffer Vertices
+layout(binding = 2) readonly buffer Vertices
 {
     Vertex vertices[];
 } vb;
@@ -27,7 +32,7 @@ layout(location = 0) out vec4 color;
 
 void main()
 {
-    MeshDraw meshDraw = draws[gl_DrawIDARB];
+    MeshDraw meshDraw = draws[drawCommands[gl_DrawIDARB].drawId];
 
     Vertex v = vb.vertices[gl_VertexIndex + meshDraw.vertexOffset];
 

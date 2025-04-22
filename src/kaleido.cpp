@@ -148,6 +148,7 @@ struct alignas(16) MeshDraw
 
 struct MeshDrawCommand
 {
+	uint32_t drawId;
 	VkDrawIndirectCommand indirect; // 4 uint32_t
 	VkDrawMeshTasksIndirectCommandEXT indirectMS; // 3 uint32_t
 };
@@ -473,7 +474,7 @@ int main(int argc, const char** argv)
 
 	Shader drawcmdCS = {};
 	{
-		bool rc = loadShader(drawcmdCS, device, "shaders/drawcmd.comp.spv");
+		bool rc = loadShader(drawcmdCS, device, "shaders/drawcull.comp.spv");
 		assert(rc);
 	}
 
@@ -575,6 +576,10 @@ int main(int argc, const char** argv)
 	}
 
 	uint32_t drawCount = 10'000;
+
+	// TODO: remove the need fot this padding
+	drawCount = (drawCount + 31) & ~31;
+
 	std::vector<MeshDraw> draws(drawCount);
 
 	srand(42);
@@ -614,6 +619,9 @@ int main(int argc, const char** argv)
 
 	Buffer dcb = {};
 	createBuffer(dcb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	Buffer dccb = {};
+	createBuffer(dccb, device, memoryProperties, 4, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	Image colorTarget = {};
 	Image depthTarget = {};
@@ -673,16 +681,22 @@ int main(int argc, const char** argv)
 				frustum[5] = vec4(0.f, 0.f, -1.f, drawDistance); // -- reverse z, infinite far plane
 			}
 
+			vkCmdFillBuffer(commandBuffer, dccb.buffer, 0, 4, 0);
+
+			VkBufferMemoryBarrier fillBarrier = bufferBarrier(dccb.buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fillBarrier, 0, 0);
+
+
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmdPipeline);
 
-			DescriptorInfo descriptors[] = { db.buffer, dcb.buffer };
+			DescriptorInfo descriptors[] = { db.buffer, dcb.buffer, dccb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, drawcmdProgram.updateTemplate, drawcmdProgram.layout, 0, descriptors);
 
 			vkCmdPushConstants(commandBuffer, drawcmdProgram.layout, drawcmdProgram.pushConstantStages, 0, sizeof(frustum), frustum);
 			vkCmdDispatch(commandBuffer, uint32_t((draws.size() + 31) / 32), 1, 1);
 
-			VkBufferMemoryBarrier cmdEndBarrier = bufferBarrier(dcb.buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
-			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &cmdEndBarrier, 0, 0);
+			VkBufferMemoryBarrier cullBarrier = bufferBarrier(dcb.buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &cullBarrier, 0, 0);
 		
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 3);
 		}
@@ -725,23 +739,23 @@ int main(int argc, const char** argv)
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineMS);
 
-			DescriptorInfo descriptors[] = { db.buffer, mb.buffer, mvdb.buffer, midb.buffer, vb.buffer };
+			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mvdb.buffer, midb.buffer, vb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramMS.updateTemplate, meshProgramMS.layout, 0, descriptors);
 
 			vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(Globals), &globals);
-			vkCmdDrawMeshTasksIndirectEXT(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirectMS), uint32_t(draws.size()), sizeof(MeshDrawCommand));
+			vkCmdDrawMeshTasksIndirectCountEXT(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirectMS), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
 		}
 		else
 		{
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
 
-			DescriptorInfo descriptors[] = { db.buffer, vb.buffer };
+			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
 
 			vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
 			vkCmdPushConstants(commandBuffer, meshProgram.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Globals), &globals);
-			vkCmdDrawIndexedIndirect(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), uint32_t(draws.size()), sizeof(MeshDrawCommand));
+			vkCmdDrawIndexedIndirectCountKHR(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
 		}
 
 		vkCmdEndRenderPass(commandBuffer);
@@ -823,6 +837,7 @@ int main(int argc, const char** argv)
 	destroyImage(colorTarget, device);
 	destroyImage(depthTarget, device);
 	
+	destroyBuffer(dccb, device);
 	destroyBuffer(dcb, device);
 	destroyBuffer(db, device);
 	{
