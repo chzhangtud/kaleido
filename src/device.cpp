@@ -92,7 +92,7 @@ uint32_t getGraphicsFamilyIndex(VkPhysicalDevice physicalDevice)
 	vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueCount, 0);
 
 	std::vector<VkQueueFamilyProperties> queues(queueCount);
-	assert(queueCount < ARRAYSIZE(queues));
+	assert(queueCount <= queues.size());
 	vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueCount, queues.data());
 
 	for (uint32_t i = 0; i < queueCount; ++i)

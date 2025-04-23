@@ -24,7 +24,12 @@ layout(binding = 1) readonly buffer Draws
     MeshDraw draws[];
 };
 
-layout(binding = 2) readonly buffer Meshlets
+layout(binding = 2) readonly buffer Meshes
+{
+    Mesh meshes[];
+};
+
+layout(binding = 3) readonly buffer Meshlets
 {
     Meshlet meshlets[];
 };
@@ -44,7 +49,9 @@ void main()
     MeshDraw meshDraw = draws[drawCommands[gl_DrawIDARB].drawId];
     payload.drawId = drawCommands[gl_DrawIDARB].drawId;
 
-    uint mi = mgi * 32 + ti + meshDraw.meshletOffset;
+    Mesh mesh = meshes[meshDraw.meshIndex];
+
+    uint mi = mgi * 32 + ti + mesh.meshletOffset;
 
 #if CULL
 	vec3 center = rotateQuat(meshlets[mi].center, meshDraw.orientation) * meshDraw.scale + meshDraw.position;

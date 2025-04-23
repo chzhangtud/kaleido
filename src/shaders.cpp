@@ -91,7 +91,7 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 			break;
 		}
 		}
-		assert(insn + wordCount <= code + codeSIze);
+		assert(insn + wordCount <= code + codeSize);
 		insn += wordCount;
 	}
 

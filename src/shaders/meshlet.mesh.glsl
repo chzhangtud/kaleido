@@ -29,22 +29,27 @@ layout(binding = 1) readonly buffer Draws
     MeshDraw draws[];
 };
 
-layout(binding = 2) readonly buffer Meshlets
+layout(binding = 2) readonly buffer Meshes
+{
+    Mesh meshes[];
+};
+
+layout(binding = 3) readonly buffer Meshlets
 {
     Meshlet meshlets[];
 };
 
-layout(binding = 3) readonly buffer MeshletVertexData
+layout(binding = 4) readonly buffer MeshletVertexData
 {
     uint meshletVertexData[];
 };
 
-layout(binding = 4) readonly buffer MeshletIndexData
+layout(binding = 5) readonly buffer MeshletIndexData
 {
     uint8_t meshletIndexData[];
 };
 
-layout(binding = 5) readonly buffer Vertices
+layout(binding = 6) readonly buffer Vertices
 {
     Vertex vertices[];
 };

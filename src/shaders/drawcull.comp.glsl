@@ -22,12 +22,17 @@ layout(binding = 0) readonly buffer Draws
     MeshDraw draws[];
 };
 
-layout(binding = 1) writeonly buffer DrawCommands
+layout(binding = 1) readonly buffer Meshes
+{
+    Mesh meshes[];
+};
+
+layout(binding = 2) writeonly buffer DrawCommands
 {
     MeshDrawCommand drawCommands[];
 };
 
-layout(binding = 2) buffer DrawCommandCount
+layout(binding = 3) buffer DrawCommandCount
 {
     uint drawCommandCount;
 };
@@ -38,8 +43,10 @@ void main()
     uint gi = gl_WorkGroupID.x;
     uint di = gi * 32 + ti;
 
-	vec3 center = draws[di].center *  draws[di].scale +  draws[di].position;
-	float radius = draws[di].radius * draws[di].scale;
+	Mesh mesh = meshes[draws[di].meshIndex];
+
+	vec3 center = mesh.center *  draws[di].scale +  draws[di].position;
+	float radius = mesh.radius * draws[di].scale;
 
 	bool visible = true;
 	for (int i = 0; i < 6; ++i)
@@ -67,12 +74,15 @@ void main()
 #if !BALLOT
 		uint dci = atomicAdd(drawCommandCount, 1);
 #endif
+
+		Mesh mesh = meshes[draws[di].meshIndex];
+
 		drawCommands[dci].drawId = di;
-		drawCommands[dci].vertexCount = draws[di].indexCount;
-		drawCommands[dci].instanceCount = visible ? 1 : 0;
-		drawCommands[dci].firstVertex = draws[di].indexOffset;
+		drawCommands[dci].vertexCount = mesh.indexCount;
+		drawCommands[dci].instanceCount = 1;
+		drawCommands[dci].firstVertex = mesh.indexOffset;
 		drawCommands[dci].firstInstance = 0;
-		drawCommands[dci].groupCountX = (draws[di].meshletCount + 31) / 32;
+		drawCommands[dci].groupCountX = (mesh.meshletCount + 31) / 32;
 		drawCommands[dci].groupCountY = 1;
 		drawCommands[dci].groupCountZ = 1;
 	}
