@@ -508,9 +508,9 @@ int main(int argc, const char** argv)
 		assert(rc);
 	}
 
-	Shader drawcmdCS = {};
+	Shader drawcullCS = {};
 	{
-		bool rc = loadShader(drawcmdCS, device, "shaders/drawcull.comp.spv");
+		bool rc = loadShader(drawcullCS, device, "shaders/drawcull.comp.spv");
 		assert(rc);
 	}
 
@@ -532,9 +532,9 @@ int main(int argc, const char** argv)
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 
-	Program drawcullprogram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcmdCS }, sizeof(DrawCullData));
+	Program drawcullprogram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcullCS }, sizeof(DrawCullData));
 
-	VkPipeline drawcmdPipeline = createComputePipeline(device, pipelineCache, drawcmdCS, drawcullprogram.layout);
+	VkPipeline drawcmdPipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullprogram.layout);
 
 	Shaders shaders = { &meshVS, &meshFS };
 	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(Globals));
@@ -725,7 +725,7 @@ int main(int argc, const char** argv)
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, drawcullprogram.updateTemplate, drawcullprogram.layout, 0, descriptors);
 
 			vkCmdPushConstants(commandBuffer, drawcullprogram.layout, drawcullprogram.pushConstantStages, 0, sizeof(cullData), &cullData);
-			vkCmdDispatch(commandBuffer, uint32_t((draws.size() + 31) / 32), 1, 1);
+			vkCmdDispatch(commandBuffer, uint32_t((draws.size() + drawcullCS.localSizeX - 1) / drawcullCS.localSizeX), 1, 1);
 
 			VkBufferMemoryBarrier cullBarrier = bufferBarrier(dcb.buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &cullBarrier, 0, 0);
@@ -914,7 +914,7 @@ int main(int argc, const char** argv)
 
 	destroyShader(meshVS, device);
 	destroyShader(meshFS, device);
-	destroyShader(drawcmdCS, device);
+	destroyShader(drawcullCS, device);
 
 	{
 		destroyShader(meshletTS, device);

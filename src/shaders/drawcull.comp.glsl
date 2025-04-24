@@ -7,10 +7,7 @@
 
 #include "mesh.h"
 
-// The ballot code atm assumes gl_SubgroupSize == 32 which needs to be revised for non-NVidia archs
-#define BALLOT 0
-
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform block
 {
@@ -42,14 +39,13 @@ layout(binding = 3) buffer DrawCommandCount
 
 void main()
 {
-    uint ti = gl_LocalInvocationID.x;
-    uint gi = gl_WorkGroupID.x;
-    uint di = gi * 32 + ti;
+    uint di = gl_GlobalInvocationID.x;
 
 	if (di >= drawCount)
 		return;
 
-	Mesh mesh = meshes[draws[di].meshIndex];
+	uint meshIndex = draws[di].meshIndex;
+	Mesh mesh = meshes[meshIndex];
 
 	vec3 center = mesh.center *  draws[di].scale +  draws[di].position;
 	float radius = mesh.radius * draws[di].scale;
@@ -60,28 +56,9 @@ void main()
 
 	visible = cullingEnabled == 1 ? visible : true;
 
-#if BALLOT
-	uvec4 ballot = subgroupBallot(visible);
-	uint count = subgroupBallotBitCount(ballot);
-
-	if (count == 0)
-		return;
-
-	uint dcgi = 0;
-	if (ti == 0)
-	{
-		dcgi = atomicAdd(drawCommandCount, count);
-	}
-	
-    uint index = subgroupBallotExclusiveBitCount(ballot);
-	uint dci = subgroupBroadcastFirst(dcgi) + index;
-#endif
-
 	if (visible)
 	{
-#if !BALLOT
 		uint dci = atomicAdd(drawCommandCount, 1);
-#endif
 
 		float lodDistance = log2(max(1.0, distance(center, vec3(0.0)) - radius));
 		uint lodIndex = clamp(uint(lodDistance), 0, mesh.lodCount - 1);
