@@ -15,6 +15,9 @@ layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 layout(push_constant) uniform block
 {
 	vec4 frustum[6];
+	uint drawCount;
+	int cullingEnabled;
+	int lodEnabled;
 };
 
 layout(binding = 0) readonly buffer Draws
@@ -43,6 +46,9 @@ void main()
     uint gi = gl_WorkGroupID.x;
     uint di = gi * 32 + ti;
 
+	if (di >= drawCount)
+		return;
+
 	Mesh mesh = meshes[draws[di].meshIndex];
 
 	vec3 center = mesh.center *  draws[di].scale +  draws[di].position;
@@ -51,6 +57,8 @@ void main()
 	bool visible = true;
 	for (int i = 0; i < 6; ++i)
 		visible = visible && dot(frustum[i], vec4(center, 1.0)) > -radius;
+
+	visible = cullingEnabled == 1 ? visible : true;
 
 #if BALLOT
 	uvec4 ballot = subgroupBallot(visible);
@@ -75,14 +83,18 @@ void main()
 		uint dci = atomicAdd(drawCommandCount, 1);
 #endif
 
-		Mesh mesh = meshes[draws[di].meshIndex];
+		float lodDistance = log2(max(1.0, distance(center, vec3(0.0)) - radius));
+		uint lodIndex = clamp(uint(lodDistance), 0, mesh.lodCount - 1);
+		lodIndex = lodEnabled == 1 ? lodIndex : 0;
+
+		MeshLod lod = mesh.lods[lodIndex];
 
 		drawCommands[dci].drawId = di;
-		drawCommands[dci].vertexCount = mesh.indexCount;
+		drawCommands[dci].vertexCount = lod.indexCount;
 		drawCommands[dci].instanceCount = 1;
-		drawCommands[dci].firstVertex = mesh.indexOffset;
+		drawCommands[dci].firstVertex = lod.indexOffset;
 		drawCommands[dci].firstInstance = 0;
-		drawCommands[dci].groupCountX = (mesh.meshletCount + 31) / 32;
+		drawCommands[dci].groupCountX = (lod.meshletCount + 31) / 32;
 		drawCommands[dci].groupCountY = 1;
 		drawCommands[dci].groupCountZ = 1;
 	}

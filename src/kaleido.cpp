@@ -18,6 +18,7 @@
 
 bool meshShadingEnabled = true;
 bool cullingEnabled = true;
+bool lodEnabled = true;
 
 VkSemaphore createSemaphore(VkDevice device)
 {
@@ -128,6 +129,7 @@ struct alignas(16) Meshlet
 struct alignas(16) Globals
 {
 	mat4 projection;
+	int lodEnabled;
 };
 
 struct alignas(16) MeshDraw
@@ -154,6 +156,14 @@ struct Vertex
 	uint16_t tu, tv;
 };
 
+struct MeshLod
+{
+	uint32_t indexOffset;
+	uint32_t indexCount;
+	uint32_t meshletOffset;
+	uint32_t meshletCount;
+};
+
 struct alignas(16) Mesh
 {
 	vec3 center;
@@ -161,10 +171,10 @@ struct alignas(16) Mesh
 
 	uint32_t vertexOffset;
 	uint32_t vertexCount;
-	uint32_t indexOffset;
-	uint32_t indexCount;
-	uint32_t meshletOffset;
-	uint32_t meshletCount;
+	uint32_t lodCount;
+	uint32_t placeHolder;
+
+	MeshLod lods[8];
 };
 
 struct Geometry
@@ -178,6 +188,59 @@ struct Geometry
 
 	std::vector<Mesh> meshes;
 };
+
+struct DrawCullData
+{
+	vec4 frustum[6];
+	uint32_t drawCount;
+	int cullingEnabled;
+	int lodEnabled;
+};
+
+size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
+{
+	size_t max_vertices = 64;
+	size_t max_triangles = 124;
+
+	std::vector<meshopt_Meshlet> meshlets(meshopt_buildMeshletsBound(indices.size(), max_vertices, max_triangles));
+	std::vector<unsigned int> meshletVertexData(meshlets.size() * max_vertices);
+	std::vector<unsigned char> meshletIndexData(meshlets.size() * max_triangles * 3);
+
+	meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(),
+		&vertices[0].vx, vertices.size(), sizeof(Vertex), max_vertices, max_triangles, 0.5f));
+
+	uint32_t meshletVertexOffset = uint32_t(result.meshletVertexData.size());
+	uint32_t meshletIndexOffset = uint32_t(result.meshletIndexData.size());
+
+	result.meshletVertexData.insert(result.meshletVertexData.end(), meshletVertexData.begin(), meshletVertexData.end());
+	result.meshletIndexData.insert(result.meshletIndexData.end(), meshletIndexData.begin(), meshletIndexData.end());
+
+	for (auto& meshlet : meshlets)
+	{
+		Meshlet m = {};
+
+		m.vertexOffset = meshlet.vertex_offset + meshletVertexOffset;
+		m.triangleOffset = meshlet.triangle_offset + meshletIndexOffset;
+		m.vertexCount = uint8_t(meshlet.vertex_count);
+		m.triangleCount = uint8_t(meshlet.triangle_count);
+
+		meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshletVertexData[meshlet.vertex_offset], &meshletIndexData[meshlet.triangle_offset],
+			meshlet.triangle_count, &vertices[0].vx, vertices.size(), sizeof(Vertex));
+
+		m.center = vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
+		m.radius = bounds.radius;
+		m.coneAxis[0] = bounds.cone_axis_s8[0];
+		m.coneAxis[1] = bounds.cone_axis_s8[1];
+		m.coneAxis[2] = bounds.cone_axis_s8[2];
+		m.coneCutoff = bounds.cone_cutoff_s8;
+		result.meshlets.emplace_back(m);
+	}
+
+	while (result.meshlets.size() % 32)
+		result.meshlets.push_back(Meshlet());
+
+	return meshlets.size();
+}
 
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 {
@@ -223,60 +286,12 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 	meshopt_optimizeVertexCache(indices.data(), indices.data(), index_count, vertex_count);
 	meshopt_optimizeVertexFetch(vertices.data(), indices.data(), index_count, vertices.data(), vertex_count, sizeof(Vertex));
 
-	uint32_t vertexOffset = uint32_t(result.vertices.size());
-	uint32_t indexOffset = uint32_t(result.indices.size());
-	uint32_t meshletOffset = uint32_t(result.meshlets.size());
-	uint32_t meshletCount = 0;
+	Mesh mesh = {};
+
+	mesh.vertexOffset = uint32_t(result.vertices.size());
+	mesh.vertexCount = uint32_t(vertices.size());
 
 	result.vertices.insert(result.vertices.end(), vertices.begin(), vertices.end());
-	result.indices.insert(result.indices.end(), indices.begin(), indices.end());
-
-	if (buildMeshlets)
-	{
-		size_t max_vertices = 64;
-		size_t max_triangles = 124;
-
-		std::vector<meshopt_Meshlet> meshlets(meshopt_buildMeshletsBound(indices.size(), max_vertices, max_triangles));
-		std::vector<unsigned int> meshletVertexData(meshlets.size() * max_vertices);
-		std::vector<unsigned char> meshletIndexData(meshlets.size() * max_triangles * 3);
-
-		meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(),
-			&vertices[0].vx, vertices.size(), sizeof(Vertex), max_vertices, max_triangles, 0.5f));
-
-		uint32_t meshletVertexOffset = result.meshletVertexData.size();
-		uint32_t meshletIndexOffset = result.meshletIndexData.size();
-
-		result.meshletVertexData.insert(result.meshletVertexData.end(), meshletVertexData.begin(), meshletVertexData.end());
-		result.meshletIndexData.insert(result.meshletIndexData.end(), meshletIndexData.begin(), meshletIndexData.end());
-
-		for (auto& meshlet : meshlets)
-		{
-			Meshlet m = {};
-
-			m.vertexOffset = meshlet.vertex_offset + meshletVertexOffset;
-			m.triangleOffset = meshlet.triangle_offset + meshletIndexOffset;
-			m.vertexCount = uint8_t(meshlet.vertex_count);
-			m.triangleCount = uint8_t(meshlet.triangle_count);
-
-			meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshletVertexData[meshlet.vertex_offset], &meshletIndexData[meshlet.triangle_offset],
-				meshlet.triangle_count, &vertices[0].vx, vertices.size(), sizeof(Vertex));
-
-			m.center = vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
-			m.radius = bounds.radius;
-			m.coneAxis[0] = bounds.cone_axis_s8[0];
-			m.coneAxis[1] = bounds.cone_axis_s8[1];
-			m.coneAxis[2] = bounds.cone_axis_s8[2];
-			m.coneCutoff = bounds.cone_cutoff_s8;
-			result.meshlets.emplace_back(m);
-		}
-
-		while (result.meshlets.size() % 32)
-			result.meshlets.push_back(Meshlet());
-
-		meshletCount = uint32_t(meshlets.size());
-	}
-
-	Mesh mesh = {};
 
 	vec3 center = vec3(0.f);
 
@@ -291,14 +306,34 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 	mesh.center = center;
 	mesh.radius = radius;
 
-	mesh.vertexOffset = vertexOffset;
-	mesh.vertexCount = uint32_t(vertices.size());
+	std::vector<uint32_t> lodIndices = indices;
 
-	mesh.indexOffset = indexOffset;
-	mesh.indexCount = uint32_t(indices.size());
+	while (mesh.lodCount < ARRAYSIZE(mesh.lods))
+	{
+		MeshLod& lod = mesh.lods[mesh.lodCount++];
 
-	mesh.meshletOffset = meshletOffset;
-	mesh.meshletCount = meshletCount;
+		lod.indexOffset = uint32_t(result.indices.size());
+		lod.indexCount = uint32_t(lodIndices.size());
+
+		result.indices.insert(result.indices.end(), lodIndices.begin(), lodIndices.end());
+
+		lod.meshletOffset = uint32_t(result.meshlets.size());
+		lod.meshletCount = buildMeshlets ? uint32_t(appendMeshlets(result, vertices, lodIndices)) : 0;
+
+		if (mesh.lodCount < ARRAYSIZE(mesh.lods))
+		{
+			size_t nextIndicesTarget = size_t(lodIndices.size() * 0.1f);
+			size_t nextIndices = meshopt_simplify(lodIndices.data(), lodIndices.data(), lodIndices.size(), &vertices[0].vx, vertices.size(), sizeof(Vertex), nextIndicesTarget, 1e-4f);
+			assert(nextIndices <= lodIndices.size());
+
+			if (nextIndices == lodIndices.size())
+				break;
+
+			lodIndices.resize(nextIndices);
+
+			meshopt_optimizeVertexCache(lodIndices.data(), lodIndices.data(), lodIndices.size(), vertex_count);
+		}
+	}
 
 	result.meshes.emplace_back(mesh);
 
@@ -351,6 +386,10 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		if (key == GLFW_KEY_C)
 		{
 			cullingEnabled = !cullingEnabled;
+		}
+		if (key == GLFW_KEY_L)
+		{
+			lodEnabled = !lodEnabled;
 		}
 	}
 }
@@ -488,9 +527,9 @@ int main(int argc, const char** argv)
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 
-	Program drawcmdProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcmdCS }, 6 * sizeof(vec4));
+	Program drawcullprogram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcmdCS }, sizeof(DrawCullData));
 
-	VkPipeline drawcmdPipeline = createComputePipeline(device, pipelineCache, drawcmdCS, drawcmdProgram.layout);
+	VkPipeline drawcmdPipeline = createComputePipeline(device, pipelineCache, drawcmdCS, drawcullprogram.layout);
 
 	Shaders shaders = { &meshVS, &meshFS };
 	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(Globals));
@@ -572,9 +611,8 @@ int main(int argc, const char** argv)
 	}
 
 	uint32_t drawCount = 10'000;
-
-	// TODO: remove the need fot this padding
-	drawCount = (drawCount + 31) & ~31;
+	float sceneRatio = 5.f;
+	float drawDistance = 10.f;
 
 	std::vector<MeshDraw> draws(drawCount);
 
@@ -586,11 +624,10 @@ int main(int argc, const char** argv)
 	{
 		size_t meshIndex = rand() % geometry.meshes.size();
 		const Mesh& mesh = geometry.meshes[meshIndex];
-		float ratio = 5.f;
 
-		draws[i].position[0] = (float(rand()) / RAND_MAX) * 2.f * ratio - ratio;
-		draws[i].position[1] = (float(rand()) / RAND_MAX) * 2.f * ratio - ratio;
-		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f * ratio - ratio;
+		draws[i].position[0] = (float(rand()) / RAND_MAX) * 2.f * sceneRatio - sceneRatio;
+		draws[i].position[1] = (float(rand()) / RAND_MAX) * 2.f * sceneRatio - sceneRatio;
+		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f * sceneRatio - sceneRatio;
 		draws[i].scale = (float(rand()) / RAND_MAX) * 0.2f;
 
 		vec3 axis(float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1, float(rand()) / RAND_MAX * 2 - 1);
@@ -600,7 +637,7 @@ int main(int argc, const char** argv)
 		draws[i].meshIndex = uint32_t(meshIndex);
 		draws[i].vertexOffset = mesh.vertexOffset;
 
-		triangleCount += mesh.indexCount / 3;
+		triangleCount += mesh.lods[0].indexCount / 3;
 	}
 
 	Buffer db = {};
@@ -656,21 +693,21 @@ int main(int argc, const char** argv)
 
 		mat4 projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.1f);
 
-		float drawDistance = 10.f;
 		{
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 2);
 
 			mat4 projectionT = transpose(projection);
-			vec4 frustum[6] = {};
-			if (cullingEnabled)
-			{
-				frustum[0] = normalizePlane(projectionT[3] + projectionT[0]); // x + w < 0
-				frustum[1] = normalizePlane(projectionT[3] - projectionT[0]); // x - w < 0
-				frustum[2] = normalizePlane(projectionT[3] + projectionT[1]); // y + w < 0
-				frustum[3] = normalizePlane(projectionT[3] - projectionT[1]); // y - w < 0
-				frustum[4] = normalizePlane(projectionT[3] - projectionT[2]); // z - w < 0 -- reverse z
-				frustum[5] = vec4(0.f, 0.f, -1.f, drawDistance); // -- reverse z, infinite far plane
-			}
+
+			DrawCullData cullData = {};
+			cullData.frustum[0] = normalizePlane(projectionT[3] + projectionT[0]); // x + w < 0
+			cullData.frustum[1] = normalizePlane(projectionT[3] - projectionT[0]); // x - w < 0
+			cullData.frustum[2] = normalizePlane(projectionT[3] + projectionT[1]); // y + w < 0
+			cullData.frustum[3] = normalizePlane(projectionT[3] - projectionT[1]); // y - w < 0
+			cullData.frustum[4] = normalizePlane(projectionT[3] - projectionT[2]); // z - w < 0 -- reverse z
+			cullData.frustum[5] = vec4(0.f, 0.f, -1.f, drawDistance); // -- reverse z, infinite far plane
+			cullData.drawCount = drawCount;
+			cullData.cullingEnabled = int(cullingEnabled);
+			cullData.lodEnabled = int(lodEnabled);
 
 			vkCmdFillBuffer(commandBuffer, dccb.buffer, 0, 4, 0);
 
@@ -681,9 +718,9 @@ int main(int argc, const char** argv)
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmdPipeline);
 
 			DescriptorInfo descriptors[] = { db.buffer, mb.buffer, dcb.buffer, dccb.buffer };
-			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, drawcmdProgram.updateTemplate, drawcmdProgram.layout, 0, descriptors);
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, drawcullprogram.updateTemplate, drawcullprogram.layout, 0, descriptors);
 
-			vkCmdPushConstants(commandBuffer, drawcmdProgram.layout, drawcmdProgram.pushConstantStages, 0, sizeof(frustum), frustum);
+			vkCmdPushConstants(commandBuffer, drawcullprogram.layout, drawcullprogram.pushConstantStages, 0, sizeof(cullData), &cullData);
 			vkCmdDispatch(commandBuffer, uint32_t((draws.size() + 31) / 32), 1, 1);
 
 			VkBufferMemoryBarrier cullBarrier = bufferBarrier(dcb.buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
@@ -725,6 +762,7 @@ int main(int argc, const char** argv)
 
 		Globals globals = {};
 		globals.projection = projection;
+		globals.lodEnabled = int(lodEnabled);
 
 		if (meshShadingSupported && meshShadingEnabled)
 		{
@@ -733,7 +771,7 @@ int main(int argc, const char** argv)
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramMS.updateTemplate, meshProgramMS.layout, 0, descriptors);
 
-			vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(Globals), &globals);
+			vkCmdPushConstants(commandBuffer, meshProgramMS.layout, VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(Globals), &globals);
 			vkCmdDrawMeshTasksIndirectCountEXT(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirectMS), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
 		}
 		else
@@ -816,8 +854,8 @@ int main(int argc, const char** argv)
 		double modelsPerSec = double(drawCount) / double(frameGPUAvg * 1e-3);
 
 		char title[256];
-		sprintf(title, "mesh shading %s; culling: %s cpu: %.2f ms; gpu %.2f ms (cull: %.2fms); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec",
-			meshShadingEnabled ? "ON" : "OFF", cullingEnabled ? "ON" : "OFF",
+		sprintf(title, "mesh shading %s; culling: %s; lod: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2fms); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec",
+			meshShadingEnabled ? "ON" : "OFF", cullingEnabled ? "ON" : "OFF", lodEnabled ? "ON" :"OFF",
 			frameCPUAvg, frameGPUAvg, cullGPUTime, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);
 	}
@@ -857,7 +895,7 @@ int main(int argc, const char** argv)
 	}
 	{
 		vkDestroyPipeline(device, drawcmdPipeline, 0);
-		destroyProgram(device, drawcmdProgram);
+		destroyProgram(device, drawcullprogram);
 	}
 
 	destroyShader(meshVS, device);

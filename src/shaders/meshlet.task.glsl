@@ -14,6 +14,11 @@ layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 #define CULL 1
 
+layout(push_constant) uniform block
+{
+    Globals globals;
+};
+
 layout(binding = 0) readonly buffer DrawCommands
 {
     MeshDrawCommand drawCommands[];
@@ -51,7 +56,14 @@ void main()
 
     Mesh mesh = meshes[meshDraw.meshIndex];
 
-    uint mi = mgi * 32 + ti + mesh.meshletOffset;
+    vec3 lodCenter = mesh.center *  meshDraw.scale +  meshDraw.position;
+	float lodRadius = mesh.radius * meshDraw.scale;
+
+    float lodDistance = log2(max(1.0, distance(lodCenter, vec3(0.0)) - lodRadius));
+	uint lodIndex = clamp(uint(lodDistance), 0, mesh.lodCount - 1);
+    lodIndex = globals.lodEnabled == 1 ? lodIndex : 0;
+
+    uint mi = mgi * 32 + ti + mesh.lods[lodIndex].meshletOffset;
 
 #if CULL
 	vec3 center = rotateQuat(meshlets[mi].center, meshDraw.orientation) * meshDraw.scale + meshDraw.position;

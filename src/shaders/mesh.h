@@ -22,6 +22,15 @@ struct Meshlet
 struct Globals
 {
 	mat4 projection;
+	int lodEnabled;
+};
+
+struct MeshLod
+{
+	uint indexOffset;
+	uint indexCount;
+	uint meshletOffset;
+	uint meshletCount;
 };
 
 struct Mesh
@@ -31,10 +40,10 @@ struct Mesh
 
 	uint vertexOffset;
 	uint vertexCount;
-	uint indexOffset;
-	uint indexCount;
-	uint meshletOffset;
-	uint meshletCount;
+	uint lodCount;
+	uint placeHolder;
+
+	MeshLod lods[8];
 };
 
 struct MeshDraw
