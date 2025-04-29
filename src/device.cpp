@@ -178,6 +178,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 		VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
 		VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
 		VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
+		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
 	};
 
 	if (meshShadingEnabled)
@@ -211,6 +212,9 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	featuresMesh.taskShader = VK_TRUE;
 	featuresMesh.meshShader = VK_TRUE;
 
+	VkPhysicalDeviceSynchronization2Features sync2Feature = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES };
+	sync2Feature.synchronization2 = VK_TRUE;
+
 	VkDeviceCreateInfo createInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	createInfo.queueCreateInfoCount = 1;
 	createInfo.pQueueCreateInfos = &queueInfo;
@@ -223,9 +227,10 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features16.pNext = &features12;
 	features12.pNext = &featuresMaintenance4;
 	featuresMaintenance4.pNext = &featuresShaderDrawParameter;
+	featuresShaderDrawParameter.pNext = &sync2Feature;
 
 	if (meshShadingEnabled)
-		featuresShaderDrawParameter.pNext = &featuresMesh;
+		sync2Feature.pNext = &featuresMesh;
 
 	VkDevice device = 0;
 	VK_CHECK(vkCreateDevice(physicalDevice, &createInfo, 0, &device));

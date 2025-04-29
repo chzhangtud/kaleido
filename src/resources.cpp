@@ -118,7 +118,7 @@ void destroyBuffer(const Buffer& buffer, VkDevice device)
 	vkFreeMemory(device, buffer.memory, 0);
 }
 
-static VkImageView createImageView(VkDevice device, VkImage image, VkFormat format)
+VkImageView createImageView(VkDevice device, VkImage image, VkFormat format, uint32_t mipLevel, uint32_t levelCount)
 {
 	VkImageAspectFlags aspectMask = (format == VK_FORMAT_D32_SFLOAT) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 
@@ -127,7 +127,8 @@ static VkImageView createImageView(VkDevice device, VkImage image, VkFormat form
 	createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
 	createInfo.format = format;
 	createInfo.subresourceRange.aspectMask = aspectMask;
-	createInfo.subresourceRange.levelCount = 1;
+	createInfo.subresourceRange.baseMipLevel = mipLevel;
+	createInfo.subresourceRange.levelCount = levelCount;
 	createInfo.subresourceRange.layerCount = 1;
 
 	VkImageView view = 0;
@@ -136,13 +137,13 @@ static VkImageView createImageView(VkDevice device, VkImage image, VkFormat form
 	return view;
 }
 
-void createImage(Image& result, VkDevice device, const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t width, uint32_t height, VkFormat format, VkBufferUsageFlags usage)
+void createImage(Image& result, VkDevice device, const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t width, uint32_t height, uint32_t mipLevels, VkFormat format, VkBufferUsageFlags usage)
 {
 	VkImageCreateInfo createInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
 	createInfo.imageType = VK_IMAGE_TYPE_2D;
 	createInfo.format = format;
 	createInfo.extent = { width, height, 1 };
-	createInfo.mipLevels = 1;
+	createInfo.mipLevels = mipLevels;
 	createInfo.arrayLayers = 1;
 	createInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 	createInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -168,7 +169,7 @@ void createImage(Image& result, VkDevice device, const VkPhysicalDeviceMemoryPro
 	VK_CHECK(vkBindImageMemory(device, image, memory, 0));
 
 	result.image = image;
-	result.imageView = createImageView(device, image, format);
+	result.imageView = createImageView(device, image, format, 0, mipLevels);
 	result.memory = memory;
 }
 
@@ -177,5 +178,37 @@ void destroyImage(const Image& image, VkDevice device)
 	vkDestroyImageView(device, image.imageView, 0);
 	vkDestroyImage(device, image.image, 0);
 	vkFreeMemory(device, image.memory, 0);
+}
+
+uint32_t getImageMipLevels(uint32_t width, uint32_t height)
+{
+	uint32_t result = 1;
+
+	while (width > 1 || height > 1)
+	{
+		result++;
+		width /= 2;
+		height /= 2;
+	}
+
+	return result;
+}
+
+VkSampler createSampler(VkDevice device)
+{
+	VkSamplerCreateInfo createInfo = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+
+	createInfo.minFilter = VK_FILTER_LINEAR;
+	createInfo.magFilter = VK_FILTER_LINEAR;
+	createInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	createInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+	createInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+	createInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+	createInfo.minLod = 0.f;
+	createInfo.maxLod = 16.f;
+
+	VkSampler sampler = 0;
+	VK_CHECK(vkCreateSampler(device, &createInfo, 0, &sampler));
+	return sampler;
 }
 

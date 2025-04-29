@@ -19,6 +19,8 @@
 bool meshShadingEnabled = true;
 bool cullingEnabled = true;
 bool lodEnabled = true;
+bool debugPyramid = false;
+int debugPyramidLevel = 0;
 
 VkSemaphore createSemaphore(VkDevice device)
 {
@@ -42,12 +44,12 @@ VkCommandPool createCommandPool(VkDevice device, uint32_t familyIndex)
 	return commandPool;
 }
 
-VkRenderPass createRenderPass(VkDevice device, VkFormat colorFormat, VkFormat depthFormat)
+VkRenderPass createRenderPass(VkDevice device, VkFormat colorFormat, VkFormat depthFormat, bool late)
 {
 	VkAttachmentDescription attachments[2] = {};
 	attachments[0].format = colorFormat;
 	attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	attachments[0].loadOp = late ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
 	attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 	attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 	attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -56,8 +58,8 @@ VkRenderPass createRenderPass(VkDevice device, VkFormat colorFormat, VkFormat de
 
 	attachments[1].format = depthFormat;
 	attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-	attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	attachments[1].loadOp = late ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+	attachments[1].storeOp = late ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
 	attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 	attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 	attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -194,12 +196,17 @@ struct Geometry
 	std::vector<Mesh> meshes;
 };
 
-struct DrawCullData
+struct alignas(16) DrawCullData
 {
 	vec4 frustum[6];
 	uint32_t drawCount;
 	int cullingEnabled;
 	int lodEnabled;
+};
+
+struct alignas(16) DepthReduceData
+{
+	vec2 imageSize;
 };
 
 size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
@@ -387,14 +394,27 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		if (key == GLFW_KEY_R)
 		{
 			meshShadingEnabled = !meshShadingEnabled;
+			return;
 		}
 		if (key == GLFW_KEY_C)
 		{
 			cullingEnabled = !cullingEnabled;
+			return;
 		}
 		if (key == GLFW_KEY_L)
 		{
 			lodEnabled = !lodEnabled;
+			return;
+		}
+		if (key == GLFW_KEY_P)
+		{
+			debugPyramid = !debugPyramid;
+			return;
+		}
+		if (key >= GLFW_KEY_0 && key <= GLFW_KEY_9)
+		{
+			debugPyramidLevel = key - GLFW_KEY_0;
+			return;
 		}
 	}
 }
@@ -495,7 +515,14 @@ int main(int argc, const char** argv)
 	VkQueue queue = 0;
 	vkGetDeviceQueue(device, graphicsFamily, 0, &queue);
 
-	VkRenderPass renderPass = createRenderPass(device, swapchainFormat, depthFormat);
+	VkRenderPass renderPass = createRenderPass(device, swapchainFormat, depthFormat, /* late = */false);
+	assert(renderPass);
+
+	VkRenderPass renderPassLate = createRenderPass(device, swapchainFormat, depthFormat, /* late = */true);
+	assert(renderPassLate);
+
+	VkSampler depthSampler = createSampler(device);
+	assert(depthSampler);
 
 	Shader meshletTS = {};
 	Shader meshletMS = {};
@@ -511,6 +538,12 @@ int main(int argc, const char** argv)
 	Shader drawcullCS = {};
 	{
 		bool rc = loadShader(drawcullCS, device, "shaders/drawcull.comp.spv");
+		assert(rc);
+	}
+
+	Shader depthreduceCS = {};
+	{
+		bool rc = loadShader(depthreduceCS, device, "shaders/depthreduce.comp.spv");
 		assert(rc);
 	}
 
@@ -534,7 +567,10 @@ int main(int argc, const char** argv)
 
 	Program drawcullprogram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcullCS }, sizeof(DrawCullData));
 
-	VkPipeline drawcmdPipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullprogram.layout);
+	VkPipeline drawcullPipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullprogram.layout);
+
+	Program depthreduceProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthreduceCS }, sizeof(DepthReduceData));
+	VkPipeline depthreducePipeline = createComputePipeline(device, pipelineCache, depthreduceCS, depthreduceProgram.layout);
 
 	Shaders shaders = { &meshVS, &meshFS };
 	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(Globals));
@@ -659,6 +695,10 @@ int main(int argc, const char** argv)
 	Image depthTarget = {};
 	VkFramebuffer targetFB = 0;
 
+	Image depthPyramid = {};
+	VkImageView depthPyramidMips[16] = {};
+	uint32_t depthPyramidLevels = 0;
+
 	double frameCPUAvg = 0.0;
 	double frameGPUAvg = 0.0;
 
@@ -677,9 +717,25 @@ int main(int argc, const char** argv)
 			if (targetFB)
 				vkDestroyFramebuffer(device, targetFB, 0);
 
-			createImage(colorTarget, device, memoryProperties, swapchain.width, swapchain.height, swapchainFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-			createImage(depthTarget, device, memoryProperties, swapchain.width, swapchain.height, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+			if (depthPyramid.image)
+			{
+				for (uint32_t i = 0; i < depthPyramidLevels; ++i)
+					vkDestroyImageView(device, depthPyramidMips[i], 0);
+				destroyImage(depthPyramid, device);
+			}
+
+			createImage(colorTarget, device, memoryProperties, swapchain.width, swapchain.height, 1, swapchainFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+			createImage(depthTarget, device, memoryProperties, swapchain.width, swapchain.height, 1, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
 			targetFB = createFramebuffer(device, renderPass, colorTarget.imageView, depthTarget.imageView, swapchain.width, swapchain.height);
+		
+			depthPyramidLevels = getImageMipLevels(swapchain.width / 2, swapchain.height / 2);
+
+			createImage(depthPyramid, device, memoryProperties, swapchain.width / 2, swapchain.height / 2, depthPyramidLevels, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+			for (uint32_t i = 0; i < depthPyramidLevels; ++i)
+			{
+				depthPyramidMips[i] = createImageView(device, depthPyramid.image, VK_FORMAT_R32_SFLOAT, i, 1);
+				assert(depthPyramidMips[i]);
+			}
 		}
 		
 		uint32_t imageIndex = 0;
@@ -695,7 +751,7 @@ int main(int argc, const char** argv)
 		vkCmdResetQueryPool(commandBuffer, queryPoolTimestamp, 0, 128);
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 0);
 
-		mat4 projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 0.1f);
+		mat4 projection = perspectiveProjection(glm::radians(70.f), float(swapchain.width) / float(swapchain.height), 1.f);
 
 		{
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 2);
@@ -719,13 +775,13 @@ int main(int argc, const char** argv)
 			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fillBarrier, 0, 0);
 
 
-			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcmdPipeline);
+			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawcullPipeline);
 
 			DescriptorInfo descriptors[] = { db.buffer, mb.buffer, dcb.buffer, dccb.buffer };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, drawcullprogram.updateTemplate, drawcullprogram.layout, 0, descriptors);
 
 			vkCmdPushConstants(commandBuffer, drawcullprogram.layout, drawcullprogram.pushConstantStages, 0, sizeof(cullData), &cullData);
-			vkCmdDispatch(commandBuffer, uint32_t((draws.size() + drawcullCS.localSizeX - 1) / drawcullCS.localSizeX), 1, 1);
+			vkCmdDispatch(commandBuffer, getGroupCount(uint32_t(draws.size()), drawcullCS.localSizeX), 1, 1);
 
 			VkBufferMemoryBarrier cullBarrier = bufferBarrier(dcb.buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, 0, 1, &cullBarrier, 0, 0);
@@ -746,6 +802,12 @@ int main(int argc, const char** argv)
 		vkCmdResetQueryPool(commandBuffer, queryPoolPipeline, 0, 1);
 		vkCmdBeginQuery(commandBuffer, queryPoolPipeline, 0, 0);
 
+		VkViewport viewport = { 0, float(swapchain.height), float(swapchain.width), -float(swapchain.height), 0, 1 };
+		VkRect2D scissor = { { 0, 0 }, { uint32_t(swapchain.width), uint32_t(swapchain.height) } };
+
+		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
 		VkClearValue clearValues[2];
 		clearValues[0].color = { 48.f / 255.f, 10.f / 255.f, 36.f / 255.f, 1 };
 		clearValues[1].depthStencil = { 0.f, 0 };
@@ -759,12 +821,6 @@ int main(int argc, const char** argv)
 		passBeginInfo.pClearValues = clearValues;
 
 		vkCmdBeginRenderPass(commandBuffer, &passBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-		VkViewport viewport = { 0, float(swapchain.height), float(swapchain.width), -float(swapchain.height), 0, 1 };
-		VkRect2D scissor = { { 0, 0 }, { uint32_t(swapchain.width), uint32_t(swapchain.height) } };
-
-		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
 		Globals globals = {};
 		globals.projection = projection;
@@ -795,6 +851,51 @@ int main(int argc, const char** argv)
 
 		vkCmdEndRenderPass(commandBuffer);
 
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 4);
+
+		VkImageMemoryBarrier depthReadBarriers[] =
+		{
+			imageBarrier(depthTarget.image,VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT),
+			imageBarrier(depthPyramid.image, 0, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL),
+		};
+		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, ARRAYSIZE(depthReadBarriers), depthReadBarriers);
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, depthreducePipeline);
+
+		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
+		{
+			DescriptorInfo sourceDepth = (i == 0)
+				? DescriptorInfo(depthSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL)
+				: DescriptorInfo(depthSampler, depthPyramidMips[i - 1], VK_IMAGE_LAYOUT_GENERAL);
+
+			DescriptorInfo descriptors[] = { { depthPyramidMips[i], VK_IMAGE_LAYOUT_GENERAL }, sourceDepth };
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, depthreduceProgram.updateTemplate, depthreduceProgram.layout, 0, descriptors);
+
+			uint32_t levelWidth = std::max(1u, (swapchain.width / 2) >> i);
+			uint32_t levelHeight = std::max(1u, (swapchain.height / 2) >> i);
+
+			DepthReduceData reduceData = { vec2(levelWidth, levelHeight) };
+
+			vkCmdPushConstants(commandBuffer, depthreduceProgram.layout, depthreduceProgram.pushConstantStages, 0, sizeof(reduceData), &reduceData);
+			vkCmdDispatch(commandBuffer, getGroupCount(levelWidth, depthreduceCS.localSizeX), getGroupCount(levelHeight, depthreduceCS.localSizeY), 1);
+			VkImageMemoryBarrier reduceBarrier = imageBarrier(depthPyramid.image, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &reduceBarrier);
+		}
+
+		VkImageMemoryBarrier depthWriteBarrier = imageBarrier(depthTarget.image, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &depthWriteBarrier);
+
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 5);
+
+		VkRenderPassBeginInfo passLateBeginInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+		passLateBeginInfo.renderPass = renderPassLate;
+		passLateBeginInfo.framebuffer = targetFB;
+		passLateBeginInfo.renderArea.extent.width = swapchain.width;
+		passLateBeginInfo.renderArea.extent.height = swapchain.height;
+
+		vkCmdBeginRenderPass(commandBuffer, &passLateBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdEndRenderPass(commandBuffer);
+
 		vkCmdEndQuery(commandBuffer, queryPoolPipeline, 0);
 
 		VkImageMemoryBarrier copyBarriers[] =
@@ -806,14 +907,32 @@ int main(int argc, const char** argv)
 
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, ARRAYSIZE(copyBarriers), copyBarriers);
 
-		VkImageCopy copyRegion = {};
-		copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		copyRegion.srcSubresource.layerCount = 1;
-		copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		copyRegion.dstSubresource.layerCount = 1;
-		copyRegion.extent = { swapchain.width, swapchain.height, 1 };
+		if (debugPyramid)
+		{
+			VkImageBlit blitRegion = {};
+			blitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blitRegion.srcSubresource.mipLevel = debugPyramidLevel;
+			blitRegion.srcSubresource.layerCount = 1;
+			blitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blitRegion.dstSubresource.layerCount = 1;
+			blitRegion.srcOffsets[0] = { 0, 0, 0 };
+			blitRegion.srcOffsets[1] = { int32_t(std::max(1u, (swapchain.width / 2) >> debugPyramidLevel)), int32_t(std::max(1u, (swapchain.height / 2) >> debugPyramidLevel)), 1 };
+			blitRegion.dstOffsets[0] = { 0, 0, 0 };
+			blitRegion.dstOffsets[1] = { int32_t(swapchain.width), int32_t(swapchain.height), 1 };
 
-		vkCmdCopyImage(commandBuffer, colorTarget.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+			vkCmdBlitImage(commandBuffer, depthPyramid.image, VK_IMAGE_LAYOUT_GENERAL, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blitRegion, VK_FILTER_NEAREST);
+		}
+		else
+		{
+			VkImageCopy copyRegion = {};
+			copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			copyRegion.srcSubresource.layerCount = 1;
+			copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			copyRegion.dstSubresource.layerCount = 1;
+			copyRegion.extent = { swapchain.width, swapchain.height, 1 };
+
+			vkCmdCopyImage(commandBuffer, colorTarget.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+		}
 
 		VkImageMemoryBarrier presentBarrier = imageBarrier(swapchain.images[imageIndex], VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &presentBarrier);
@@ -846,7 +965,7 @@ int main(int argc, const char** argv)
 
 		VK_CHECK(vkDeviceWaitIdle(device));
 
-		uint64_t timestampResults[4] = {};
+		uint64_t timestampResults[6] = {};
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, ARRAYSIZE(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
 
 		uint64_t pipelineResults[1] = {};
@@ -857,6 +976,7 @@ int main(int argc, const char** argv)
 		double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 		double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
 		double cullGPUTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
+		double pyramidGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
 		
 		double frameCPUEnd = glfwGetTime() * 1000.0;
 
@@ -867,13 +987,21 @@ int main(int argc, const char** argv)
 		double modelsPerSec = double(drawCount) / double(frameGPUAvg * 1e-3);
 
 		char title[256];
-		sprintf(title, "mesh shading %s; culling: %s; lod: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2fms); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec",
+		sprintf(title, "mesh shading %s; culling: %s; lod: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec",
 			meshShadingEnabled ? "ON" : "OFF", cullingEnabled ? "ON" : "OFF", lodEnabled ? "ON" :"OFF",
-			frameCPUAvg, frameGPUAvg, cullGPUTime, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
+			frameCPUAvg, frameGPUAvg, cullGPUTime, pyramidGPUTime, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);
 	}
 
 	VK_CHECK(vkDeviceWaitIdle(device));	
+
+	if (depthPyramid.image)
+	{
+		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
+			vkDestroyImageView(device, depthPyramidMips[i], 0);
+
+		destroyImage(depthPyramid, device);
+	}
 
 	vkDestroyFramebuffer(device, targetFB, 0);
 	destroyImage(colorTarget, device);
@@ -908,20 +1036,28 @@ int main(int argc, const char** argv)
 		destroyProgram(device, meshProgramMS);
 	}
 	{
-		vkDestroyPipeline(device, drawcmdPipeline, 0);
+		vkDestroyPipeline(device, drawcullPipeline, 0);
 		destroyProgram(device, drawcullprogram);
+	}
+	{
+		vkDestroyPipeline(device, depthreducePipeline, 0);
+		destroyProgram(device, depthreduceProgram);
 	}
 
 	destroyShader(meshVS, device);
 	destroyShader(meshFS, device);
 	destroyShader(drawcullCS, device);
+	destroyShader(depthreduceCS, device);
 
 	{
 		destroyShader(meshletTS, device);
 		destroyShader(meshletMS, device);
 	}
 
+	vkDestroySampler(device, depthSampler, 0);
+
 	vkDestroyRenderPass(device, renderPass, 0);
+	vkDestroyRenderPass(device, renderPassLate, 0);
     vkDestroySemaphore(device, acquireSemaphore, 0);
     vkDestroySemaphore(device, releaseSemaphore, 0);
     vkDestroySurfaceKHR(instance, surface, 0);
@@ -937,3 +1073,4 @@ int main(int argc, const char** argv)
     return 0;
 }
 
+// 13, 2:04:47
