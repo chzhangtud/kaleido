@@ -50,7 +50,7 @@ static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 {
 	const char* type =
 		(flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) ? ERROR_HEADER :
-		(flags & (VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT)) ? WARNING_HEADER :
+		(flags & VK_DEBUG_REPORT_WARNING_BIT_EXT) ? WARNING_HEADER :
 		INFO_HEADER;
 
 	char message[4096];
@@ -62,8 +62,7 @@ static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 	OutputDebugStringA(message);
 #endif
 
-	int xxx = flags & VK_DEBUG_REPORT_ERROR_BIT_EXT;
-	if (xxx)
+	if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
 	{
 		assert(!"Validation error encountered!");
 	}

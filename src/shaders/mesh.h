@@ -25,6 +25,14 @@ struct Globals
 	int lodEnabled;
 };
 
+struct DrawCullData
+{
+	vec4 frustum[6];
+	uint drawCount;
+	int cullingEnabled;
+	int lodEnabled;
+};
+
 struct MeshLod
 {
 	uint indexOffset;
