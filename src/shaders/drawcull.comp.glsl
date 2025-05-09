@@ -50,7 +50,7 @@ void main()
 	uint meshIndex = draws[di].meshIndex;
 	Mesh mesh = meshes[meshIndex];
 
-	vec3 center = mesh.center *  draws[di].scale +  draws[di].position;
+	vec3 center = mesh.center * draws[di].scale + draws[di].position;
 	float radius = mesh.radius * draws[di].scale;
 
 	bool visible = true;
@@ -58,13 +58,12 @@ void main()
 		visible = visible && dot(cullData.frustum[i], vec4(center, 1.0)) > -radius;
 
 	visible = cullData.cullingEnabled == 1 ? visible : true;
-
 	if (visible)
 	{
 		uint dci = atomicAdd(drawCommandCount, 1);
 
 		float lodDistance = log2(max(1.0, distance(center, vec3(0.0)) - radius));
-		uint lodIndex = clamp(uint(lodDistance), 0, mesh.lodCount - 1);
+		uint lodIndex = clamp(uint(lodDistance), 0, uint(mesh.lodCount) - 1);
 		lodIndex = cullData.lodEnabled == 1 ? lodIndex : 0;
 
 		MeshLod lod = mesh.lods[lodIndex];

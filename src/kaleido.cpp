@@ -19,6 +19,8 @@
 bool meshShadingEnabled = true;
 bool cullingEnabled = true;
 bool lodEnabled = true;
+bool occlusionEnabled = true;
+
 bool debugPyramid = false;
 int debugPyramidLevel = 0;
 
@@ -202,6 +204,10 @@ struct alignas(16) DrawCullData
 	uint32_t drawCount;
 	int cullingEnabled;
 	int lodEnabled;
+	int occlusionEnabled;
+
+	float P00, P11, znear;
+	float pyramidWidth, pyramidHeight;
 };
 
 struct alignas(16) DepthReduceData
@@ -401,6 +407,11 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 			cullingEnabled = !cullingEnabled;
 			return;
 		}
+		if (key == GLFW_KEY_O)
+		{
+			occlusionEnabled = !occlusionEnabled;
+			return;
+		}
 		if (key == GLFW_KEY_L)
 		{
 			lodEnabled = !lodEnabled;
@@ -411,7 +422,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 			debugPyramid = !debugPyramid;
 			return;
 		}
-		if (key >= GLFW_KEY_0 && key <= GLFW_KEY_9)
+		if (debugPyramid && (key >= GLFW_KEY_0 && key <= GLFW_KEY_9))
 		{
 			debugPyramidLevel = key - GLFW_KEY_0;
 			return;
@@ -826,12 +837,18 @@ int main(int argc, const char** argv)
 		cullData.drawCount = drawCount;
 		cullData.cullingEnabled = int(cullingEnabled);
 		cullData.lodEnabled = int(lodEnabled);
+		cullData.occlusionEnabled = int(occlusionEnabled);
+		cullData.P00 = projection[0][0];
+		cullData.P11 = projection[1][1];
+		cullData.znear = znear;
+		cullData.pyramidWidth = float(depthPyramidWidth);
+		cullData.pyramidHeight = float(depthPyramidHeight);
 
 		Globals globals = {};
 		globals.projection = projection;
 		globals.lodEnabled = int(lodEnabled);
 
-		// early cull: frustum cull & fill objects that *were*
+		// early cull: frustum cull & fill objects that *were* visible last frame
 		{
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 2);
 
@@ -971,7 +988,8 @@ int main(int argc, const char** argv)
 
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, drawculllatePipeline);
 
-			DescriptorInfo descriptors[] = { db.buffer, mb.buffer, dcb.buffer, dccb.buffer, dvb.buffer };
+			DescriptorInfo pyramidDesc{ depthSampler,depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL };
+			DescriptorInfo descriptors[] = { db.buffer, mb.buffer, dcb.buffer, dccb.buffer, dvb.buffer, pyramidDesc };
 			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, drawculllateProgram.updateTemplate, drawculllateProgram.layout, 0, descriptors);
 
 			vkCmdPushConstants(commandBuffer, drawculllateProgram.layout, drawculllateProgram.pushConstantStages, 0, sizeof(cullData), &cullData);
@@ -1113,8 +1131,8 @@ int main(int argc, const char** argv)
 		double modelsPerSec = double(drawCount) / double(frameGPUAvg * 1e-3);
 
 		char title[256];
-		sprintf(title, "mesh shading %s; culling: %s; lod: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, cull late: %.2f); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec",
-			meshShadingEnabled ? "ON" : "OFF", cullingEnabled ? "ON" : "OFF", lodEnabled ? "ON" :"OFF",
+		sprintf(title, "mesh shading %s; culling: %s; oc culling: %s; lod: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, cull late: %.2f); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec",
+			meshShadingEnabled ? "ON" : "OFF", cullingEnabled ? "ON" : "OFF", occlusionEnabled ? "ON" : "OFF", lodEnabled ? "ON" : "OFF",
 			frameCPUAvg, frameGPUAvg, cullGPUTime, pyramidGPUTime, culllateGPUTime, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);
 	}
