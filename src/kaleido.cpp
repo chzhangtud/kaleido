@@ -565,7 +565,7 @@ int main(int argc, const char** argv)
 	VkRenderPass renderPassLate = createRenderPass(device, swapchainFormat, depthFormat, /* late = */true);
 	assert(renderPassLate);
 
-	VkSampler depthSampler = createSampler(device);
+	VkSampler depthSampler = createSampler(device, VK_SAMPLER_REDUCTION_MODE_MIN_EXT);
 	assert(depthSampler);
 
 	Shader meshletTS = {};
@@ -706,7 +706,7 @@ int main(int argc, const char** argv)
 		uploadBuffer(device, commandPool, commandBuffer, queue, midb, scratch, geometry.meshletIndexData.data(), geometry.meshletIndexData.size() * sizeof(unsigned char));
 	}
 
-	uint32_t drawCount = 10'000;
+	uint32_t drawCount = 100'000;
 	float sceneRatio = 5.f;
 	float drawDistance = 10.f;
 
@@ -957,8 +957,8 @@ int main(int argc, const char** argv)
 				DescriptorInfo descriptors[] = { { depthPyramidMips[i], VK_IMAGE_LAYOUT_GENERAL }, sourceDepth };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, depthreduceProgram.updateTemplate, depthreduceProgram.layout, 0, descriptors);
 
-				uint32_t levelWidth = std::max(1u, (swapchain.width / 2) >> i);
-				uint32_t levelHeight = std::max(1u, (swapchain.height / 2) >> i);
+				uint32_t levelWidth = std::max(1u, depthPyramidWidth >> i);
+				uint32_t levelHeight = std::max(1u, depthPyramidHeight >> i);
 
 				DepthReduceData reduceData = { vec2(levelWidth, levelHeight) };
 

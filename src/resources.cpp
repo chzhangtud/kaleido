@@ -194,7 +194,7 @@ uint32_t getImageMipLevels(uint32_t width, uint32_t height)
 	return result;
 }
 
-VkSampler createSampler(VkDevice device)
+VkSampler createSampler(VkDevice device, VkSamplerReductionModeEXT reductionMode)
 {
 	VkSamplerCreateInfo createInfo = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
 
@@ -206,6 +206,14 @@ VkSampler createSampler(VkDevice device)
 	createInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
 	createInfo.minLod = 0.f;
 	createInfo.maxLod = 16.f;
+
+	VkSamplerReductionModeCreateInfoEXT createInfoReduction = { VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT };
+
+	if (reductionMode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT)
+	{
+		createInfoReduction.reductionMode = reductionMode;
+		createInfo.pNext = &createInfoReduction;
+	}
 
 	VkSampler sampler = 0;
 	VK_CHECK(vkCreateSampler(device, &createInfo, 0, &sampler));
