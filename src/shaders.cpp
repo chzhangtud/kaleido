@@ -7,9 +7,7 @@
 
 struct Id
 {
-	enum Kind { Unknown = 0, Variable, TypePointer, TypeStruct, TypeImage, TypeSampler, TypeSampledImage };
-
-	Kind kind = Unknown;
+	uint32_t opcode;
 	uint32_t typeId;
 	uint32_t storageClass;
 	uint32_t binding;
@@ -60,8 +58,8 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 			uint32_t id = insn[2];
 			assert(id < idBound);
 
-			assert(ids[id].kind == Id::Unknown);
-			ids[id].kind = Id::Variable;
+			assert(ids[id].opcode == 0);
+			ids[id].opcode = opcode;
 			ids[id].typeId = insn[1];
 			ids[id].storageClass = insn[3];
 			break;
@@ -106,38 +104,8 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 			break;
 		}
 		case SpvOpTypeStruct:
-		{
-			assert(wordCount >= 2);
-
-			uint32_t id = insn[1];
-			assert(id < idBound);
-
-			assert(ids[id].kind == Id::Unknown);
-			ids[id].kind = Id::TypeStruct;
-			break;
-		}
 		case SpvOpTypeImage:
-		{
-			assert(wordCount >= 2);
-
-			uint32_t id = insn[1];
-			assert(id < idBound);
-
-			assert(ids[id].kind == Id::Unknown);
-			ids[id].kind = Id::TypeImage;
-			break;
-		}
 		case SpvOpTypeSampler:
-		{
-			assert(wordCount >= 2);
-
-			uint32_t id = insn[1];
-			assert(id < idBound);
-
-			assert(ids[id].kind == Id::Unknown);
-			ids[id].kind = Id::TypeSampler;
-			break;
-		}
 		case SpvOpTypeSampledImage:
 		{
 			assert(wordCount >= 2);
@@ -145,8 +113,8 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 			uint32_t id = insn[1];
 			assert(id < idBound);
 
-			assert(ids[id].kind == Id::Unknown);
-			ids[id].kind = Id::TypeSampledImage;
+			assert(ids[id].opcode == 0);
+			ids[id].opcode = opcode;
 			break;
 		}
 		case SpvOpTypePointer:
@@ -156,8 +124,8 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 			uint32_t id = insn[1];
 			assert(id < idBound);
 
-			assert(ids[id].kind == Id::Unknown);
-			ids[id].kind = Id::TypePointer;
+			assert(ids[id].opcode == 0);
+			ids[id].opcode = opcode;
 			ids[id].typeId = insn[3];
 			ids[id].storageClass = insn[2];
 			break;
@@ -169,29 +137,30 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 
 	for (const auto& id : ids)
 	{
-		if (id.kind == Id::Variable && (id.storageClass == SpvStorageClassStorageBuffer || id.storageClass == SpvStorageClassUniformConstant))
+		if (id.opcode == SpvOpVariable && (id.storageClass == SpvStorageClassStorageBuffer || id.storageClass == SpvStorageClassUniformConstant))
 		{
 			assert(id.set == 0);
 			assert(id.binding < 32);
-			assert(ids[id.typeId].kind == Id::TypePointer);
+			assert(ids[id.typeId].opcode == SpvOpTypePointer);
+			assert((shader.resourceMask & (1 << id.binding)) == 0);
 
-			Id::Kind typeKind = ids[ids[id.typeId].typeId].kind;
+			uint32_t typeKind = ids[ids[id.typeId].typeId].opcode;
 
 			switch (typeKind)
 			{
-			case Id::TypeStruct:
+			case SpvOpTypeStruct:
 				shader.resourceTypes[id.binding] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 				shader.resourceMask |= 1 << id.binding;
 				break;
-			case Id::TypeImage:
+			case SpvOpTypeImage:
 				shader.resourceTypes[id.binding] = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 				shader.resourceMask |= 1 << id.binding;
 				break;
-			case Id::TypeSampler:
+			case SpvOpTypeSampler:
 				shader.resourceTypes[id.binding] = VK_DESCRIPTOR_TYPE_SAMPLER;
 				shader.resourceMask |= 1 << id.binding;
 				break;
-			case Id::TypeSampledImage:
+			case SpvOpTypeSampledImage:
 				shader.resourceTypes[id.binding] = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 				shader.resourceMask |= 1 << id.binding;
 				break;
@@ -201,7 +170,7 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 			}
 		}
 
-		if (id.kind == Id::Variable && id.storageClass == SpvStorageClassPushConstant)
+		if (id.opcode == SpvOpVariable && id.storageClass == SpvStorageClassPushConstant)
 		{
 			shader.usePushConstants = true;
 		}

@@ -10,7 +10,14 @@ struct Swapchain
 
 VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow* window);
 VkFormat getSwapchainFormat(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface);
-void createSwapchain(Swapchain& result, VkPhysicalDevice physicallDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format, VkRenderPass renderPass, VkSwapchainKHR oldSwapchain = 0);
+void createSwapchain(Swapchain& result, VkPhysicalDevice physicallDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format, VkSwapchainKHR oldSwapchain = 0);
 void destroySwapchain(VkDevice device, Swapchain& swapchain);
-bool resizeSwapchainIfNecessary(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format, VkRenderPass renderPass);
 
+enum SwapchainStatus
+{
+	Swapchain_Ready,
+	Swapchain_Resized,
+	Swapchain_NotReady,
+};
+
+SwapchainStatus updateSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format);

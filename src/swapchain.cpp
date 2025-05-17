@@ -78,8 +78,7 @@ static VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, VkS
 	return swapchain;
 }
 
-void createSwapchain(Swapchain& result, VkPhysicalDevice physicallDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex,
-	VkFormat format, VkRenderPass renderPass, VkSwapchainKHR oldSwapchain)
+void createSwapchain(Swapchain& result, VkPhysicalDevice physicallDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format, VkSwapchainKHR oldSwapchain)
 {
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicallDevice, surface, &surfaceCaps);
@@ -107,8 +106,7 @@ void destroySwapchain(VkDevice device, Swapchain& swapchain)
 	vkDestroySwapchainKHR(device, swapchain.swapchain, 0);
 }
 
-bool resizeSwapchainIfNecessary(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex,
-	VkFormat format, VkRenderPass renderPass)
+SwapchainStatus updateSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format)
 {
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
@@ -116,19 +114,22 @@ bool resizeSwapchainIfNecessary(Swapchain& result, VkPhysicalDevice physicalDevi
 	uint32_t newWidth = surfaceCaps.currentExtent.width;
 	uint32_t newHeight = surfaceCaps.currentExtent.height;
 
+	if (newWidth == 0 || newHeight == 0)
+		return Swapchain_NotReady;
+
 	if (result.width == newWidth && result.height == newHeight)
-		return false;
+		return Swapchain_Ready;
 
 	VkSwapchainKHR oldSwapchain = result.swapchain;
 
 	Swapchain old = result;
 
-	createSwapchain(result, physicalDevice, device, surface, familyIndex, format, renderPass, oldSwapchain);
+	createSwapchain(result, physicalDevice, device, surface, familyIndex, format, oldSwapchain);
 
 	VK_CHECK(vkDeviceWaitIdle(device));
 
 	destroySwapchain(device, old);
 
-	return true;
+	return Swapchain_Resized;
 }
 
