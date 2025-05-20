@@ -32,7 +32,8 @@ layout(location = 0) out vec4 color;
 
 void main()
 {
-    MeshDraw meshDraw = draws[drawCommands[gl_DrawIDARB].drawId];
+    uint drawId = drawCommands[gl_DrawIDARB].drawId;
+	MeshDraw meshDraw = draws[drawId];
 
     Vertex v = vb.vertices[gl_VertexIndex + meshDraw.vertexOffset];
 

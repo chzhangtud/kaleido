@@ -2,7 +2,11 @@
 #include <GLFW/glfw3native.h>
 
 #include "common.h"
-#include "shaders.h"
+#include "device.h"
+
+#ifdef _WIN32
+#include <Windows.h>
+#endif
 
 VkInstance createInstance()
 {

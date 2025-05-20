@@ -11,6 +11,7 @@ add_subdirectory(external/meshoptimizer)
 add_subdirectory(external/volk)
 add_subdirectory(external/zeux_objparser)
 add_subdirectory(external/glm)
+add_subdirectory(external/fast_obj)
 
 if (MSVC)
     set_property(TARGET glfw PROPERTY FOLDER "external")
@@ -18,6 +19,7 @@ if (MSVC)
     set_property(TARGET meshoptimizer PROPERTY FOLDER "external")
     set_property(TARGET zeux_objparser PROPERTY FOLDER "external")
     set_property(TARGET glm PROPERTY FOLDER "external")
+    set_property(TARGET fast_obj PROPERTY FOLDER "external")
 endif()
 
 # find all glsl files and add them to a folder
@@ -43,7 +45,8 @@ target_link_libraries(kaleido PRIVATE   glfw
                                         volk
                                         meshoptimizer
                                         zeux_objparser
-                                        glm)
+                                        glm
+                                        fast_obj)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(kaleido PRIVATE -D_DEBUG) # enable debug mode

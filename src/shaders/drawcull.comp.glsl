@@ -76,7 +76,7 @@ void main()
 	uint meshIndex = draws[di].meshIndex;
 	Mesh mesh = meshes[meshIndex];
 
-	vec3 center = mesh.center * draws[di].scale + draws[di].position;
+	vec3 center = rotateQuat(mesh.center, draws[di].orientation) * draws[di].scale + draws[di].position;
 	float radius = mesh.radius * draws[di].scale;
 
 	bool visible = true;
