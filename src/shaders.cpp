@@ -420,15 +420,28 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	return pipeline;
 }
 
-VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Shader& shader, VkPipelineLayout layout)
+VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Shader& shader, VkPipelineLayout layout, bool useSpecializationConstants, VkBool32 LATE)
 {
 	assert(shader.stage == VK_SHADER_STAGE_COMPUTE_BIT);
 	VkComputePipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
-	
+
+	// TODO: create a specialization constants module to replace code below
+	std::vector<VkSpecializationMapEntry> specializationEntries;
+	VkSpecializationInfo specializationInfo = {};
+	if (useSpecializationConstants)
+	{
+		specializationEntries.push_back({ 0, 0, sizeof(VkBool32) });
+		specializationInfo.mapEntryCount = uint32_t(specializationEntries.size());
+		specializationInfo.pMapEntries = specializationEntries.data();
+		specializationInfo.dataSize = sizeof(LATE);
+		specializationInfo.pData = &LATE;
+	}
+
 	VkPipelineShaderStageCreateInfo stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
 	stage.stage = shader.stage;
 	stage.module = shader.module;
 	stage.pName = "main";
+	stage.pSpecializationInfo = &specializationInfo;
 
 	createInfo.stage = stage;
 	createInfo.layout = layout;
