@@ -58,7 +58,7 @@ static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 		INFO_HEADER;
 
 	char message[4096];
-	snprintf(message, ARRAYSIZE(message), "%s: %s\n", type, pMessage);
+	snprintf(message, COUNTOF(message), "%s: %s\n", type, pMessage);
 
 	printf("%s", message);
 
