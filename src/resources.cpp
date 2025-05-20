@@ -66,6 +66,15 @@ void createBuffer(Buffer& result, VkDevice device, const VkPhysicalDeviceMemoryP
 	allocateInfo.allocationSize = memoryRequirements.size;
 	allocateInfo.memoryTypeIndex = memoryTypeIndex;
 
+	VkMemoryAllocateFlagsInfo flagInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO };
+
+	if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+	{
+		allocateInfo.pNext = &flagInfo;
+		flagInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+		flagInfo.deviceMask = 1;
+	}
+
 	VkDeviceMemory memory = 0;
 	VK_CHECK(vkAllocateMemory(device, &allocateInfo, 0, &memory));
 
@@ -98,9 +107,6 @@ void uploadBuffer(VkDevice device, VkCommandPool commandPool, VkCommandBuffer co
 	VkBufferCopy region = { 0, 0, VkDeviceSize(size) };
 	vkCmdCopyBuffer(commandBuffer, scratch.buffer, buffer.buffer, 1, &region);
 
-	VkBufferMemoryBarrier copyBarrier = bufferBarrier(buffer.buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-	vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 1, &copyBarrier, 0, 0);
-
 	VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
 	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
@@ -116,6 +122,18 @@ void destroyBuffer(const Buffer& buffer, VkDevice device)
 {
 	vkDestroyBuffer(device, buffer.buffer, 0);
 	vkFreeMemory(device, buffer.memory, 0);
+}
+
+uint64_t getBufferAddress(const Buffer& buffer, VkDevice device)
+{
+	VkBufferDeviceAddressInfo info = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+
+	info.buffer = buffer.buffer;
+
+	VkDeviceAddress address = vkGetBufferDeviceAddress(device, &info);
+	assert(address != 0);
+
+	return address;
 }
 
 VkImageView createImageView(VkDevice device, VkImage image, VkFormat format, uint32_t mipLevel, uint32_t levelCount)

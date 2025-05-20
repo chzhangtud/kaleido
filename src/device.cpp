@@ -179,11 +179,6 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	std::vector<const char*> extensions =
 	{
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-		VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
-		VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
-		VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
-		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-		VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME,
 	};
 
 	if (pushDescriptorsSupported)
@@ -205,6 +200,8 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features.features.vertexPipelineStoresAndAtomics = VK_TRUE; // TODO: we aren't using this yet.
 	features.features.multiDrawIndirect = VK_TRUE;
 	features.features.pipelineStatisticsQuery = VK_TRUE;
+	features.features.shaderInt16 = VK_TRUE;
+	features.features.shaderInt64 = VK_TRUE;
 
 	VkPhysicalDevice16BitStorageFeaturesKHR features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
 	features16.storageBuffer16BitAccess = VK_TRUE;

@@ -427,7 +427,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 {
 	if (action == GLFW_PRESS)
 	{
-		if (key == GLFW_KEY_R)
+		if (key == GLFW_KEY_M)
 		{
 			meshShadingEnabled = !meshShadingEnabled;
 			return;
@@ -502,7 +502,7 @@ int main(int argc, const char** argv)
 	VkInstance instance = createInstance();
 	assert(instance);
 
-	volkLoadInstance(instance);
+	volkLoadInstanceOnly(instance);
 
 	VkDebugReportCallbackEXT debugCallback = registerDebugCallback(instance);
 
@@ -541,6 +541,8 @@ int main(int argc, const char** argv)
 	VkDevice device = createDevice(instance, physicalDevice, graphicsFamily, pushDescriptorsSupported, checkpointsSupported, meshShadingEnabled);
 	assert(device);
 
+	volkLoadDevice(device);
+
 	GLFWwindow* window = glfwCreateWindow(1024, 768, "kaleido", 0, 0);
 	assert(window);
 
@@ -572,7 +574,7 @@ int main(int argc, const char** argv)
 	VkRenderPass renderPassLate = createRenderPass(device, swapchainFormat, depthFormat, /* late = */true);
 	assert(renderPassLate);
 
-	VkSampler depthSampler = createSampler(device, VK_SAMPLER_REDUCTION_MODE_MIN_EXT);
+	VkSampler depthSampler = createSampler(device, VK_SAMPLER_REDUCTION_MODE_MIN);
 	assert(depthSampler);
 
 	Shader meshletTS = {};
@@ -959,7 +961,7 @@ int main(int argc, const char** argv)
 			}
 		};
 
-		auto cull = [&](VkPipeline pipeline, uint32_t timestamp, const char* phase)
+		auto cull = [&](VkPipeline pipeline, uint32_t timestamp, const char* phase, bool late)
 		{
 			VK_CHECKPOINT(phase);
 
@@ -973,8 +975,9 @@ int main(int argc, const char** argv)
 			VK_CHECKPOINT("clear buffer");
 
 			VkBufferMemoryBarrier fillBarrier = bufferBarrier(dccb.buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fillBarrier, 0, 0);
-
+			VkImageMemoryBarrier readBarrier = imageBarrier(depthPyramid.image, 0, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+			VkPipelineStageFlags srcStageFlags = late ? VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
+			vkCmdPipelineBarrier(commandBuffer, srcStageFlags, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fillBarrier, 1, &readBarrier);
 
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 
@@ -1044,7 +1047,7 @@ int main(int argc, const char** argv)
 				vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
 				vkCmdPushConstants(commandBuffer, meshProgram.layout, meshProgram.pushConstantStages, 0, sizeof(globals), &globals);
-				vkCmdDrawIndexedIndirectCountKHR(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
+				vkCmdDrawIndexedIndirectCount(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
 			}
 
 			VK_CHECKPOINT("after draw");
@@ -1063,7 +1066,6 @@ int main(int argc, const char** argv)
 			VkImageMemoryBarrier depthReadBarriers[] =
 			{
 				imageBarrier(depthTarget.image,VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT),
-				imageBarrier(depthPyramid.image, 0, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL),
 			};
 			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, COUNTOF(depthReadBarriers), depthReadBarriers);
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, depthreducePipeline);
@@ -1120,13 +1122,13 @@ int main(int argc, const char** argv)
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &depthPyramidBeforeCullBarrier);
 
 		// early cull: frustum cull & fill objects that *were* visible last frame
-		cull(drawcullPipeline, 2, "early cull");
+		cull(drawcullPipeline, 2, "early cull", false);
 		// early render: render objects that were visible last frame
 		render(renderPass, COUNTOF(clearValues), clearValues, 0, "early render");
 		// depth pyramid generation
 		pyramid();
 		// late cull: frustum + occlusion cull & fill objects that were *not* visible last frame
-		cull(drawculllatePipeline, 6, "late cull");
+		cull(drawculllatePipeline, 6, "late cull", true);
 		
 
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
