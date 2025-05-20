@@ -454,6 +454,8 @@ uint32_t previousPow2(uint32_t v)
 	return r;
 }
 
+#define VK_CHECKPOINT(name) do { if (checkpointsSupported) vkCmdSetCheckpointNV(commandBuffer, name); } while (0)
+
 int main(int argc, const char** argv)
 {
 	if (argc < 2)
@@ -488,14 +490,12 @@ int main(int argc, const char** argv)
 	std::vector<VkExtensionProperties> extensions(extensionCount);
 	VK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, 0, &extensionCount, extensions.data()));
 
+	bool checkpointsSupported = false;
 	bool meshShadingSupported = false;
 	for (const auto& ext : extensions)
 	{
-		if (strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0)
-		{
-			meshShadingSupported = true;
-			break;
-		}
+		checkpointsSupported = checkpointsSupported || strcmp(ext.extensionName, VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME) == 0;
+		meshShadingSupported = meshShadingSupported || strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0;
 	}
 
 	meshShadingEnabled = meshShadingSupported;
@@ -507,7 +507,7 @@ int main(int argc, const char** argv)
 	uint32_t graphicsFamily = getGraphicsFamilyIndex(physicalDevice);
 	assert(graphicsFamily != VK_QUEUE_FAMILY_IGNORED);
 
-	VkDevice device = createDevice(instance, physicalDevice, graphicsFamily, meshShadingEnabled);
+	VkDevice device = createDevice(instance, physicalDevice, graphicsFamily, checkpointsSupported, meshShadingEnabled);
 	assert(device);
 
 	GLFWwindow* window = glfwCreateWindow(1024, 768, "kaleido", 0, 0);
@@ -728,6 +728,8 @@ int main(int argc, const char** argv)
 	double frameCPUAvg = 0.0;
 	double frameGPUAvg = 0.0;
 
+	uint64_t frameIndex = 0;
+
 	while (!glfwWindowShouldClose(window))
 	{
 		double frameCPUBegin = glfwGetTime() * 1000.0;
@@ -794,6 +796,7 @@ int main(int argc, const char** argv)
 			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fillBarrier, 0, 0);
 
 			dvbCleared = true;
+			VK_CHECKPOINT("dvb cleared");
 		}
 
 		float znear = 1.f;
@@ -828,9 +831,28 @@ int main(int argc, const char** argv)
 		auto barrier = [&]()
 		{
 			VkMemoryBarrier wfi = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-			wfi.srcAccessMask = 0x1ffff;
-			wfi.dstAccessMask = 0x1ffff;
+			wfi.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+			wfi.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
 			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &wfi, 0, 0, 0, 0);
+		};
+
+		auto itsdeadjim = [&]()
+		{
+			printf("FATAL ERROR: DEVICE LOST (frame %lld)\n", frameIndex);
+
+			if (checkpointsSupported)
+			{
+				uint32_t checkpointCount = 0;
+				vkGetQueueCheckpointDataNV(queue, &checkpointCount, 0);
+
+				std::vector<VkCheckpointDataNV> checkpoints(checkpointCount, { VK_STRUCTURE_TYPE_CHECKPOINT_DATA_NV });
+				vkGetQueueCheckpointDataNV(queue, &checkpointCount, checkpoints.data());
+
+				for (auto& cp : checkpoints)
+				{
+					printf("NV CHECKPOINT: stage %08x name %s\n", cp.stage, cp.pCheckpointMarker ? static_cast<const char*>(cp.pCheckpointMarker) : "??");
+				}
+			}
 		};
 
 		auto flush = [&]()
@@ -843,7 +865,10 @@ int main(int argc, const char** argv)
 
 				VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
-				VK_CHECK(vkDeviceWaitIdle(device));
+				VkResult wfi = vkDeviceWaitIdle(device);
+				if (wfi == VK_ERROR_DEVICE_LOST)
+					itsdeadjim();
+				VK_CHECK(wfi);
 
 				VK_CHECK(vkResetCommandPool(device, commandPool, 0));
 
@@ -853,14 +878,18 @@ int main(int argc, const char** argv)
 				VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 		};
 
-		auto cull = [&](VkPipeline pipeline, uint32_t timestamp)
+		auto cull = [&](VkPipeline pipeline, uint32_t timestamp, const char* phase)
 		{
+			VK_CHECKPOINT(phase);
+
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
 
 			VkBufferMemoryBarrier prefillBarrier = bufferBarrier(dccb.buffer, VK_ACCESS_INDIRECT_COMMAND_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, 0, 1, &prefillBarrier, 0, 0);
 			
 			vkCmdFillBuffer(commandBuffer, dccb.buffer, 0, 4, 0);
+
+			VK_CHECKPOINT("clear buffer");
 
 			VkBufferMemoryBarrier fillBarrier = bufferBarrier(dccb.buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0, 1, &fillBarrier, 0, 0);
@@ -875,6 +904,8 @@ int main(int argc, const char** argv)
 			vkCmdPushConstants(commandBuffer, drawcullProgram.layout, drawcullProgram.pushConstantStages, 0, sizeof(cullData), &cullData);
 			vkCmdDispatch(commandBuffer, getGroupCount(uint32_t(draws.size()), drawcullCS.localSizeX), 1, 1);
 
+			VK_CHECKPOINT("culled");
+
 			VkBufferMemoryBarrier cullBarriers[] =
 			{
 				bufferBarrier(dcb.buffer, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
@@ -885,8 +916,10 @@ int main(int argc, const char** argv)
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 		};	
 
-		auto render = [&](VkRenderPass renderPass, uint32_t clearValueCount, const VkClearValue* clearValues, uint32_t query)
+		auto render = [&](VkRenderPass renderPass, uint32_t clearValueCount, const VkClearValue* clearValues, uint32_t query, const char* phase)
 		{
+			VK_CHECKPOINT(phase);
+
 			vkCmdBeginQuery(commandBuffer, queryPoolPipeline, query, 0);
 
 			VkRenderPassBeginInfo passBeginInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
@@ -904,6 +937,8 @@ int main(int argc, const char** argv)
 
 			vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 			vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+			VK_CHECKPOINT("before draw");
 
 			if (meshShadingSupported && meshShadingEnabled)
 			{
@@ -928,6 +963,8 @@ int main(int argc, const char** argv)
 				vkCmdDrawIndexedIndirectCountKHR(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
 			}
 
+			VK_CHECKPOINT("after draw");
+
 			vkCmdEndRenderPass(commandBuffer);
 
 			vkCmdEndQuery(commandBuffer, queryPoolPipeline, query);
@@ -935,6 +972,8 @@ int main(int argc, const char** argv)
 
 		auto pyramid = [&]()
 		{
+			VK_CHECKPOINT("pyramid");
+			
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 4);
 
 			VkImageMemoryBarrier depthReadBarriers[] =
@@ -947,6 +986,8 @@ int main(int argc, const char** argv)
 
 			for (uint32_t i = 0; i < depthPyramidLevels; ++i)
 			{
+				VK_CHECKPOINT("pyramid level");
+
 				DescriptorInfo sourceDepth = (i == 0)
 					? DescriptorInfo(depthSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL)
 					: DescriptorInfo(depthSampler, depthPyramidMips[i - 1], VK_IMAGE_LAYOUT_GENERAL);
@@ -988,21 +1029,23 @@ int main(int argc, const char** argv)
 		clearValues[0].color = { 48.f / 255.f, 10.f / 255.f, 36.f / 255.f, 1 };
 		clearValues[1].depthStencil = { 0.f, 0 };
 
+		VK_CHECKPOINT("frame");
+
 		VkImageMemoryBarrier depthPyramidBeforeCullBarrier = imageBarrier(depthPyramid.image, 0, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &depthPyramidBeforeCullBarrier);
 
 		// early cull: frustum cull & fill objects that *were* visible last frame
-		cull(drawcullPipeline, 2);
+		cull(drawcullPipeline, 2, "early cull");
 		// early render: render objects that were visible last frame
-		render(renderPass, ARRAYSIZE(clearValues), clearValues, 0);
+		render(renderPass, ARRAYSIZE(clearValues), clearValues, 0, "early render");
 		// depth pyramid generation
 		pyramid();
 		// late cull: frustum + occlusion cull & fill objects that were *not* visible last frame
-		cull(drawculllatePipeline, 6);
+		cull(drawculllatePipeline, 6, "late cull");
 		
 
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
-		render(renderPassLate, 0, nullptr, 1);
+		render(renderPassLate, 0, nullptr, 1, "late render");
 
 		VkImageMemoryBarrier copyBarriers[] =
 		{
@@ -1013,6 +1056,8 @@ int main(int argc, const char** argv)
 
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, ARRAYSIZE(copyBarriers), copyBarriers);
 	
+		VK_CHECKPOINT("swapchain copy");
+
 		if (debugPyramid)
 		{
 			uint32_t levelWidth = std::max(1u, depthPyramidWidth >> debugPyramidLevel);
@@ -1043,6 +1088,8 @@ int main(int argc, const char** argv)
 			vkCmdCopyImage(commandBuffer, colorTarget.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
 		}
 
+		VK_CHECKPOINT("present");
+
 		VkImageMemoryBarrier presentBarrier = imageBarrier(swapchain.images[imageIndex], VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, &presentBarrier);
 		
@@ -1072,7 +1119,10 @@ int main(int argc, const char** argv)
 
 		VK_CHECK(vkQueuePresentKHR(queue, &presentInfo));
 
-		VK_CHECK(vkDeviceWaitIdle(device));
+		VkResult wfi = vkDeviceWaitIdle(device);
+		if (wfi == VK_ERROR_DEVICE_LOST)
+			itsdeadjim();
+		VK_CHECK(wfi);
 
 		uint64_t timestampResults[8] = {};
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, ARRAYSIZE(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
@@ -1104,6 +1154,8 @@ int main(int argc, const char** argv)
 			lodEnabled ? "ON" : "OFF",
 			frameCPUAvg, frameGPUAvg, cullGPUTime, pyramidGPUTime, culllateGPUTime, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);
+
+		frameIndex++;
 	}
 
 	VK_CHECK(vkDeviceWaitIdle(device));	

@@ -282,7 +282,7 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders
 	return setLayout;
 }
 
-VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, Shaders shaders, VkShaderStageFlags pushConstantStages, size_t pushConstantSize)
+static VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkShaderStageFlags pushConstantStages, size_t pushConstantSize)
 {
 	VkPipelineLayoutCreateInfo createInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
 	createInfo.setLayoutCount = 1;
@@ -461,7 +461,7 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 
 	program.descriptorSetLayout = createDescriptorSetLayout(device, shaders);
 	assert(program.descriptorSetLayout);
-	program.layout = createPipelineLayout(device, program.descriptorSetLayout, shaders, program.pushConstantStages, pushConstantSize);
+	program.layout = createPipelineLayout(device, program.descriptorSetLayout, program.pushConstantStages, pushConstantSize);
 	assert(program.layout);
 	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders);
 	assert(program.updateTemplate);

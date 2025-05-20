@@ -106,7 +106,7 @@ uint32_t getGraphicsFamilyIndex(VkPhysicalDevice physicalDevice)
 static bool supportsPresentation(VkPhysicalDevice physicalDevice, uint32_t familyIndex)
 {
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
-	return vkGetPhysicalDeviceWin32PresentationSupportKHR(physicalDevice, familyIndex);
+	return !!vkGetPhysicalDeviceWin32PresentationSupportKHR(physicalDevice, familyIndex);
 #else
 	return true;
 #endif
@@ -114,6 +114,8 @@ static bool supportsPresentation(VkPhysicalDevice physicalDevice, uint32_t famil
 
 VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t physicalDeviceCount)
 {
+	return physicalDevices[1];
+
 	VkPhysicalDevice preferred = 0;
 	VkPhysicalDevice fallback = 0;
 
@@ -161,7 +163,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	return result;
 }
 
-VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool meshShadingEnabled)
+VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool checkpointsSupported, bool meshShadingEnabled)
 {
 	float queuePriorities[] = { 1.0f };
 
@@ -180,6 +182,11 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
 		VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME,
 	};
+
+	if (checkpointsSupported)
+	{
+		extensions.emplace_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+	}
 
 	if (meshShadingEnabled)
 	{
