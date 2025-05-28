@@ -8,8 +8,13 @@
 #include <Windows.h>
 #endif
 
+// Synchronization validation is enabled by default in Debug but it's rather slow
+#define SYNC_VALIDATION 1
+
 VkInstance createInstance()
 {
+	assert(volkGetInstanceVersion() >= VK_API_VERSION_1_4);
+
 	// SHORTCUT: In real VUlkans applications you should check if the used version is available via vkEnumerateInstanceVersion.
 	VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
 	appInfo.apiVersion = VK_API_VERSION_1_4;
@@ -24,6 +29,20 @@ VkInstance createInstance()
 	};
 	createInfo.ppEnabledLayerNames = debugLayers;
 	createInfo.enabledLayerCount = sizeof(debugLayers) / sizeof(debugLayers[0]);
+
+	VkValidationFeatureEnableEXT enabledValidationFeatures[] =
+	{
+		VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
+#if SYNC_VALIDATION
+		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+#endif
+	};
+
+	VkValidationFeaturesEXT validationFeatures = { VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
+	validationFeatures.enabledValidationFeatureCount = sizeof(enabledValidationFeatures) / sizeof(enabledValidationFeatures[0]);
+	validationFeatures.pEnabledValidationFeatures = enabledValidationFeatures;
+
+	createInfo.pNext = &validationFeatures;
 #endif
 
 	const char* extensions[] =
@@ -202,7 +221,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features.features.pipelineStatisticsQuery = VK_TRUE;
 	features.features.shaderInt16 = VK_TRUE;
 	features.features.shaderInt64 = VK_TRUE;
-
+	
 	VkPhysicalDevice16BitStorageFeaturesKHR features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
 	features16.storageBuffer16BitAccess = VK_TRUE;
 
@@ -213,6 +232,10 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features12.shaderFloat16 = VK_TRUE;
 	features12.drawIndirectCount = VK_TRUE;
 	features12.samplerFilterMinmax = VK_TRUE;
+	features12.scalarBlockLayout = VK_TRUE;
+	
+	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderFeature = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES };
+	dynamicRenderFeature.dynamicRendering = VK_TRUE;
 
 	VkPhysicalDeviceMaintenance4Features featuresMaintenance4 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES };
 	featuresMaintenance4.maintenance4 = VK_TRUE;
@@ -238,7 +261,8 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	createInfo.pNext = &features;
 	features.pNext = &features16;
 	features16.pNext = &features12;
-	features12.pNext = &featuresMaintenance4;
+	features12.pNext = &dynamicRenderFeature;
+	dynamicRenderFeature.pNext = &featuresMaintenance4;
 	featuresMaintenance4.pNext = &featuresShaderDrawParameter;
 	featuresShaderDrawParameter.pNext = &sync2Feature;
 

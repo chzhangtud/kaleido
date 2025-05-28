@@ -16,6 +16,7 @@ struct Id
 	uint32_t storageClass;
 	uint32_t binding;
 	uint32_t set;
+	uint32_t constant;
 };
 
 static VkShaderStageFlagBits getShaderStage(SpvExecutionModel model)
@@ -43,6 +44,10 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 	assert(code[0] == SpvMagicNumber);
 
 	uint32_t idBound = code[3];
+
+	int localSizeIdX = -1;
+	int localSizeIdY = -1;
+	int localSizeIdZ = -1;
 
 	std::vector<Id> ids(idBound);
 
@@ -76,7 +81,7 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 		}
 		case SpvOpExecutionMode:
 		{
-			assert(worldCount >= 3);
+			assert(wordCount >= 3);
 			uint32_t mode = insn[2];
 			switch (mode)
 			{
@@ -85,6 +90,22 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 				shader.localSizeX = insn[3];
 				shader.localSizeY = insn[4];
 				shader.localSizeZ = insn[5];
+				break;
+			}
+			break;
+		}
+		case SpvOpExecutionModeId:
+		{
+			assert(wordCount >= 3);
+			uint32_t mode = insn[2];
+
+			switch (mode)
+			{
+			case SpvExecutionModeLocalSizeId:
+				assert(wordCount == 6);
+				localSizeIdX = int(insn[3]);
+				localSizeIdY = int(insn[4]);
+				localSizeIdZ = int(insn[5]);
 				break;
 			}
 			break;
@@ -134,6 +155,19 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 			ids[id].storageClass = insn[2];
 			break;
 		}
+		case SpvOpConstant:
+		{
+			assert(wordCount >= 4); // we currently only correctly handle 32-bit integer constants
+
+			uint32_t id = insn[2];
+			assert(id < idBound);
+
+			assert(ids[id].opcode == 0);
+			ids[id].opcode = opcode;
+			ids[id].typeId = insn[1];
+			ids[id].constant = insn[3]; // note: this is the value, not the id of the constant
+			break;
+		}
 		}
 		assert(insn + wordCount <= code + codeSize);
 		insn += wordCount;
@@ -178,6 +212,29 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 		{
 			shader.usePushConstants = true;
 		}
+	}
+
+	if (shader.stage == VK_SHADER_STAGE_COMPUTE_BIT)
+	{
+		if (localSizeIdX >= 0)
+		{
+			assert(ids[localSizeIdX].opcode == SpvOpConstant);
+			shader.localSizeX = ids[localSizeIdX].constant;
+		}
+
+		if (localSizeIdY >= 0)
+		{
+			assert(ids[localSizeIdY].opcode == SpvOpConstant);
+			shader.localSizeY = ids[localSizeIdY].constant;
+		}
+
+		if (localSizeIdZ >= 0)
+		{
+			assert(ids[localSizeIdZ].opcode == SpvOpConstant);
+			shader.localSizeZ = ids[localSizeIdZ].constant;
+		}
+
+		assert(shader.localSizeX && shader.localSizeY && shader.localSizeZ);
 	}
 }
 
@@ -348,7 +405,7 @@ static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipeli
 	return updateTemplate;
 }
 
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, Shaders shaders, VkPipelineLayout layout)
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, Shaders shaders, VkPipelineLayout layout)
 {
 	VkGraphicsPipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
 
@@ -417,7 +474,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	createInfo.pDynamicState = &dynamicState;
 
 	createInfo.layout = layout;
-	createInfo.renderPass = renderPass;
+	createInfo.pNext = &renderingInfo;
 
 	VkPipeline pipeline = 0;
 	VK_CHECK(vkCreateGraphicsPipelines(device, pipelineCache, 1, &createInfo, 0, &pipeline));
