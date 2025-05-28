@@ -8,6 +8,7 @@
 
 VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow* window)
 {
+	// Note: GLFW has a helper glfwCreateWindowSurface but we're going to do this the hard way to reduce our reliance on GLFW Vulkan specifics
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
 	VkWin32SurfaceCreateInfoKHR createInfo = { VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR };
 	createInfo.hinstance = GetModuleHandle(0);

@@ -123,7 +123,8 @@ void main()
 		drawCommands[dci].instanceCount = 1;
 		drawCommands[dci].firstVertex = lod.indexOffset;
 		drawCommands[dci].firstInstance = 0;
-		drawCommands[dci].groupCountX = (lod.meshletCount + 31) / 32;
+		drawCommands[dci].taskCount = lod.meshletCount;
+		drawCommands[dci].groupCountX = (lod.meshletCount + TASK_WGSIZE - 1) / TASK_WGSIZE;
 		drawCommands[dci].groupCountY = 1;
 		drawCommands[dci].groupCountZ = 1;
 	}

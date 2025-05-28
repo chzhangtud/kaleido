@@ -24,6 +24,8 @@ bool occlusionEnabled = true;
 bool debugPyramid = false;
 int debugPyramidLevel = 0;
 
+#define SHADER_PATH "shaders/"
+
 VkSemaphore createSemaphore(VkDevice device)
 {
 	VkSemaphoreCreateInfo createInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
@@ -96,6 +98,7 @@ struct MeshDrawCommand
 {
 	uint32_t drawId;
 	VkDrawIndirectCommand indirect; // 4 uint32_t
+	uint32_t taskCount;
 	VkDrawMeshTasksIndirectCommandEXT indirectMS; // 3 uint32_t
 };
 
@@ -194,9 +197,6 @@ size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, con
 		m.coneCutoff = bounds.cone_cutoff_s8;
 		result.meshlets.emplace_back(m);
 	}
-
-	while (result.meshlets.size() % 32)
-		result.meshlets.push_back(Meshlet());
 
 	return meshlets.size();
 }
@@ -323,6 +323,10 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 			meshopt_optimizeVertexCache(lodIndices.data(), lodIndices.data(), lodIndices.size(), vertex_count);
 		}
 	}
+
+	// pad meshlets to 64 to allow shaders to over-read when running task shaders
+	while (result.meshlets.size() % 32)
+		result.meshlets.push_back(Meshlet());
 
 	result.meshes.emplace_back(mesh);
 
@@ -521,34 +525,34 @@ int main(int argc, const char** argv)
 	Shader meshletMS = {};
 	if (meshShadingEnabled)
 	{
-		bool tc = loadShader(meshletTS, device, "shaders/meshlet.task.spv");
+		bool tc = loadShader(meshletTS, device, SHADER_PATH "meshlet.task.spv");
 		assert(tc);
 
-		bool rc = loadShader(meshletMS, device, "shaders/meshlet.mesh.spv");
+		bool rc = loadShader(meshletMS, device, SHADER_PATH "meshlet.mesh.spv");
 		assert(rc);
 	}
 
 	Shader drawcullCS = {};
 	{
-		bool rc = loadShader(drawcullCS, device, "shaders/drawcull.comp.spv");
+		bool rc = loadShader(drawcullCS, device, SHADER_PATH "drawcull.comp.spv");
 		assert(rc);
 	}
 
 	Shader depthreduceCS = {};
 	{
-		bool rc = loadShader(depthreduceCS, device, "shaders/depthreduce.comp.spv");
+		bool rc = loadShader(depthreduceCS, device, SHADER_PATH "depthreduce.comp.spv");
 		assert(rc);
 	}
 
 	Shader meshVS = {};
 	{
-		bool rc = loadShader(meshVS, device, "shaders/mesh.vert.spv");
+		bool rc = loadShader(meshVS, device, SHADER_PATH "mesh.vert.spv");
 		assert(rc);
 	}
 
 	Shader meshFS = {};
 	{
-		bool rc = loadShader(meshFS, device, "shaders/mesh.frag.spv");
+		bool rc = loadShader(meshFS, device, SHADER_PATH "mesh.frag.spv");
 		assert(rc);
 	}
 
@@ -832,15 +836,18 @@ int main(int argc, const char** argv)
 
 		auto fullbarrier = [&]()
 		{
-			VkMemoryBarrier wfi = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-			wfi.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-			wfi.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &wfi, 0, 0, 0, 0);
+				VkMemoryBarrier2 barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+				barrier.srcStageMask = barrier.dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+				barrier.srcAccessMask = barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+				VkDependencyInfo dependencyInfo = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+				dependencyInfo.memoryBarrierCount = 1;
+				dependencyInfo.pMemoryBarriers = &barrier;
+				vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
 		};
 
 		auto itsdeadjim = [&]()
 		{
-			printf("FATAL ERROR: DEVICE LOST (frame %lld)\n", frameIndex);
+			printf("FATAL ERROR: DEVICE LOST (frame %lld)\n", (long long)frameIndex);
 
 			if (checkpointsSupported)
 			{
@@ -1081,7 +1088,8 @@ int main(int argc, const char** argv)
 				vkCmdDispatch(commandBuffer, getGroupCount(levelWidth, depthreduceCS.localSizeX), getGroupCount(levelHeight, depthreduceCS.localSizeY), 1);
 				VkImageMemoryBarrier2 reduceBarrier = imageBarrier(depthPyramid.image,
 					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+					VK_IMAGE_ASPECT_COLOR_BIT, i, 1);
 				pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &reduceBarrier);
 			}
 

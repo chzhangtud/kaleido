@@ -8,7 +8,7 @@
 
 #include "mesh.h"
 
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = MESH_WGSIZE, local_size_y = 1, local_size_z = 1) in;
 layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
 #define DEBUG 0
@@ -54,13 +54,14 @@ layout(binding = 6) readonly buffer Vertices
     Vertex vertices[];
 };
 
-taskPayloadSharedEXT TaskPayload payload;
 
 layout(location = 0) out vec4 color[];
 
 #if TRIANGLE_NORMAL
 layout(location = 1) perprimitiveEXT out vec3 triangleNormal[];
 #endif
+
+taskPayloadSharedEXT MeshTaskPayload payload;
 
 uint hash( uint a)
 {
@@ -90,7 +91,7 @@ void main()
     uint vertexOffset = meshlets[mi].vertexOffset;
     uint triangleOffset = meshlets[mi].triangleOffset;
     
-    for (uint i = ti; i < uint(meshlets[mi].vertexCount); i += 32)
+    for (uint i = ti; i < uint(meshlets[mi].vertexCount); i += MESH_WGSIZE)
     {
         uint vi = meshletVertexData[vertexOffset + i] + meshDraw.vertexOffset;
 
@@ -109,7 +110,7 @@ void main()
     }
 
 #if TRIANGLE_NORMAL
-    for (uint i = ti; i < uint(meshlets[mi].triangleCount); i += 32)
+    for (uint i = ti; i < uint(meshlets[mi].triangleCount); i += MESH_WGSIZE)
     {
         uint vi0 = meshletVertexData[vertexOffset + meshletIndexData[triangleOffset + 3 * i + 0]];
         uint vi1 = meshletVertexData[vertexOffset + meshletIndexData[triangleOffset + 3 * i + 1]];
