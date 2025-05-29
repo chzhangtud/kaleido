@@ -49,8 +49,20 @@ VkFormat getSwapchainFormat(VkPhysicalDevice physicalDevice, VkSurfaceKHR surfac
 }
 
 static VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR surfaceCaps, uint32_t familyIndex, VkFormat format, uint32_t width, uint32_t height,
-	VkSwapchainKHR oldSwapchain)
+	VkSwapchainKHR oldSwapchain, const std::vector<VkPresentModeKHR>& presentModes)
 {
+	VkPresentModeKHR presentMode = VSYNC ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
+	bool presentModeSupported = false;
+	for (const auto& mode : presentModes)
+	{
+		if (mode == presentMode)
+		{
+			presentModeSupported = true;
+			break;
+		}
+	}
+	assert(presentModeSupported);
+
 	VkCompositeAlphaFlagBitsKHR surfaceComposite =
 		(surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR :
 		(surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR :
@@ -70,7 +82,7 @@ static VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, VkS
 	createInfo.pQueueFamilyIndices = &familyIndex;
 	createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 	createInfo.compositeAlpha = surfaceComposite;
-	createInfo.presentMode = VSYNC ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
+	createInfo.presentMode = presentMode;
 	createInfo.oldSwapchain = oldSwapchain;
 
 	VkSwapchainKHR swapchain = 0;
@@ -79,15 +91,20 @@ static VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, VkS
 	return swapchain;
 }
 
-void createSwapchain(Swapchain& result, VkPhysicalDevice physicallDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format, VkSwapchainKHR oldSwapchain)
+void createSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format, VkSwapchainKHR oldSwapchain)
 {
 	VkSurfaceCapabilitiesKHR surfaceCaps;
-	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicallDevice, surface, &surfaceCaps);
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
 
 	uint32_t width = surfaceCaps.currentExtent.width;
 	uint32_t height = surfaceCaps.currentExtent.height;
 
-	VkSwapchainKHR swapchain = createSwapchain(device, surface, surfaceCaps, familyIndex, format, width, height, oldSwapchain);
+	uint32_t presentModeCount = 0;
+	vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
+	std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+	vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, presentModes.data());
+
+	VkSwapchainKHR swapchain = createSwapchain(device, surface, surfaceCaps, familyIndex, format, width, height, oldSwapchain, presentModes);
 	assert(swapchain);
 
 	uint32_t imageCount = 0;
