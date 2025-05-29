@@ -163,13 +163,14 @@ size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, con
 {
 	size_t max_vertices = 64;
 	size_t max_triangles = 124;
+	const float cone_weight = 0.5f;
 
 	std::vector<meshopt_Meshlet> meshlets(meshopt_buildMeshletsBound(indices.size(), max_vertices, max_triangles));
 	std::vector<unsigned int> meshletVertexData(meshlets.size() * max_vertices);
 	std::vector<unsigned char> meshletIndexData(meshlets.size() * max_triangles * 3);
 
 	meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(),
-		&vertices[0].vx, vertices.size(), sizeof(Vertex), max_vertices, max_triangles, 0.5f));
+		&vertices[0].vx, vertices.size(), sizeof(Vertex), max_vertices, max_triangles, cone_weight));
 
 	uint32_t meshletVertexOffset = uint32_t(result.meshletVertexData.size());
 	uint32_t meshletIndexOffset = uint32_t(result.meshletIndexData.size());
@@ -779,7 +780,7 @@ int main(int argc, const char** argv)
 		}
 		
 		uint32_t imageIndex = 0;
-		VK_CHECK(vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, acquireSemaphore, VK_NULL_HANDLE, &imageIndex));
+		VK_CHECK_SUBOPTIMAL(vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, acquireSemaphore, VK_NULL_HANDLE, &imageIndex));
 
 		VK_CHECK(vkResetCommandPool(device, commandPool, 0));
 
@@ -1228,7 +1229,7 @@ int main(int argc, const char** argv)
 		presentInfo.pSwapchains = &swapchain.swapchain;
 		presentInfo.pImageIndices = &imageIndex;
 
-		VK_CHECK(vkQueuePresentKHR(queue, &presentInfo));
+		VK_CHECK_SUBOPTIMAL(vkQueuePresentKHR(queue, &presentInfo));
 
 		VkResult wfi = vkDeviceWaitIdle(device);
 		if (wfi == VK_ERROR_DEVICE_LOST)

@@ -77,7 +77,7 @@ uint hash( uint a)
 void main()
 {
     uint mi = payload.meshletIndices[gl_WorkGroupID.x];
-    uint ti = gl_LocalInvocationID.x;
+    uint ti = gl_LocalInvocationIndex;
 
     MeshDraw meshDraw = draws[payload.drawId];
 

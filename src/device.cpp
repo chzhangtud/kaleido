@@ -8,6 +8,11 @@
 #include <Windows.h>
 #endif
 
+// Validation is enabled by default in Debug
+#ifndef NDEBUG
+#define KHR_VALIDATION 1
+#endif
+
 // Synchronization validation is enabled by default in Debug but it's rather slow
 #define SYNC_VALIDATION 1
 
@@ -22,7 +27,7 @@ VkInstance createInstance()
 	VkInstanceCreateInfo createInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.pApplicationInfo = &appInfo;
 
-#if _DEBUG
+#if KHR_VALIDATION
 	const char* debugLayers[] =
 	{
 		"VK_LAYER_KHRONOS_validation"
@@ -48,10 +53,12 @@ VkInstance createInstance()
 	const char* extensions[] =
 	{
 		VK_KHR_SURFACE_EXTENSION_NAME,
-#if defined(VK_USE_PLATFORM_WIN32_KHR)
+#ifdef VK_USE_PLATFORM_WIN32_KHR
 		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
 #endif
+#if KHR_VALIDATION
 		VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
+#endif
 	};
 
 	createInfo.ppEnabledExtensionNames = extensions;
