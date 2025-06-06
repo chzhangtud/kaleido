@@ -78,10 +78,19 @@ void main()
 									int(meshlets[mi].coneAxis[1]) / 127.0,
 									int(meshlets[mi].coneAxis[2]) / 127.0), meshDraw.orientation);
 	float coneCutoff = int(meshlets[mi].coneCutoff) / 127.0;
-	// bool accept = mgi < drawCommands[gl_DrawIDARB].taskCount && !coneCull(center, radius, coneAxis, coneCutoff, vec3(0.0, 0.0, 0.0));
-	bool accept = !coneCull(center, radius, coneAxis, coneCutoff, vec3(0.0, 0.0, 0.0));
+	
+    bool visible = mgi < drawCommands[gl_DrawIDARB].taskCount;
 
-    if (accept)
+	// backface cone culling
+	visible = visible && !coneCull(center, radius, coneAxis, coneCutoff, vec3(0, 0, 0));
+	// the left/top/right/bottom plane culling utilizes frustum symmetry to cull against two planes at the same time
+	visible = visible && center.z * globals.frustum[1] - abs(center.x) * globals.frustum[0] > -radius;
+	visible = visible && center.z * globals.frustum[3] - abs(center.y) * globals.frustum[2] > -radius;
+	// the near/far plane culling uses camera space Z directly
+	// note: because we use an infinite projection matrix, this may cull meshlets that belong to a mesh that straddles the "far" plane; we could optionally remove the far check to be conservative
+	visible = visible && center.z + radius > globals.znear && center.z - radius < globals.zfar;
+
+    if (visible)
     {
         uint index = atomicAdd(sharedCount, 1);
         payload.meshletIndices[index] = mi;

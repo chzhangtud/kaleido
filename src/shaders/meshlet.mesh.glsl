@@ -8,11 +8,12 @@
 
 #include "mesh.h"
 
+#define DEBUG 0
+#define CULL 1
+#define TRIANGLE_NORMAL 0
+
 layout(local_size_x = MESH_WGSIZE, local_size_y = 1, local_size_z = 1) in;
 layout(triangles, max_vertices = 64, max_primitives = 124) out;
-
-#define DEBUG 0
-#define TRIANGLE_NORMAL 0
 
 layout(push_constant) uniform block
 {
@@ -74,6 +75,10 @@ uint hash( uint a)
    return a;
 }
 
+#if CULL
+shared vec3 vertexClip[64];
+#endif
+
 void main()
 {
     uint mi = payload.meshletIndices[gl_WorkGroupID.x];
@@ -101,13 +106,23 @@ void main()
         vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
         vec2 texcoord = vec2(v.tu, v.tv);
 
-        gl_MeshVerticesEXT[i].gl_Position = globals.projection * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1.0);
+        vec4 clip = globals.projection * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1.0);
+		gl_MeshVerticesEXT[i].gl_Position = clip;
 
         color[i] = vec4(normal * 0.5 + vec3(0.5), 1.0);
+#if CULL
+		vertexClip[i] = vec3(clip.xy / clip.w, clip.w);
+#endif
 #if DEBUG
         color[i] = vec4(mcolor, 1.0);
 #endif
     }
+
+#if CULL
+	barrier();
+#endif
+
+	vec2 screen = vec2(globals.screenWidth, globals.screenHeight);
 
 #if TRIANGLE_NORMAL
     for (uint i = ti; i < uint(meshlets[mi].triangleCount); i += MESH_WGSIZE)
@@ -126,10 +141,37 @@ void main()
     }
 #endif
     
-    for (uint i = ti; i < meshlets[mi].triangleCount; i += 32)
+    for (uint i = ti; i < meshlets[mi].triangleCount; i += MESH_WGSIZE)
     {
-        // Notice: In GL_NV_mesh_shader people can use writePackedPrimitiveIndices4x8NV for saving packed indices more tightly (4 uint8_t index -> uint), but this doesn't seem to have significant impact on fps here.
-        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(meshletIndexData[triangleOffset+3*i],meshletIndexData[triangleOffset+3*i+1], meshletIndexData[triangleOffset+3*i+2]);
+        uint offset = triangleOffset + 3 * i;
+        uint a = uint(meshletIndexData[offset]), b = uint(meshletIndexData[offset + 1]), c = uint(meshletIndexData[offset + 2]);
+        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(a, b, c);
+
+#if CULL
+		bool culled = false;
+
+		vec2 pa = vertexClip[a].xy, pb = vertexClip[b].xy, pc = vertexClip[c].xy;
+
+		// backface culling + zero-area culling
+		vec2 eb = pb - pa;
+		vec2 ec = pc - pa;
+
+		culled = culled || (eb.x * ec.y <= eb.y * ec.x); // TODO, to find reason of wired check result here.
+
+		// small primitive culling
+		vec2 bmin = (min(pa, min(pb, pc)) * 0.5 + vec2(0.5)) * screen;
+		vec2 bmax = (max(pa, max(pb, pc)) * 0.5 + vec2(0.5)) * screen;
+		float sbprec = 1.0 / 256.0; // note: this can be set to 1/2^subpixelPrecisionBits
+
+		// note: this is slightly imprecise (doesn't fully match hw behavior and is both too loose and too strict)
+        // cull triangles like those ones in page 54,55 of https://www.gdcvault.com/play/1023109/Optimizing-theGraphics-Pipeline-With
+		culled = culled || (round(bmin.x - sbprec) == round(bmax.x) || round(bmin.y) == round(bmax.y + sbprec));
+
+		// the computations above are only valid if all vertices are in front of perspective plane
+		culled = culled && (vertexClip[a].z > 0 && vertexClip[b].z > 0 && vertexClip[c].z > 0);
+
+		gl_MeshPrimitivesEXT[i].gl_CullPrimitiveEXT = culled;
+#endif
     }
 }
 

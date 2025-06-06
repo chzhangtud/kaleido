@@ -81,6 +81,10 @@ struct alignas(16) Meshlet
 struct alignas(16) Globals
 {
 	mat4 projection;
+
+	float screenWidth, screenHeight, znear, zfar; // symmetric projection parameters
+	float frustum[4]; // data for left/right/top/bottom frustum planes
+
 	int lodEnabled;
 };
 
@@ -835,6 +839,15 @@ int main(int argc, const char** argv)
 		globals.projection = projection;
 		globals.lodEnabled = int(lodEnabled);
 
+		globals.screenWidth = float(swapchain.width);
+		globals.screenHeight = float(swapchain.height);
+		globals.znear = znear;
+		globals.zfar = drawDistance;
+		globals.frustum[0] = frustumX.x;
+		globals.frustum[1] = frustumX.z;
+		globals.frustum[2] = frustumY.y;
+		globals.frustum[3] = frustumY.z;
+
 		auto fullbarrier = [&]()
 		{
 				VkMemoryBarrier2 barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
@@ -1259,7 +1272,7 @@ int main(int argc, const char** argv)
 		double modelsPerSec = double(drawCount) / double(frameGPUAvg * 1e-3);
 
 		char title[256];
-		sprintf(title, "mesh shading %s; frustum culling: %s; occlusion culling: %s; lod: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, cull late: %.2f); triangles %.1fM; %.1fB tri/sec,%.1fM models/sec",
+		sprintf(title, "mesh shading %s; frustum culling: %s; occlusion culling: %s; lod: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, cull late: %.2f); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
 			meshShadingEnabled ? "ON" : "OFF",
 			cullingEnabled ? "ON" : "OFF",
 			occlusionEnabled ? "ON" : "OFF",
