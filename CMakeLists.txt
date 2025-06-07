@@ -48,11 +48,15 @@ target_link_libraries(kaleido PRIVATE   glfw
                                         glm
                                         fast_obj)
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(kaleido PRIVATE -D_DEBUG) # enable debug mode
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (Debug/Release)" FORCE)
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(kaleido PRIVATE -D_DEBUG)  # enable debug mode
     message(STATUS "Debug mode enabled: assert is active.")
 else()
-    target_compile_definitions(kaleido PRIVATE -DNDEBUG) # disable assert
+    target_compile_definitions(kaleido PRIVATE -DNDEBUG)  # disable assert()
     message(STATUS "Release mode enabled: assert is disabled.")
 endif()
 

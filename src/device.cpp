@@ -99,6 +99,7 @@ static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 	return VK_FALSE;
 }
 
+#ifndef NDEBUG
 VkDebugReportCallbackEXT registerDebugCallback(VkInstance instance)
 {
 	VkDebugReportCallbackCreateInfoEXT createInfo = { VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT };
@@ -113,7 +114,7 @@ VkDebugReportCallbackEXT registerDebugCallback(VkInstance instance)
 
 	return callback;
 }
-
+#endif
 
 uint32_t getGraphicsFamilyIndex(VkPhysicalDevice physicalDevice)
 {
