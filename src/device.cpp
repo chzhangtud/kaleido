@@ -13,16 +13,18 @@
 #define KHR_VALIDATION 1
 #endif
 
+#define CURRENT_VK_VERSION VK_API_VERSION_1_3
+
 // Synchronization validation is enabled by default in Debug but it's rather slow
 #define SYNC_VALIDATION 1
 
 VkInstance createInstance()
 {
-	assert(volkGetInstanceVersion() >= VK_API_VERSION_1_4);
+	assert(volkGetInstanceVersion() >= CURRENT_VK_VERSION);
 
 	// SHORTCUT: In real VUlkans applications you should check if the used version is available via vkEnumerateInstanceVersion.
 	VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
-	appInfo.apiVersion = VK_API_VERSION_1_4;
+	appInfo.apiVersion = CURRENT_VK_VERSION;
 
 	VkInstanceCreateInfo createInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.pApplicationInfo = &appInfo;
@@ -158,13 +160,31 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 		uint32_t familyIndex = getGraphicsFamilyIndex(physicalDevices[i]);
 
 		if (familyIndex == VK_QUEUE_FAMILY_IGNORED)
+		{
+			printf(LOGI("GPU%d skipped: no graphics queue\n"), i);
 			continue;
+		}
 
 		if (!supportsPresentation(physicalDevices[i], familyIndex))
+		{
+			printf(LOGI("GPU%d skipped: doesn't support presentation\n"), i);
 			continue;
+		}
 
-		if (props.apiVersion < VK_API_VERSION_1_4)
+		if (props.apiVersion < CURRENT_VK_VERSION)
+		{
+			uint32_t major = VK_VERSION_MAJOR(props.apiVersion);
+			uint32_t minor = VK_VERSION_MINOR(props.apiVersion);
+			uint32_t patch = VK_VERSION_PATCH(props.apiVersion);
+
+			uint32_t requiredMajor = VK_VERSION_MAJOR(CURRENT_VK_VERSION);
+			uint32_t requiredMinor = VK_VERSION_MINOR(CURRENT_VK_VERSION);
+			uint32_t requiredPatch = VK_VERSION_PATCH(CURRENT_VK_VERSION);
+	
+			printf(LOGI("GPU%d skipped: Vulkan API version too low: %u.%u.%u, required: %u.%u.%u \n"),
+				i, major, minor, patch, requiredMajor, requiredMinor, requiredPatch);
 			continue;
+		}
 
 		if (!preferred && props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
 		{

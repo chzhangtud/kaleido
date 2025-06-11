@@ -9,10 +9,12 @@
 #extension GL_ARB_shader_draw_parameters: require
 
 #include "mesh.h"
+#include "math.h"
 
 layout(local_size_x = TASK_WGSIZE, local_size_y = 1, local_size_z = 1) in;
 
 #define CULL 1
+#define LATE globals.lateWorkaround
 
 layout(push_constant) uniform block
 {
@@ -39,6 +41,13 @@ layout(binding = 3) readonly buffer Meshlets
     Meshlet meshlets[];
 };
 
+layout(binding = 7) buffer MeshletVisibility
+{
+    uint meshletVisibility[];
+};
+
+layout(binding = 8) uniform sampler2D depthPyramid;
+
 taskPayloadSharedEXT MeshTaskPayload payload;
 
 bool coneCull(vec3 center, float radius, vec3 cone_axis, float cone_cutoff, vec3 camera_position)
@@ -55,6 +64,7 @@ void main()
     uint drawId = drawCommands[gl_DrawIDARB].drawId;
 	MeshDraw meshDraw = draws[drawId];
     payload.drawId = drawId;
+    uint lateDrawVisibility = drawCommands[gl_DrawIDARB].lateDrawVisibility;
 
     Mesh mesh = meshes[meshDraw.meshIndex];
 
@@ -79,7 +89,20 @@ void main()
 									int(meshlets[mi].coneAxis[2]) / 127.0), meshDraw.orientation);
 	float coneCutoff = int(meshlets[mi].coneCutoff) / 127.0;
 	
-    bool visible = mgi < drawCommands[gl_DrawIDARB].taskCount;
+    uint mvi = meshDraw.meshletVisibilityOffset + mgi;
+
+    bool valid = mgi < drawCommands[gl_DrawIDARB].taskCount;
+    bool visible = valid;
+
+    // TODO: this might not be the most efficient way to do this
+    // occlusionEnabled = 1 check is necessary because otherwise if we disable OC, cluster occlusion status becomes "sticky";
+    // for draw calls area always dispatched with LATE=0, we never update their cull status because they are skipped.
+    if (!LATE &&  meshletVisibility[mvi] == 0 && globals.occlusionEnabled == 1)
+        visible = false;
+
+    bool skip = false;
+    if (LATE && lateDrawVisibility == 1 && meshletVisibility[mvi] == 1)
+        skip = true;
 
 	// backface cone culling
 	visible = visible && !coneCull(center, radius, coneAxis, coneCutoff, vec3(0, 0, 0));
@@ -90,7 +113,31 @@ void main()
 	// note: because we use an infinite projection matrix, this may cull meshlets that belong to a mesh that straddles the "far" plane; we could optionally remove the far check to be conservative
 	visible = visible && center.z + radius > globals.znear && center.z - radius < globals.zfar;
 
-    if (visible)
+    if (LATE && visible && globals.occlusionEnabled == 1)
+    {
+        float P00 = globals.projection[0][0], P11 = globals.projection[1][1];
+
+        vec4 aabb;
+        if (projectSphere(center, radius, globals.znear, P00, P11, aabb))
+        {
+            float width = (aabb.z - aabb.x) * globals.pyramidWidth;
+            float height = (aabb.z - aabb.y) * globals.pyramidHeight;
+
+            float level = floor(log2(max(width, height)));
+
+            // Sampler is set up to do min reuction, so this computes the minimum depth of a 2x2 texel quad
+            float depth = textureLod(depthPyramid, (aabb.xy + aabb.zw) * 0.5, level).x;
+
+            float depthSphere = globals.znear / (center.z - radius);
+
+            visible = visible && depthSphere > depth;
+        }
+    }
+
+    if (LATE && valid)
+        meshletVisibility[mvi] = visible ? 1 : 0;
+
+    if (visible && !skip)
     {
         uint index = atomicAdd(sharedCount, 1);
         payload.meshletIndices[index] = mi;

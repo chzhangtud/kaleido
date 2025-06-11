@@ -85,7 +85,10 @@ struct alignas(16) Globals
 	float screenWidth, screenHeight, znear, zfar; // symmetric projection parameters
 	float frustum[4]; // data for left/right/top/bottom frustum planes
 
+	float pyramidWidth, pyramidHeight; // depth pyramid size in texels
+	int occlusionEnabled;
 	int lodEnabled;
+	bool lateWorkaround;
 };
 
 struct alignas(16) MeshDraw
@@ -96,12 +99,15 @@ struct alignas(16) MeshDraw
 
 	uint32_t meshIndex;
 	uint32_t vertexOffset;
+	uint32_t meshletVisibilityOffset;
 };
 
 struct MeshDrawCommand
 {
 	uint32_t drawId;
 	VkDrawIndirectCommand indirect; // 4 uint32_t
+	uint32_t lateDrawVisibility;
+	uint32_t meshletVisibilityOffset;
 	uint32_t taskCount;
 	VkDrawMeshTasksIndirectCommandEXT indirectMS; // 3 uint32_t
 };
@@ -156,6 +162,7 @@ struct alignas(16) DrawCullData
 	int cullingEnabled;
 	int lodEnabled;
 	int occlusionEnabled;
+	int meshShadingEnabled;
 };
 
 struct alignas(16) DepthReduceData
@@ -689,8 +696,10 @@ int main(int argc, const char** argv)
 	}
 
 	uint32_t drawCount = 100'000;
-	float sceneRatio = 5.f;
+	float sceneRadius = 5.f;
 	float drawDistance = 10.f;
+
+	uint32_t meshletVisibilityCount = 0;
 
 	std::vector<MeshDraw> draws(drawCount);
 
@@ -701,9 +710,9 @@ int main(int argc, const char** argv)
 		size_t meshIndex = rand() % geometry.meshes.size();
 		const Mesh& mesh = geometry.meshes[meshIndex];
 
-		draws[i].position[0] = (float(rand()) / RAND_MAX) * 2.f * sceneRatio - sceneRatio;
-		draws[i].position[1] = (float(rand()) / RAND_MAX) * 2.f * sceneRatio - sceneRatio;
-		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f * sceneRatio - sceneRatio;
+		draws[i].position[0] = (float(rand()) / RAND_MAX) * 2.f * sceneRadius - sceneRadius;
+		draws[i].position[1] = (float(rand()) / RAND_MAX) * 2.f * sceneRadius - sceneRadius;
+		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f * sceneRadius - sceneRadius;
 		draws[i].scale = (float(rand()) / RAND_MAX) * 0.2f;
 
 		vec3 axis = normalize(vec3((float(rand()) / RAND_MAX) * 2 - 1, (float(rand()) / RAND_MAX) * 2 - 1, (float(rand()) / RAND_MAX) * 2 - 1));
@@ -712,7 +721,17 @@ int main(int argc, const char** argv)
 		
 		draws[i].meshIndex = uint32_t(meshIndex);
 		draws[i].vertexOffset = mesh.vertexOffset;
+
+		draws[i].meshletVisibilityOffset = meshletVisibilityCount;
+
+		uint32_t meshletCount = 0;
+		for (uint32_t i = 0; i < mesh.lodCount; ++i)
+			meshletCount = std::max(meshletCount, mesh.lods[i].meshletCount);
+
+		meshletVisibilityCount += meshletCount;
 	}
+
+	printf("Total meshlet vis count: %d\n", meshletVisibilityCount);
 
 	Buffer db = {};
 	createBuffer(db, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -728,6 +747,15 @@ int main(int argc, const char** argv)
 
 	Buffer dccb = {};
 	createBuffer(dccb, device, memoryProperties, 4, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	// TODO: this is *very* suboptimal wrt memory consumption, but we're going to rework this later
+	// TODO: maybe start by using uint8_t here
+	Buffer mvb = {};
+	bool mvbCleared = false;
+	if (meshShadingSupported)
+	{
+		createBuffer(mvb, device, memoryProperties, meshletVisibilityCount * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	}
 
 	Image colorTarget = {};
 	Image depthTarget = {};
@@ -803,13 +831,29 @@ int main(int argc, const char** argv)
 
 		if (!dvbCleared)
 		{
-			vkCmdFillBuffer(commandBuffer, dvb.buffer, 0, 4 * drawCount, 0);
+			// TODO: this is stupidly redundantAdd commentMore actions
+			vkCmdFillBuffer(commandBuffer, dvb.buffer, 0, sizeof(uint32_t) * drawCount, 0);
 
 			VkBufferMemoryBarrier2 fillBarrier = bufferBarrier(dvb.buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 			pipelineBarrier(commandBuffer, 0, 1, &fillBarrier, 0, nullptr);
 
 			dvbCleared = true;
 			VK_CHECKPOINT("dvb cleared");
+		}
+
+		if (!mvbCleared && meshShadingSupported)
+		{
+			// TODO: this is stupidly redundant
+			vkCmdFillBuffer(commandBuffer, mvb.buffer, 0, sizeof(uint32_t) * meshletVisibilityCount, 0);
+
+			VkBufferMemoryBarrier2 fillBarrier = bufferBarrier(mvb.buffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+			pipelineBarrier(commandBuffer, 0, 1, &fillBarrier, 0, nullptr);
+
+			mvbCleared = true;
+
+			VK_CHECKPOINT("mvb cleared");
 		}
 
 		float znear = 1.f;
@@ -835,7 +879,7 @@ int main(int argc, const char** argv)
 		cullData.lodBase = 10.f;
 		cullData.lodStep = 1.5f;
 		cullData.pyramidWidth = float(depthPyramidWidth);
-		cullData.pyramidHeight = float(depthPyramidHeight);
+		cullData.meshShadingEnabled = meshShadingSupported && meshShadingEnabled;
 
 		Globals globals = {};
 		globals.projection = projection;
@@ -849,6 +893,9 @@ int main(int argc, const char** argv)
 		globals.frustum[1] = frustumX.z;
 		globals.frustum[2] = frustumY.y;
 		globals.frustum[3] = frustumY.z;
+		globals.pyramidWidth = float(depthPyramidWidth);
+		globals.pyramidHeight = float(depthPyramidHeight);
+		globals.occlusionEnabled = occlusionEnabled;
 
 		auto fullbarrier = [&]()
 		{
@@ -1035,11 +1082,17 @@ int main(int argc, const char** argv)
 			{
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineMS);
 
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer };
+				// TODO: double-check synchronization
+				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc };
+				
 				//vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramMS.updateTemplate, meshProgramMS.layout, 0, descriptors);
 				pushDescriptors(meshProgramMS, descriptors);
 
-				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, meshProgramMS.pushConstantStages, 0, sizeof(globals), &globals);
+				Globals globalsTemp = globals;
+				globalsTemp.lateWorkaround = late;
+
+				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, meshProgramMS.pushConstantStages, 0, sizeof(globalsTemp), &globalsTemp);
 				vkCmdDrawMeshTasksIndirectCountEXT(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirectMS), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
 			}
 			else
@@ -1308,6 +1361,7 @@ int main(int argc, const char** argv)
 		destroyBuffer(mlb, device);
 		destroyBuffer(mvdb, device);
 		destroyBuffer(midb, device);
+		destroyBuffer(mvb, device);
 	}
 
 	destroyBuffer(ib, device);

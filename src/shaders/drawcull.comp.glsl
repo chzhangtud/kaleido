@@ -4,6 +4,7 @@
 #extension GL_GOOGLE_include_directive: require
 
 #include "mesh.h"
+#include "math.h"
 
 layout(constant_id = 0) const bool LATE = false;
 
@@ -41,28 +42,6 @@ layout(binding = 4) buffer DrawVisibility
 
 layout(binding = 5) uniform sampler2D depthPyramid;
 
-// 2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere. Michael Mara, Morgan McGuire. 2013
-bool projectSphere(vec3 C, float r, float znear, float P00, float P11, out vec4 aabb)
-{
-	if (C.z < r + znear)
-		return false;
-
-	vec2 cx = -C.xz;
-	vec2 vx = vec2(sqrt(dot(cx, cx) - r * r), r);
-	vec2 minx = mat2(vx.x, vx.y, -vx.y, vx.x) * cx;
-	vec2 maxx = mat2(vx.x, -vx.y, vx.y, vx.x) * cx;
-
-	vec2 cy = -C.yz;
-	vec2 vy = vec2(sqrt(dot(cy, cy) - r * r), r);
-	vec2 miny = mat2(vy.x, vy.y, -vy.y, vy.x) * cy;
-	vec2 maxy = mat2(vy.x, -vy.y, vy.y, vy.x) * cy;
-
-	aabb = vec4(minx.x / minx.y * P00, miny.x / miny.y * P11, maxx.x / maxx.y * P00, maxy.x / maxy.y * P11);
-	aabb = aabb.xwzy * vec4(0.5f, -0.5f, 0.5f, -0.5f) + vec4(0.5f); // clip space -> uv space
-
-	return true;
-}
-
 void main()
 {
     uint di = gl_GlobalInvocationID.x;
@@ -70,6 +49,7 @@ void main()
 	if (di >= cullData.drawCount)
 		return;
 
+	// TODO: when occlusion culling is off, can we make sure everything is processed with LATE=false?
 	if (!LATE && drawVisibility[di] == 0)
 		return;
 
@@ -105,7 +85,10 @@ void main()
 		}
 	}
 
-	if (visible && (!LATE || drawVisibility[di] == 0))
+	// TODO: when meshlet occlusion culling is enabled, we actually *do* need to append the draw command if vis[] == 1 in LATE pass,
+	// so that we can correctly render now-visible previously-invisible meshlets. We will also need to pass drawvis[] along to
+	// task shader so that it can *reject* clusters that we *did* draw in the first pass
+	if (visible && (!LATE || (cullData.meshShadingEnabled == 1 && cullData.occlusionEnabled == 1) || drawVisibility[di] == 0))
 	{
 		uint dci = atomicAdd(drawCommandCount, 1);
 
@@ -123,6 +106,8 @@ void main()
 		drawCommands[dci].instanceCount = 1;
 		drawCommands[dci].firstVertex = lod.indexOffset;
 		drawCommands[dci].firstInstance = 0;
+		drawCommands[dci].lateDrawVisibility = drawVisibility[di];
+		drawCommands[dci].meshletVisibilityOffset = draws[di].meshletVisibilityOffset;
 		drawCommands[dci].taskCount = lod.meshletCount;
 		drawCommands[dci].groupCountX = (lod.meshletCount + TASK_WGSIZE - 1) / TASK_WGSIZE;
 		drawCommands[dci].groupCountY = 1;
