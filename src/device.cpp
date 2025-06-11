@@ -145,8 +145,6 @@ static bool supportsPresentation(VkPhysicalDevice physicalDevice, uint32_t famil
 
 VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t physicalDeviceCount)
 {
-	return physicalDevices[1];
-
 	VkPhysicalDevice preferred = 0;
 	VkPhysicalDevice fallback = 0;
 
@@ -229,9 +227,11 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features.features.pipelineStatisticsQuery = VK_TRUE;
 	features.features.shaderInt16 = VK_TRUE;
 	features.features.shaderInt64 = VK_TRUE;
+	features.features.pipelineStatisticsQuery = VK_TRUE;
 	
-	VkPhysicalDevice16BitStorageFeaturesKHR features16 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR };
-	features16.storageBuffer16BitAccess = VK_TRUE;
+	VkPhysicalDeviceVulkan11Features features11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+	features11.shaderDrawParameters = VK_TRUE;
+	features11.storageBuffer16BitAccess = VK_TRUE;
 
 	VkPhysicalDeviceVulkan12Features features12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
 	features12.shaderInt8 = VK_TRUE;
@@ -241,23 +241,16 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features12.drawIndirectCount = VK_TRUE;
 	features12.samplerFilterMinmax = VK_TRUE;
 	features12.scalarBlockLayout = VK_TRUE;
-	
-	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderFeature = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES };
-	dynamicRenderFeature.dynamicRendering = VK_TRUE;
 
-	VkPhysicalDeviceMaintenance4Features featuresMaintenance4 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES };
-	featuresMaintenance4.maintenance4 = VK_TRUE;
-
-	VkPhysicalDeviceShaderDrawParameterFeatures featuresShaderDrawParameter = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES };
-	featuresShaderDrawParameter.shaderDrawParameters = VK_TRUE;
+	VkPhysicalDeviceVulkan13Features features13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+	features13.dynamicRendering = VK_TRUE;
+	features13.synchronization2 = VK_TRUE;
+	features13.maintenance4 = VK_TRUE;
 
 	// This will only be used if meshShadingEnabled = true (see below)
 	VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
 	featuresMesh.taskShader = VK_TRUE;
 	featuresMesh.meshShader = VK_TRUE;
-
-	VkPhysicalDeviceSynchronization2Features sync2Feature = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES };
-	sync2Feature.synchronization2 = VK_TRUE;
 
 	VkDeviceCreateInfo createInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	createInfo.queueCreateInfoCount = 1;
@@ -265,17 +258,18 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 
 	createInfo.ppEnabledExtensionNames = extensions.data();
 	createInfo.enabledExtensionCount = uint32_t(extensions.size());
+	createInfo.pEnabledFeatures = &features.features;
 
-	createInfo.pNext = &features;
-	features.pNext = &features16;
-	features16.pNext = &features12;
-	features12.pNext = &dynamicRenderFeature;
-	dynamicRenderFeature.pNext = &featuresMaintenance4;
-	featuresMaintenance4.pNext = &featuresShaderDrawParameter;
-	featuresShaderDrawParameter.pNext = &sync2Feature;
+	createInfo.pNext = &features11;
+	features11.pNext = &features12;
+	features12.pNext = &features13;
+	features13.pNext = nullptr;
 
 	if (meshShadingEnabled)
-		sync2Feature.pNext = &featuresMesh;
+	{
+		features13.pNext = &featuresMesh;
+		featuresMesh.pNext = nullptr;
+	}
 
 	VkDevice device = 0;
 	VK_CHECK(vkCreateDevice(physicalDevice, &createInfo, 0, &device));
