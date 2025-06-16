@@ -15,8 +15,8 @@
 
 #define CURRENT_VK_VERSION VK_API_VERSION_1_3
 
-// Synchronization validation is enabled by default in Debug but it's rather slow
-#define SYNC_VALIDATION 1
+// Synchronization validation is disabled by default in Debug since it's rather slow
+#define SYNC_VALIDATION 0
 
 VkInstance createInstance()
 {
