@@ -405,9 +405,21 @@ static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipeli
 	return updateTemplate;
 }
 
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, Shaders shaders, VkPipelineLayout layout)
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, Shaders shaders, VkPipelineLayout layout, bool useSpecializationConstants, VkBool32 LATE)
 {
 	VkGraphicsPipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+
+	// TODO: create a specialization constants module to replace code below
+	std::vector<VkSpecializationMapEntry> specializationEntries;
+	VkSpecializationInfo specializationInfo = {};
+	if (useSpecializationConstants)
+	{
+		specializationEntries.push_back({ 0, 0, sizeof(VkBool32) });
+		specializationInfo.mapEntryCount = uint32_t(specializationEntries.size());
+		specializationInfo.pMapEntries = specializationEntries.data();
+		specializationInfo.dataSize = sizeof(LATE);
+		specializationInfo.pData = &LATE;
+	}
 
 	std::vector<VkPipelineShaderStageCreateInfo> stages = {};
 	for (const auto& shader : shaders)
@@ -415,6 +427,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 		VkPipelineShaderStageCreateInfo stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
 		stage.stage = shader->stage;
 		stage.module = shader->module;
+		stage.pSpecializationInfo = &specializationInfo;
 		stage.pName = "main";
 
 		stages.emplace_back(stage);
