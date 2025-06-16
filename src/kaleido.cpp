@@ -731,7 +731,8 @@ int main(int argc, const char** argv)
 		meshletVisibilityCount += meshletCount;
 	}
 
-	printf("Total meshlet vis count: %d\n", meshletVisibilityCount);
+	uint32_t meshletVisibilityBytes = (meshletVisibilityCount + 31) / 32 * 4; // 32-bit visibility per meshlet
+	printf("Total meshlet vis count:%d; size in MB:%d\n", meshletVisibilityCount, meshletVisibilityBytes / (1024 * 1024));
 
 	Buffer db = {};
 	createBuffer(db, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -754,7 +755,7 @@ int main(int argc, const char** argv)
 	bool mvbCleared = false;
 	if (meshShadingSupported)
 	{
-		createBuffer(mvb, device, memoryProperties, meshletVisibilityCount * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		createBuffer(mvb, device, memoryProperties, meshletVisibilityBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	}
 
 	Image colorTarget = {};
@@ -844,7 +845,7 @@ int main(int argc, const char** argv)
 		if (!mvbCleared && meshShadingSupported)
 		{
 			// TODO: this is stupidly redundant
-			vkCmdFillBuffer(commandBuffer, mvb.buffer, 0, sizeof(uint32_t) * meshletVisibilityCount, 0);
+			vkCmdFillBuffer(commandBuffer, mvb.buffer, 0, meshletVisibilityBytes, 0);
 
 			VkBufferMemoryBarrier2 fillBarrier = bufferBarrier(mvb.buffer,
 				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
