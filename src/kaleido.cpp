@@ -1051,7 +1051,7 @@ int main(int argc, const char** argv)
 		{
 			VK_CHECKPOINT(phase);
 
-			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
 
 			vkCmdBeginQuery(commandBuffer, queryPoolPipeline, query, 0);
 
@@ -1121,7 +1121,7 @@ int main(int argc, const char** argv)
 
 			vkCmdEndQuery(commandBuffer, queryPoolPipeline, query);
 
-			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 		};
 
 		auto pyramid = [&]()

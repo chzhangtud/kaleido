@@ -291,6 +291,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 		featuresMesh.pNext = nullptr;
 	}
 
+	vkGetPhysicalDeviceFeatures(physicalDevice, &features.features);
 	VkDevice device = 0;
 	VK_CHECK(vkCreateDevice(physicalDevice, &createInfo, 0, &device));
 
