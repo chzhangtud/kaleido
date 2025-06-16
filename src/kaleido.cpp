@@ -20,6 +20,7 @@ bool meshShadingEnabled = true;
 bool cullingEnabled = true;
 bool lodEnabled = true;
 bool occlusionEnabled = true;
+bool clusterOcclusionEnabled = false;
 
 bool debugPyramid = false;
 int debugPyramidLevel = 0;
@@ -86,9 +87,9 @@ struct alignas(16) Globals
 	float frustum[4]; // data for left/right/top/bottom frustum planes
 
 	float pyramidWidth, pyramidHeight; // depth pyramid size in texels
-	int occlusionEnabled;
+	int clusterOcclusionEnabled;
 	int lodEnabled;
-	bool lateWorkaround;
+	bool latePass;
 };
 
 struct alignas(16) MeshDraw
@@ -162,7 +163,8 @@ struct alignas(16) DrawCullData
 	int cullingEnabled;
 	int lodEnabled;
 	int occlusionEnabled;
-	int meshShadingEnabled;
+	int clusterOcclusionEnabled;
+	int latePass;
 };
 
 struct alignas(16) DepthReduceData
@@ -397,6 +399,11 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		if (key == GLFW_KEY_O)
 		{
 			occlusionEnabled = !occlusionEnabled;
+			return;
+		}
+		if (key == GLFW_KEY_K)
+		{
+			clusterOcclusionEnabled = !clusterOcclusionEnabled;
 			return;
 		}
 		if (key == GLFW_KEY_L)
@@ -732,7 +739,6 @@ int main(int argc, const char** argv)
 	}
 
 	uint32_t meshletVisibilityBytes = (meshletVisibilityCount + 31) / 32 * 4; // 32-bit visibility per meshlet
-	printf("Total meshlet vis count:%d; size in MB:%d\n", meshletVisibilityCount, meshletVisibilityBytes / (1024 * 1024));
 
 	Buffer db = {};
 	createBuffer(db, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -744,7 +750,7 @@ int main(int argc, const char** argv)
 	uploadBuffer(device, commandPool, commandBuffer, queue, db, scratch, draws.data(), draws.size() * sizeof(MeshDraw));
 
 	Buffer dcb = {};
-	createBuffer(dcb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	createBuffer(dcb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	Buffer dccb = {};
 	createBuffer(dccb, device, memoryProperties, 4, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -880,7 +886,7 @@ int main(int argc, const char** argv)
 		cullData.lodBase = 10.f;
 		cullData.lodStep = 1.5f;
 		cullData.pyramidWidth = float(depthPyramidWidth);
-		cullData.meshShadingEnabled = meshShadingSupported && meshShadingEnabled;
+		cullData.clusterOcclusionEnabled = occlusionEnabled && clusterOcclusionEnabled && meshShadingSupported && meshShadingEnabled;
 
 		Globals globals = {};
 		globals.projection = projection;
@@ -896,7 +902,7 @@ int main(int argc, const char** argv)
 		globals.frustum[3] = frustumY.z;
 		globals.pyramidWidth = float(depthPyramidWidth);
 		globals.pyramidHeight = float(depthPyramidHeight);
-		globals.occlusionEnabled = occlusionEnabled;
+		globals.clusterOcclusionEnabled = occlusionEnabled && clusterOcclusionEnabled && meshShadingSupported && meshShadingEnabled;
 
 		auto fullbarrier = [&]()
 		{
@@ -1041,9 +1047,11 @@ int main(int argc, const char** argv)
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 		};	
 
-		auto render = [&](bool late, const VkClearColorValue& colorClear, const VkClearDepthStencilValue& depthClear, uint32_t query, const char* phase)
+		auto render = [&](bool late, const VkClearColorValue& colorClear, const VkClearDepthStencilValue& depthClear, uint32_t query, uint32_t timestamp, const char* phase)
 		{
 			VK_CHECKPOINT(phase);
+
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 
 			vkCmdBeginQuery(commandBuffer, queryPoolPipeline, query, 0);
 
@@ -1091,7 +1099,7 @@ int main(int argc, const char** argv)
 				pushDescriptors(meshProgramMS, descriptors);
 
 				Globals globalsTemp = globals;
-				globalsTemp.lateWorkaround = late;
+				globalsTemp.latePass = late;
 
 				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, meshProgramMS.pushConstantStages, 0, sizeof(globalsTemp), &globalsTemp);
 				vkCmdDrawMeshTasksIndirectCountEXT(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirectMS), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
@@ -1115,6 +1123,8 @@ int main(int argc, const char** argv)
 			vkCmdEndRendering(commandBuffer);
 
 			vkCmdEndQuery(commandBuffer, queryPoolPipeline, query);
+
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
 		};
 
 		auto pyramid = [&]()
@@ -1193,17 +1203,19 @@ int main(int argc, const char** argv)
 		VK_CHECKPOINT("frame");
 
 		// early cull: frustum cull & fill objects that *were* visible last frame
+		cullData.latePass = 0;
 		cull(drawcullPipeline, 2, "early cull", /* late = */ false);
 		// early render: render objects that were visible last frame
-		render(/* late= */ false, colorClear, depthClear, 0, "early render");
+		render(/* late= */ false, colorClear, depthClear, 0, 8, "early render");
 		// depth pyramid generation
 		pyramid();
 		// late cull: frustum + occlusion cull & fill objects that were *not* visible last frame
+		cullData.latePass = 1;
 		cull(drawculllatePipeline, 6, "late cull", /* late = */ true);
 		
 
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
-		render(/* late= */ true, colorClear, depthClear, 1, "late render");
+		render(/* late= */ true, colorClear, depthClear, 1, 10, "late render");
 
 		VkImageMemoryBarrier2 copyBarriers[] =
 		{
@@ -1305,7 +1317,7 @@ int main(int argc, const char** argv)
 			itsdeadjim();
 		VK_CHECK(wfi);
 
-		uint64_t timestampResults[8] = {};
+		uint64_t timestampResults[12] = {};
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
 
 		uint64_t pipelineResults[2] = {};
@@ -1318,6 +1330,9 @@ int main(int argc, const char** argv)
 		double cullGPUTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
 		double pyramidGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
 		double culllateGPUTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
+
+		double renderGPUTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
+		double renderlateGPUTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
 		
 		double frameCPUEnd = glfwGetTime() * 1000.0;
 
@@ -1327,13 +1342,14 @@ int main(int argc, const char** argv)
 		double trianglesPerSec = double(drawCount * triangleCount) / double(frameGPUAvg * 1e-3);
 		double modelsPerSec = double(drawCount) / double(frameGPUAvg * 1e-3);
 
-		char title[256];
-		sprintf(title, "mesh shading %s; frustum culling: %s; occlusion culling: %s; lod: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, cull late: %.2f); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
-			meshShadingEnabled ? "ON" : "OFF",
+		char title[512];
+		snprintf(title, sizeof(title), "mesh shading %s; frustum culling: %s; occlusion culling: %s; lod: %s, cluster OC: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, render: %.2f ms, pyramid: %.2f ms, cull late: %.2f, renderlate: %.2f ms); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
+			meshShadingSupported && meshShadingEnabled ? "ON" : "OFF",
 			cullingEnabled ? "ON" : "OFF",
 			occlusionEnabled ? "ON" : "OFF",
 			lodEnabled ? "ON" : "OFF",
-			frameCPUAvg, frameGPUAvg, cullGPUTime, pyramidGPUTime, culllateGPUTime, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
+			clusterOcclusionEnabled ? "ON" : "OFF",
+			frameCPUAvg, frameGPUAvg, cullGPUTime, renderGPUTime, pyramidGPUTime, culllateGPUTime, renderlateGPUTime, double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);
 
 		frameIndex++;

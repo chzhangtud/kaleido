@@ -14,7 +14,7 @@
 layout(local_size_x = TASK_WGSIZE, local_size_y = 1, local_size_z = 1) in;
 
 #define CULL 1
-#define LATE globals.lateWorkaround
+#define LATE globals.latePass
 
 layout(push_constant) uniform block
 {
@@ -93,18 +93,23 @@ void main()
 
     bool valid = mgi < drawCommands[gl_DrawIDARB].taskCount;
     bool visible = valid;
-
-    uint meshletVisibilityBit = meshletVisibility[mvi >> 5] & (1u << (mvi & 31));
-
-    // TODO: this might not be the most efficient way to do this
-    // occlusionEnabled = 1 check is necessary because otherwise if we disable OC, cluster occlusion status becomes "sticky";
-    // for draw calls area always dispatched with LATE=0, we never update their cull status because they are skipped.
-    if (!LATE &&  meshletVisibilityBit == 0 && globals.occlusionEnabled == 1)
-        visible = false;
-
     bool skip = false;
-    if (LATE && lateDrawVisibility == 1 && meshletVisibilityBit == 1)
-        skip = true;
+
+    if (globals.clusterOcclusionEnabled == 1)
+	{
+		uint meshletVisibilityBit = meshletVisibility[mvi >> 5] & (1u << (mvi & 31));
+
+        // in early pass, we have to *only* render clusters that were visible last frame, to build a reasonable depth pyramid out of visible trianglesAdd commentMore actions
+		if (!LATE && meshletVisibilityBit == 0)
+			visible = false;
+
+        // in late pass, we have to process objects visible last frame again (after rendering them in early pass)Add commentMore actions
+		// in early pass, per above test, we render previously visible clusters
+		// in late pass, we must invert the above test to *not* render previously visible clusters of previously visible objects because they were rendered in early pass.
+		if (LATE && lateDrawVisibility == 1 && meshletVisibilityBit != 0)
+			skip = true;
+	}
+
 
 	// backface cone culling
 	visible = visible && !coneCull(center, radius, coneAxis, coneCutoff, vec3(0, 0, 0));
@@ -115,7 +120,7 @@ void main()
 	// note: because we use an infinite projection matrix, this may cull meshlets that belong to a mesh that straddles the "far" plane; we could optionally remove the far check to be conservative
 	visible = visible && center.z + radius > globals.znear && center.z - radius < globals.zfar;
 
-    if (LATE && visible && globals.occlusionEnabled == 1)
+    if (LATE && globals.clusterOcclusionEnabled == 1 && visible)
     {
         float P00 = globals.projection[0][0], P11 = globals.projection[1][1];
 
@@ -136,7 +141,7 @@ void main()
         }
     }
 
-    if (LATE && valid)
+    if (LATE && globals.clusterOcclusionEnabled == 1 && valid)
     {
         if (visible)
             atomicOr(meshletVisibility[mvi >> 5], 1u << (mvi & 31));

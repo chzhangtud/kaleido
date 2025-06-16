@@ -28,9 +28,9 @@ struct Globals
 	float screenWidth, screenHeight, znear, zfar; // symmetric projection parametersAdd commentMore actions
 	float frustum[4]; // data for left/right/top/bottom frustum planes
 	float pyramidWidth, pyramidHeight; // depth pyramid size in texels
-	int occlusionEnabled;
+	int clusterOcclusionEnabled;
 	int lodEnabled;
-	bool lateWorkaround;
+	bool latePass;
 };
 
 struct DrawCullData
@@ -44,7 +44,8 @@ struct DrawCullData
 	int cullingEnabled;
 	int lodEnabled;
 	int occlusionEnabled;
-	int meshShadingEnabled;
+	int clusterOcclusionEnabled;
+	bool latePass;
 };
 
 struct MeshLod
