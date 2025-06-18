@@ -1,5 +1,6 @@
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
+#include <string>
 
 #include "common.h"
 #include "device.h"
@@ -18,6 +19,21 @@
 // Synchronization validation is disabled by default in Debug since it's rather slow
 #define SYNC_VALIDATION 0
 
+static bool isLayerSupported(const char* name)
+{
+	uint32_t propertyCount = 0;
+	VK_CHECK(vkEnumerateInstanceLayerProperties(&propertyCount, 0));
+
+	std::vector<VkLayerProperties> properties(propertyCount);
+	VK_CHECK(vkEnumerateInstanceLayerProperties(&propertyCount, properties.data()));
+
+	for (uint32_t i = 0; i < propertyCount; ++i)
+		if (strcmp(name, properties[i].layerName) == 0)
+			return true;
+
+	return false;
+}
+
 VkInstance createInstance()
 {
 	assert(volkGetInstanceVersion() >= CURRENT_VK_VERSION);
@@ -34,8 +50,17 @@ VkInstance createInstance()
 	{
 		"VK_LAYER_KHRONOS_validation"
 	};
-	createInfo.ppEnabledLayerNames = debugLayers;
-	createInfo.enabledLayerCount = sizeof(debugLayers) / sizeof(debugLayers[0]);
+	
+	if (isLayerSupported("VK_LAYER_KHRONOS_validation"))
+	{
+		createInfo.ppEnabledLayerNames = debugLayers;
+		createInfo.enabledLayerCount = sizeof(debugLayers) / sizeof(debugLayers[0]);
+	}
+
+	else
+	{
+		printf("Warning: Vulkan debug layers are not available\n");
+	}
 
 	VkValidationFeatureEnableEXT enabledValidationFeatures[] =
 	{
@@ -58,7 +83,7 @@ VkInstance createInstance()
 #ifdef VK_USE_PLATFORM_WIN32_KHR
 		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
 #endif
-#if KHR_VALIDATION
+#ifndef NDEBUG
 		VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
 #endif
 	};

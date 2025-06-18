@@ -14,10 +14,10 @@
     } while(0)
 
 
-#define VK_CHECK_SUBOPTIMAL(call)                                       \
+#define VK_CHECK_SWAPCHAIN(call)                                       \
 do {                                                                    \
         VkResult result_ = call;                                        \
-        assert(result_ == VK_SUCCESS || result_ == VK_SUBOPTIMAL_KHR);  \
+        assert(result_ == VK_SUCCESS || result_ == VK_SUBOPTIMAL_KHR || result_ == VK_ERROR_OUT_OF_DATE_KHR); \
 } while (0)
 
 template <typename T, size_t Size>
