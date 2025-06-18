@@ -212,7 +212,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	return result;
 }
 
-VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool pushDescriptorsSupported, bool meshShadingEnabled)
+VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool pushDescriptorsSupported, bool meshShadingEnabled, bool profilingSupported)
 {
 	float queuePriorities[] = { 1.0f };
 
@@ -234,6 +234,11 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	if (meshShadingEnabled)
 	{
 		extensions.emplace_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+	}
+
+	if (profilingSupported)
+	{
+		extensions.emplace_back(VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME);
 	}
 
 	VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };

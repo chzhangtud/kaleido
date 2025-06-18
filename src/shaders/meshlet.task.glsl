@@ -55,7 +55,8 @@ shared int sharedCount;
 
 void main()
 {
-    MeshTaskCommand command = taskCommands[gl_WorkGroupID.x];
+    // we convert 2D index to 1D index using a fixed *64 factor, see tasksubmit.comp.glsl
+	MeshTaskCommand command = taskCommands[gl_WorkGroupID.x * 64 + gl_WorkGroupID.y];
     uint drawId = command.drawId;
 	MeshDraw meshDraw = draws[drawId];
     payload.drawId = drawId;
@@ -155,9 +156,7 @@ void main()
 
 	EmitMeshTasksEXT(sharedCount, 1, 1);
 #else
-    payload.meshletIndices[gl_LocalInvocationIndex] = mi;
-    uint count = min(TASK_WGSIZE, taskCount - gl_WorkGroupID.x * TASK_WGSIZE);
-
-    EmitMeshTasksEXT(count, 1, 1);
+    payload.meshletIndices[gl_LocalInvocationID.x] = mi;
+    EmitMeshTasksEXT(taskCount, 1, 1);    
 #endif
 }
