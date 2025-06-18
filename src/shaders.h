@@ -33,8 +33,8 @@ using Shaders = std::initializer_list<const Shader*>;
 
 VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders, bool pushDescriptorsSupported);
 VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkShaderStageFlags pushConstantStages, size_t pushConstantSize);
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, Shaders shaders, VkPipelineLayout layout, bool useSpecializationConstants = false, VkBool32 LATE = VK_FALSE);
-VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Shader& shader, VkPipelineLayout layout, bool useSpecializationConstants = false, VkBool32 LATE = VK_FALSE);
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, Shaders shaders, VkPipelineLayout layout, bool useSpecializationConstants = false, VkBool32 LATE = VK_FALSE, VkBool32 TASK = VK_FALSE);
+VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Shader& shader, VkPipelineLayout layout, bool useSpecializationConstants = false, VkBool32 LATE = VK_FALSE, VkBool32 TASK = VK_FALSE);
 
 Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize, bool pushDescriptorsSupported);
 void destroyProgram(VkDevice device, Program& program);

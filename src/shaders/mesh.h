@@ -82,28 +82,23 @@ struct MeshDrawCommand
 {
 	uint drawId;
 
-	// used by traditional raster
+	// VkDrawIndexedIndirectCommand
 	uint vertexCount;
     uint instanceCount;
     uint firstVertex;
     uint firstInstance;
+};
 
-	// used by mesh shading path
+struct MeshTaskCommand
+{
+	uint drawId;
+	uint taskOffset;
+	uint taskCount;
 	uint lateDrawVisibility;
 	uint meshletVisibilityOffset;
-	uint taskCount;
-	uint groupCountX;
-	uint groupCountY;
-	uint groupCountZ;
 };
 
 struct MeshTaskPayload {
 	uint drawId;
 	uint meshletIndices[TASK_WGSIZE];	
 };
-
-vec3 rotateQuat(vec3 v, vec4 q)
-{
-	return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
-}
-

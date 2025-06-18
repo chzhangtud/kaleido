@@ -20,7 +20,7 @@ bool meshShadingEnabled = true;
 bool cullingEnabled = true;
 bool lodEnabled = true;
 bool occlusionEnabled = true;
-bool clusterOcclusionEnabled = false;
+bool clusterOcclusionEnabled = true;
 
 bool debugPyramid = false;
 int debugPyramidLevel = 0;
@@ -106,10 +106,15 @@ struct MeshDrawCommand
 {
 	uint32_t drawId;
 	VkDrawIndirectCommand indirect; // 4 uint32_t
+};
+
+struct MeshTaskCommand
+{
+	uint32_t drawId;
+	uint32_t taskOffset;
+	uint32_t taskCount;
 	uint32_t lateDrawVisibility;
 	uint32_t meshletVisibilityOffset;
-	uint32_t taskCount;
-	VkDrawMeshTasksIndirectCommandEXT indirectMS; // 3 uint32_t
 };
 
 struct Vertex
@@ -582,9 +587,11 @@ int main(int argc, const char** argv)
 	VkPipelineCache pipelineCache = 0;
 
 	Program drawcullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcullCS }, sizeof(DrawCullData), pushDescriptorsSupported);
-	VkPipeline drawcullPipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullProgram.layout, true, /* LATE= */ VK_FALSE );
-	VkPipeline drawculllatePipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullProgram.layout, true, /* LATE= */ VK_TRUE );
-
+	VkPipeline drawcullPipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE);
+	VkPipeline drawculllatePipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullProgram.layout, true, /* LATE= */ VK_TRUE,  /* TASK= */ VK_FALSE);
+	VkPipeline taskcullPipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
+	VkPipeline taskculllatePipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullProgram.layout, true, /* LATE= */ VK_TRUE,  /* TASK= */ VK_TRUE);
+	
 	Program depthreduceProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthreduceCS }, sizeof(DepthReduceData), pushDescriptorsSupported);
 	VkPipeline depthreducePipeline = createComputePipeline(device, pipelineCache, depthreduceCS, depthreduceProgram.layout);
 
@@ -603,10 +610,11 @@ int main(int argc, const char** argv)
 
 	VkPipeline meshPipelineMS = 0;
 	VkPipeline meshlatePipelineMS = 0;
+	
 	if (meshShadingEnabled)
 	{
-		meshPipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout, /* useSpecializationConstants = */ true,/* LATE= */ false);
-		meshlatePipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout, /* useSpecializationConstants = */ true,/* LATE= */ true);
+		meshPipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE);
+		meshlatePipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE);
 		assert(meshPipelineMS && meshlatePipelineMS);
 	}
 
@@ -753,10 +761,10 @@ int main(int argc, const char** argv)
 	createBuffer(dcb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	Buffer dccb = {};
-	createBuffer(dccb, device, memoryProperties, 4, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	createBuffer(dccb, device, memoryProperties, 12, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	// TODO: this is *very* suboptimal wrt memory consumption, but we're going to rework this later
-	// TODO: maybe start by using uint8_t here
+	// TODO: there's a way to implement cluster visibility persistence *without* using bitwise storage at all, which may be beneficial on the balance, so we should try that.
+	// *if* we do that, we can drop meshletVisibilityOffset et al from everywhere
 	Buffer mvb = {};
 	bool mvbCleared = false;
 	if (meshShadingSupported)
@@ -904,6 +912,8 @@ int main(int argc, const char** argv)
 		globals.pyramidHeight = float(depthPyramidHeight);
 		globals.clusterOcclusionEnabled = occlusionEnabled && clusterOcclusionEnabled && meshShadingSupported && meshShadingEnabled;
 
+		bool taskSubmit = meshShadingSupported && meshShadingEnabled;
+
 		auto fullbarrier = [&]()
 		{
 				VkMemoryBarrier2 barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
@@ -983,7 +993,7 @@ int main(int argc, const char** argv)
 		auto cull = [&](VkPipeline pipeline, uint32_t timestamp, const char* phase, bool late)
 		{
 			uint32_t rasterizationStage =
-				(meshShadingSupported && meshShadingEnabled)
+				taskSubmit
 				? VK_PIPELINE_STAGE_TASK_SHADER_BIT_NV | VK_PIPELINE_STAGE_MESH_SHADER_BIT_NV
 				: VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
@@ -996,7 +1006,8 @@ int main(int argc, const char** argv)
 				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 			pipelineBarrier(commandBuffer, 0, 1, &prefillBarrier, 0, nullptr);
 
-			vkCmdFillBuffer(commandBuffer, dccb.buffer, 0, 4, 0);
+			vkCmdFillBuffer(commandBuffer, dccb.buffer, 0, 4, 0); // fills groupCountX for taskSubmit *or* indirect draw count for regular submit
+			vkCmdFillBuffer(commandBuffer, dccb.buffer, 4, 8, 1); // fills groupCountY/Z for taskSubmit
 
 			VK_CHECKPOINT("clear buffer");
 
@@ -1087,10 +1098,10 @@ int main(int argc, const char** argv)
 
 			VK_CHECKPOINT("before draw");
 
-			if (meshShadingSupported && meshShadingEnabled)
+			if (taskSubmit)
 			{
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, late ? meshlatePipelineMS : meshPipelineMS);
-
+				
 				// TODO: double-check synchronization
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
 				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc };
@@ -1099,7 +1110,8 @@ int main(int argc, const char** argv)
 				pushDescriptors(meshProgramMS, descriptors);
 
 				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, meshProgramMS.pushConstantStages, 0, sizeof(globals), &globals);
-				vkCmdDrawMeshTasksIndirectCountEXT(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirectMS), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
+				
+				vkCmdDrawMeshTasksIndirectEXT(commandBuffer, dccb.buffer, 0, 1, 0);
 			}
 			else
 			{
@@ -1200,13 +1212,13 @@ int main(int argc, const char** argv)
 		VK_CHECKPOINT("frame");
 
 		// early cull: frustum cull & fill objects that *were* visible last frame
-		cull(drawcullPipeline, 2, "early cull", /* late = */ false);
+		cull(taskSubmit ? taskcullPipeline : drawcullPipeline, 2, "early cull", /* late= */ false);
 		// early render: render objects that were visible last frame
 		render(/* late= */ false, colorClear, depthClear, 0, 8, "early render");
 		// depth pyramid generation
 		pyramid();
 		// late cull: frustum + occlusion cull & fill objects that were *not* visible last frame
-		cull(drawculllatePipeline, 6, "late cull", /* late = */ true);
+		cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 6, "late cull", /* late= */ true);
 		
 
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
@@ -1339,7 +1351,7 @@ int main(int argc, const char** argv)
 
 		char title[512];
 		snprintf(title, sizeof(title), "mesh shading %s; frustum culling: %s; occlusion culling: %s; lod: %s, cluster OC: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, render: %.2f ms, pyramid: %.2f ms, cull late: %.2f, renderlate: %.2f ms); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
-			meshShadingSupported && meshShadingEnabled ? "ON" : "OFF",
+			taskSubmit ? "ON" : "OFF",
 			cullingEnabled ? "ON" : "OFF",
 			occlusionEnabled ? "ON" : "OFF",
 			lodEnabled ? "ON" : "OFF",
@@ -1400,6 +1412,8 @@ int main(int argc, const char** argv)
 	{
 		vkDestroyPipeline(device, drawcullPipeline, 0);
 		vkDestroyPipeline(device, drawculllatePipeline, 0);
+		vkDestroyPipeline(device, taskcullPipeline, 0);
+		vkDestroyPipeline(device, taskculllatePipeline, 0);
 		destroyProgram(device, drawcullProgram);
 	}
 	{
