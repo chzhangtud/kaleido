@@ -49,6 +49,16 @@ VkCommandPool createCommandPool(VkDevice device, uint32_t familyIndex)
 	return commandPool;
 }
 
+VkFence createFence(VkDevice device)
+{
+	VkFenceCreateInfo createInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+
+	VkFence fence = 0;
+	VK_CHECK(vkCreateFence(device, &createInfo, 0, &fence));
+
+	return fence;
+}
+
 VkQueryPool createQueryPool(VkDevice device, uint32_t queryCount, VkQueryType queryType)
 {
 	VkQueryPoolCreateInfo createInfo = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
@@ -469,9 +479,7 @@ int main(int argc, const char** argv)
 
 	volkLoadInstanceOnly(instance);
 
-#ifndef NDEBUG
 	VkDebugReportCallbackEXT debugCallback = registerDebugCallback(instance);
-#endif
 
 	VkPhysicalDevice physicalDevices[16];
 	uint32_t physicalDeviceCount = sizeof(physicalDevices) / sizeof(physicalDevices[0]);
@@ -533,6 +541,9 @@ int main(int argc, const char** argv)
 
 	VkSemaphore releaseSemaphore = createSemaphore(device);
 	assert(releaseSemaphore);
+
+	VkFence frameFence = createFence(device);
+	assert(frameFence);
 
 	VkQueue queue = 0;
 	vkGetDeviceQueue(device, graphicsFamily, 0, &queue);
@@ -1200,7 +1211,7 @@ int main(int argc, const char** argv)
 				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL),
 			imageBarrier(swapchain.images[imageIndex],
-				0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL),
 			imageBarrier(depthPyramid.image,
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
@@ -1274,7 +1285,7 @@ int main(int argc, const char** argv)
 		submitInfo.pSignalSemaphoreInfos = &releaseSemaphoreInfo;
 
 
-		VK_CHECK(vkQueueSubmit2(queue, 1, &submitInfo, VK_NULL_HANDLE));
+		VK_CHECK(vkQueueSubmit2(queue, 1, &submitInfo, frameFence));
 
 		VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
 		presentInfo.waitSemaphoreCount = 1;
@@ -1285,7 +1296,8 @@ int main(int argc, const char** argv)
 
 		VK_CHECK_SWAPCHAIN(vkQueuePresentKHR(queue, &presentInfo));
 
-		VK_CHECK(vkDeviceWaitIdle(device));
+		VK_CHECK(vkWaitForFences(device, 1, &frameFence, VK_TRUE, ~0ull));
+		VK_CHECK(vkResetFences(device, 1, &frameFence));
 
 		uint64_t timestampResults[12] = {};
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
@@ -1401,18 +1413,18 @@ int main(int argc, const char** argv)
 
 	vkDestroySampler(device, depthSampler, 0);
 
+	vkDestroyFence(device, frameFence, 0);
     vkDestroySemaphore(device, acquireSemaphore, 0);
     vkDestroySemaphore(device, releaseSemaphore, 0);
     vkDestroySurfaceKHR(instance, surface, 0);
 	glfwDestroyWindow(window);
     vkDestroyDevice(device, 0);
 
-#ifndef NDEBUG
-	vkDestroyDebugReportCallbackEXT(instance, debugCallback, 0);
-#endif
+	if (debugCallback)
+		vkDestroyDebugReportCallbackEXT(instance, debugCallback, 0);
 
 	vkDestroyInstance(instance, 0);
 
-    return 0;
+	volkFinalize();
 }
 

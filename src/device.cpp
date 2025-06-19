@@ -1,6 +1,7 @@
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 #include <string>
+#include <stdlib.h>
 
 #include "common.h"
 #include "device.h"
@@ -45,7 +46,7 @@ VkInstance createInstance()
 	VkInstanceCreateInfo createInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.pApplicationInfo = &appInfo;
 
-#if KHR_VALIDATION
+#if KHR_VALIDATION || SYNC_VALIDATION
 	const char* debugLayers[] =
 	{
 		"VK_LAYER_KHRONOS_validation"
@@ -55,6 +56,7 @@ VkInstance createInstance()
 	{
 		createInfo.ppEnabledLayerNames = debugLayers;
 		createInfo.enabledLayerCount = sizeof(debugLayers) / sizeof(debugLayers[0]);
+		printf("Enabled Vulkan validation layers (sync validation %s)\n", SYNC_VALIDATION ? "enabled" : "disabled");
 	}
 
 	else
@@ -62,12 +64,11 @@ VkInstance createInstance()
 		printf("Warning: Vulkan debug layers are not available\n");
 	}
 
+#if SYNC_VALIDATION
 	VkValidationFeatureEnableEXT enabledValidationFeatures[] =
 	{
 		VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
-#if SYNC_VALIDATION
 		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-#endif
 	};
 
 	VkValidationFeaturesEXT validationFeatures = { VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
@@ -75,6 +76,7 @@ VkInstance createInstance()
 	validationFeatures.pEnabledValidationFeatures = enabledValidationFeatures;
 
 	createInfo.pNext = &validationFeatures;
+#endif
 #endif
 
 	const char* extensions[] =
@@ -129,6 +131,8 @@ static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 #ifndef NDEBUG
 VkDebugReportCallbackEXT registerDebugCallback(VkInstance instance)
 {
+	if (!vkCreateDebugReportCallbackEXT)
+		return nullptr;
 	VkDebugReportCallbackCreateInfoEXT createInfo = { VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT };
 	createInfo.flags = VK_DEBUG_REPORT_WARNING_BIT_EXT
 		| VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT
@@ -175,10 +179,15 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	VkPhysicalDevice preferred = 0;
 	VkPhysicalDevice fallback = 0;
 
+	const char* ngpu = getenv("NGPU");
+
 	for (uint32_t i = 0; i < physicalDeviceCount; ++i)
 	{
 		VkPhysicalDeviceProperties props;
 		vkGetPhysicalDeviceProperties(physicalDevices[i], &props);
+
+		if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU)
+			continue;
 
 		printf(LOGI("GPU%d: %s\n"), i, props.deviceName);
 
@@ -209,6 +218,11 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 			printf(LOGI("GPU%d skipped: Vulkan API version too low: %u.%u.%u, required: %u.%u.%u \n"),
 				i, major, minor, patch, requiredMajor, requiredMinor, requiredPatch);
 			continue;
+		}
+
+		if (ngpu && atoi(ngpu) == i)
+		{
+			preferred = physicalDevices[i];
 		}
 
 		if (!preferred && props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
