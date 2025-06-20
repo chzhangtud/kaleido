@@ -15,6 +15,7 @@
 #include "resources.h"
 #include "shaders.h"
 #include "math.h"
+#include "config.h"
 
 bool meshShadingEnabled = true;
 bool cullingEnabled = true;
@@ -187,8 +188,8 @@ struct alignas(16) DepthReduceData
 
 size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
 {
-	size_t max_vertices = 64;
-	size_t max_triangles = 124;
+	size_t max_vertices = MESH_MAXVTX;
+	size_t max_triangles = MESH_MAXTRI;
 	const float cone_weight = 0.5f;
 
 	std::vector<meshopt_Meshlet> meshlets(meshopt_buildMeshletsBound(indices.size(), max_vertices, max_triangles));
@@ -206,6 +207,8 @@ size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, con
 
 	for (auto& meshlet : meshlets)
 	{
+		meshopt_optimizeMeshlet(&meshletVertexData[meshlet.vertex_offset], &meshletIndexData[meshlet.triangle_offset], meshlet.triangle_count, meshlet.vertex_count);
+		
 		Meshlet m = {};
 
 		m.vertexOffset = meshlet.vertex_offset + meshletVertexOffset;
@@ -468,6 +471,11 @@ int main(int argc, const char** argv)
 		printf(LOGE("Usage: %s [mesh list]\n"), argv[0]);
 		return 1;
 	}
+
+#if defined(VK_USE_PLATFORM_XLIB_KHR)
+	// TODO: We could support both X11 and Wayland, but that requires some tweaks in swapchain handling
+	glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
 
 	int rc = glfwInit();
 	assert(rc);
@@ -854,7 +862,10 @@ int main(int argc, const char** argv)
 		}
 		
 		uint32_t imageIndex = 0;
-		VK_CHECK_SWAPCHAIN(vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, acquireSemaphore, VK_NULL_HANDLE, &imageIndex));
+		VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, acquireSemaphore, VK_NULL_HANDLE, &imageIndex);
+		if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+			continue; // attempting to render to an out-of-date swapchain would break semaphore synchronization
+		VK_CHECK_SWAPCHAIN(acquireResult);
 
 		VK_CHECK(vkResetCommandPool(device, commandPool, 0));
 

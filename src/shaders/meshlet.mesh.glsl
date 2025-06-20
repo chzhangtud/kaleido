@@ -10,11 +10,11 @@
 #include "math.h"
 
 #define DEBUG 0
-#define CULL 1
+#define CULL MESH_CULL
 #define TRIANGLE_NORMAL 0
 
 layout(local_size_x = MESH_WGSIZE, local_size_y = 1, local_size_z = 1) in;
-layout(triangles, max_vertices = 64, max_primitives = 124) out;
+layout(triangles, max_vertices = MESH_MAXVTX, max_primitives = MESH_MAXTRI) out;
 
 layout(push_constant) uniform block
 {
@@ -72,7 +72,7 @@ uint hash( uint a)
 }
 
 #if CULL
-shared vec3 vertexClip[64];
+shared vec3 vertexClip[MESH_MAXVTX];
 #endif
 
 void main()

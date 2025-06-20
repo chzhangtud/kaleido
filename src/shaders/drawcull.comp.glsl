@@ -81,7 +81,10 @@ void main()
 			float width = (aabb.z - aabb.x) * cullData.pyramidWidth;
 			float height = (aabb.w - aabb.y) * cullData.pyramidHeight;
 
-			float level = floor(log2(max(width, height)));
+			// Because we only consider 2x2 pixels, we need to make sure we are sampling from a mip that reduces the rectangle to 1x1 texel or smaller.
+			// Due to the rectangle being arbitrarily offset, a 1x1 rectangle may cover 2x2 texel area. Using floor() here would require sampling 4 corners
+			// of AABB (using bilinear fetch), which is a little slower.
+			float level = ceil(log2(max(width, height)));
 
 			// Sampler is set up to do min reduction, so this computes the minimum depth of a 2x2 texel quad
 			float depth = textureLod(depthPyramid, (aabb.xy + aabb.zw) * 0.5, level).x;
@@ -94,7 +97,7 @@ void main()
 	// when meshlet occlusion culling is enabled, we actually *do* need to append the draw command if vis[]==1 in LATE pass,Add commentMore actions
 	// so that we can correctly render now-visible previously-invisible meshlets. we also pass drawvis[] along to task shader
 	// so that it can *reject* clusters that we *did* draw in the first pass
-	if (visible && (!LATE || cullData.clusterOcclusionEnabled == 1 || drawVisibility[di] == 0))
+	if (visible && (!LATE || (cullData.clusterOcclusionEnabled == 1 && TASK_CULL == 1) || drawVisibility[di] == 0))
 	{
 		// lod distance i = base * pow(step, i)
 		// i = log2(distance / base) / log2(step)

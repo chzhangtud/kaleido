@@ -5,6 +5,7 @@
 
 #include "common.h"
 #include "device.h"
+#include "config.h"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -12,7 +13,7 @@
 
 // Validation is enabled by default in Debug
 #ifndef NDEBUG
-#define KHR_VALIDATION 1
+#define KHR_VALIDATION CONFIG_SYNCVAL
 #endif
 
 #define CURRENT_VK_VERSION VK_API_VERSION_1_3
