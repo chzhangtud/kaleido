@@ -96,11 +96,11 @@ void main()
 	{
 		uint meshletVisibilityBit = meshletVisibility[mvi >> 5] & (1u << (mvi & 31));
 
-        // in early pass, we have to *only* render clusters that were visible last frame, to build a reasonable depth pyramid out of visible trianglesAdd commentMore actions
+        // in early pass, we have to *only* render clusters that were visible last frame, to build a reasonable depth pyramid out of visible triangles
 		if (!LATE && meshletVisibilityBit == 0)
 			visible = false;
 
-        // in late pass, we have to process objects visible last frame again (after rendering them in early pass)Add commentMore actions
+        // in late pass, we have to process objects visible last frame again (after rendering them in early pass)
 		// in early pass, per above test, we render previously visible clusters
 		// in late pass, we must invert the above test to *not* render previously visible clusters of previously visible objects because they were rendered in early pass.
 		if (LATE && lateDrawVisibility == 1 && meshletVisibilityBit != 0)

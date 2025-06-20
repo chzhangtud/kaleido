@@ -141,6 +141,7 @@ struct MeshLod
 	uint32_t indexCount;
 	uint32_t meshletOffset;
 	uint32_t meshletCount;
+	float error;
 };
 
 struct alignas(16) Mesh
@@ -171,7 +172,7 @@ struct alignas(16) DrawCullData
 {
 	float P00, P11, znear, zfar; // symmetric projection parameters
 	float frustum[4]; // data for left/right/top/bottom frustum planes
-	float lodBase, lodStep; // lod distance i = base * pow(step, i)
+	float lodTarget; // lod target error at z=1
 	float pyramidWidth, pyramidHeight; // depth pyramid size in texels
 
 	uint32_t drawCount;
@@ -312,6 +313,13 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 
 	result.vertices.insert(result.vertices.end(), vertices.begin(), vertices.end());
 
+	std::vector<vec3> normals(vertex_count);
+	for (size_t i = 0; i < vertex_count; ++i)
+	{
+		Vertex& v = vertices[i];
+		normals[i] = vec3(v.nx / 127.f - 1.f, v.ny / 127.f - 1.f, v.nz / 127.f - 1.f);
+	}
+
 	vec3 center = vec3(0.f);
 
 	for (const auto& v : vertices)
@@ -325,7 +333,11 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 	mesh.center = center;
 	mesh.radius = radius;
 
+	float lodScale = meshopt_simplifyScale(&vertices[0].vx, vertices.size(), sizeof(Vertex));
+
 	std::vector<uint32_t> lodIndices = indices;
+	float lodError = 0.f;
+	float normalWeights[3] = { 1.f, 1.f, 1.f };
 
 	while (mesh.lodCount < COUNTOF(mesh.lods))
 	{
@@ -339,10 +351,11 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 		lod.meshletOffset = uint32_t(result.meshlets.size());
 		lod.meshletCount = buildMeshlets ? uint32_t(appendMeshlets(result, vertices, lodIndices)) : 0;
 
+		lod.error = lodError * lodScale;
 		if (mesh.lodCount < COUNTOF(mesh.lods))
 		{
-			size_t nextIndicesTarget = size_t(lodIndices.size() * 0.1f);
-			size_t nextIndices = meshopt_simplify(lodIndices.data(), lodIndices.data(), lodIndices.size(), &vertices[0].vx, vertices.size(), sizeof(Vertex), nextIndicesTarget, 1e-4f);
+			size_t nextIndicesTarget = size_t(lodIndices.size() * 0.65f);
+			size_t nextIndices = meshopt_simplifyWithAttributes(lodIndices.data(), lodIndices.data(), lodIndices.size(), &vertices[0].vx, vertices.size(), sizeof(Vertex), &normals[0].x, sizeof(vec3), normalWeights, 3, NULL, nextIndicesTarget, 1e-4f, 0, &lodError);
 			assert(nextIndices <= lodIndices.size());
 
 			if (nextIndices == lodIndices.size())
@@ -462,6 +475,37 @@ uint32_t previousPow2(uint32_t v)
 		r *= 2;
 
 	return r;
+}
+
+struct pcg32_random_t
+{
+	uint64_t state;
+	uint64_t inc;
+};
+
+#define PCG32_INITIALIZER { 0x853c49e6748fea9bULL, 0xda3e39cb94b95bdbULL }
+
+uint32_t pcg32_random_r(pcg32_random_t* rng)
+{
+	uint64_t oldstate = rng->state;
+	// Advance internal state
+	rng->state = oldstate * 6364136223846793005ULL + (rng->inc | 1);
+	// Calculate output function (XSH RR), uses old state for max ILP
+	uint32_t xorshifted = uint32_t(((oldstate >> 18u) ^ oldstate) >> 27u);
+	uint32_t rot = oldstate >> 59u;
+	return (xorshifted >> rot) | (xorshifted << ((32-rot) & 31));
+}
+
+pcg32_random_t rngstate = PCG32_INITIALIZER;
+
+double rand01()
+{
+	return pcg32_random_r(&rngstate) / double(1ull << 32);
+}
+
+uint32_t rand32()
+{
+	return pcg32_random_r(&rngstate);
 }
 
 int main(int argc, const char** argv)
@@ -737,6 +781,8 @@ int main(int argc, const char** argv)
 		uploadBuffer(device, commandPool, commandBuffer, queue, midb, scratch, geometry.meshletIndexData.data(), geometry.meshletIndexData.size() * sizeof(unsigned char));
 	}
 
+	rngstate.state = 0x42;
+
 	uint32_t drawCount = 100'000;
 	float sceneRadius = 5.f;
 	float drawDistance = 10.f;
@@ -745,20 +791,18 @@ int main(int argc, const char** argv)
 
 	std::vector<MeshDraw> draws(drawCount);
 
-	srand(42);
-
 	for (size_t i = 0; i < drawCount; ++i)
 	{
-		size_t meshIndex = rand() % geometry.meshes.size();
+		size_t meshIndex = rand32() % geometry.meshes.size();
 		const Mesh& mesh = geometry.meshes[meshIndex];
 
-		draws[i].position[0] = (float(rand()) / RAND_MAX) * 2.f * sceneRadius - sceneRadius;
-		draws[i].position[1] = (float(rand()) / RAND_MAX) * 2.f * sceneRadius - sceneRadius;
-		draws[i].position[2] = (float(rand()) / RAND_MAX) * 2.f * sceneRadius - sceneRadius;
-		draws[i].scale = (float(rand()) / RAND_MAX) * 0.2f;
+		draws[i].position[0] = float(rand01()) * 2.f * sceneRadius - sceneRadius;
+		draws[i].position[1] = float(rand01()) * 2.f * sceneRadius - sceneRadius;
+		draws[i].position[2] = float(rand01()) * 2.f * sceneRadius - sceneRadius;
+		draws[i].scale = float(rand01()) * 0.2f;
 
-		vec3 axis = normalize(vec3((float(rand()) / RAND_MAX) * 2 - 1, (float(rand()) / RAND_MAX) * 2 - 1, (float(rand()) / RAND_MAX) * 2 - 1));
-		float angle = glm::radians(float(rand()) / RAND_MAX * 90.f);
+		vec3 axis = normalize(vec3(float(rand01()) * 2 - 1, float(rand01()) * 2 - 1, float(rand()) * 2 - 1));
+		float angle = glm::radians(float(rand01()) * 90.f);
 		draws[i].orientation = quat(cosf(angle * 0.5f), axis * sinf(angle * 0.5f));
 		
 		draws[i].meshIndex = uint32_t(meshIndex);
@@ -802,7 +846,8 @@ int main(int argc, const char** argv)
 	if (profilingSupported)
 	{
 		VkAcquireProfilingLockInfoKHR lockInfo = { VK_STRUCTURE_TYPE_ACQUIRE_PROFILING_LOCK_INFO_KHR };
-		vkAcquireProfilingLockKHR(device, &lockInfo);
+		VkResult res = vkAcquireProfilingLockKHR(device, &lockInfo);
+		printf("Acquire profiling lock: %d\n", res);
 	}
 
 	Image colorTarget = {};
@@ -882,7 +927,7 @@ int main(int argc, const char** argv)
 
 		if (!dvbCleared)
 		{
-			// TODO: this is stupidly redundantAdd commentMore actions
+			// TODO: this is stupidly redundant
 			vkCmdFillBuffer(commandBuffer, dvb.buffer, 0, sizeof(uint32_t) * drawCount, 0);
 
 			VkBufferMemoryBarrier2 fillBarrier = bufferBarrier(dvb.buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
@@ -925,8 +970,7 @@ int main(int argc, const char** argv)
 		cullData.cullingEnabled = int(cullingEnabled);
 		cullData.lodEnabled = int(lodEnabled);
 		cullData.occlusionEnabled = int(occlusionEnabled);
-		cullData.lodBase = 10.f;
-		cullData.lodStep = 1.5f;
+		cullData.lodTarget = (2 / cullData.P11) * (1.f / float(swapchain.height)); // 1px
 		cullData.pyramidWidth = float(depthPyramidWidth);
 		cullData.clusterOcclusionEnabled = occlusionEnabled && clusterOcclusionEnabled && meshShadingSupported && meshShadingEnabled;
 
