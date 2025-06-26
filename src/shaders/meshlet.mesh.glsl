@@ -14,11 +14,19 @@
 #define TRIANGLE_NORMAL 0
 
 layout(local_size_x = MESH_WGSIZE, local_size_y = 1, local_size_z = 1) in;
+
+layout (constant_id = 1) const bool TASK = false;
+
 layout(triangles, max_vertices = MESH_MAXVTX, max_primitives = MESH_MAXTRI) out;
 
 layout(push_constant) uniform block
 {
     Globals globals;
+};
+
+layout(binding = 0) readonly buffer TaskCommands
+{
+	MeshTaskCommand taskCommands[];
 };
 
 layout(binding = 1) readonly buffer Draws
@@ -51,6 +59,10 @@ layout(binding = 6) readonly buffer Vertices
     Vertex vertices[];
 };
 
+layout(binding = 9) readonly buffer ClusterIndices
+{
+	uint clusterIndices[];
+};
 
 layout(location = 0) out vec4 color[];
 
@@ -58,6 +70,7 @@ layout(location = 0) out vec4 color[];
 layout(location = 1) perprimitiveEXT out vec3 triangleNormal[];
 #endif
 
+// only usable with task shader (TASK=true)
 taskPayloadSharedEXT MeshTaskPayload payload;
 
 uint hash(uint a)
@@ -77,10 +90,21 @@ shared vec3 vertexClip[MESH_MAXVTX];
 
 void main()
 {
-    uint mi = payload.meshletIndices[gl_WorkGroupID.x];
     uint ti = gl_LocalInvocationIndex;
 
-    MeshDraw meshDraw = draws[payload.drawId];
+    // we convert 3D index to 1D index using a fixed *256 factor, see clustersubmit.comp.glsl
+	uint ci = TASK ? payload.clusterIndices[gl_WorkGroupID.x] : clusterIndices[gl_WorkGroupID.x + gl_WorkGroupID.y * 256 + gl_WorkGroupID.z * 16];
+
+    if (ci == ~0)
+	{
+		SetMeshOutputsEXT(0, 0);
+		return;
+	}
+
+	MeshTaskCommand	command = taskCommands[ci & 0xffffff];
+	uint mi = command.taskOffset + (ci >> 24);
+
+	MeshDraw meshDraw = draws[command.drawId];
 
 #if DEBUG
     uint mhash = hash(mi);

@@ -92,13 +92,13 @@ static VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, VkS
 	return swapchain;
 }
 
-void createSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format, VkSwapchainKHR oldSwapchain)
+void createSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, GLFWwindow* window, VkFormat format, VkSwapchainKHR oldSwapchain)
 {
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
 
-	uint32_t width = surfaceCaps.currentExtent.width;
-	uint32_t height = surfaceCaps.currentExtent.height;
+	int width = 0, height = 0;
+	glfwGetFramebufferSize(window, &width, &height);
 
 	uint32_t presentModeCount = 0;
 	vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
@@ -125,13 +125,10 @@ void destroySwapchain(VkDevice device, Swapchain& swapchain)
 	vkDestroySwapchainKHR(device, swapchain.swapchain, 0);
 }
 
-SwapchainStatus updateSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format)
+SwapchainStatus updateSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, GLFWwindow* window, VkFormat format)
 {
-	VkSurfaceCapabilitiesKHR surfaceCaps;
-	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
-
-	uint32_t newWidth = surfaceCaps.currentExtent.width;
-	uint32_t newHeight = surfaceCaps.currentExtent.height;
+	int newWidth = 0, newHeight = 0;
+	glfwGetFramebufferSize(window, &newWidth, &newHeight);
 
 	if (newWidth == 0 || newHeight == 0)
 		return Swapchain_NotReady;
@@ -143,7 +140,7 @@ SwapchainStatus updateSwapchain(Swapchain& result, VkPhysicalDevice physicalDevi
 
 	Swapchain old = result;
 
-	createSwapchain(result, physicalDevice, device, surface, familyIndex, format, oldSwapchain);
+	createSwapchain(result, physicalDevice, device, surface, familyIndex, window, format, oldSwapchain);
 
 	VK_CHECK(vkDeviceWaitIdle(device));
 

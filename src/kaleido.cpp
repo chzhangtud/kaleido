@@ -610,7 +610,6 @@ int main(int argc, const char** argv)
 
 	Shader meshletTS = {};
 	Shader meshletMS = {};
-	Shader clusterMS = {};
 	if (meshShadingEnabled)
 	{
 		bool tc = loadShader(meshletTS, device, SHADER_PATH "meshlet.task.spv");
@@ -618,8 +617,6 @@ int main(int argc, const char** argv)
 
 		bool rc = loadShader(meshletMS, device, SHADER_PATH "meshlet.mesh.spv");
 		assert(rc);
-
-		bool cc = loadShader(clusterMS, device, SHADER_PATH "cluster.mesh.spv");
 	}
 
 	Shader drawcullCS = {};
@@ -665,7 +662,7 @@ int main(int argc, const char** argv)
 	}
 
 	Swapchain swapchain;
-	createSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, swapchainFormat);
+	createSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, window, swapchainFormat);
 
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
@@ -691,31 +688,28 @@ int main(int argc, const char** argv)
 	Shaders shaders = { &meshVS, &meshFS };
 	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(Globals), pushDescriptorsSupported);
 
-	Program meshProgramMS;
-	Program clusterProgramMS;
+	Program meshtaskProgram;
+	Program clusterProgram;
 	if (meshShadingEnabled)
 	{
-		Shaders shadersMS = { &meshletTS, &meshletMS, &meshFS };
-		meshProgramMS = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shadersMS, sizeof(Globals), pushDescriptorsSupported);
+		meshtaskProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &meshletTS, &meshletMS, &meshFS }, sizeof(Globals), pushDescriptorsSupported);
 
-		clusterProgramMS = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &clusterMS, &meshFS }, sizeof(Globals), pushDescriptorsSupported);
+		clusterProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &meshletMS, &meshFS }, sizeof(Globals), pushDescriptorsSupported);
 	}
 
 	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, shaders, meshProgram.layout);
 	assert(meshPipeline);
 
-	VkPipeline meshPipelineMS = 0;
-	VkPipeline meshlatePipelineMS = 0;
-	VkPipeline clusterPipelineMS = 0;
+	VkPipeline meshtaskPipeline = 0;
+	VkPipeline meshtasklatePipeline = 0;
+	VkPipeline clusterPipeline = 0;
 	
 	if (meshShadingEnabled)
 	{
-		meshPipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE);
-		meshlatePipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE);
-		assert(meshPipelineMS && meshlatePipelineMS);
-
-		clusterPipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &clusterMS, &meshFS }, clusterProgramMS.layout);
-		assert(clusterPipelineMS);
+		meshtaskPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
+		meshtasklatePipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE);
+		clusterPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletMS, &meshFS }, clusterProgram.layout);
+		assert(meshtaskPipeline && meshtasklatePipeline && clusterPipeline);
 	}
 
 	VkQueryPool queryPoolTimestamp = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
@@ -907,7 +901,7 @@ int main(int argc, const char** argv)
 
 		glfwPollEvents();
 		
-		SwapchainStatus swapchainStatus = updateSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, swapchainFormat);
+		SwapchainStatus swapchainStatus = updateSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, window, swapchainFormat);
 
 		if (swapchainStatus == Swapchain_NotReady)
 			continue;
@@ -1230,26 +1224,25 @@ int main(int argc, const char** argv)
 
 			if (clusterSubmit)
 			{
-				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, clusterPipelineMS);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, clusterPipeline);
 
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, cib.buffer };
-				// vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, clusterProgramMS.updateTemplate, clusterProgramMS.layout, 0, descriptors);
-				pushDescriptors(clusterProgramMS, descriptors);
+				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer };
+				pushDescriptors(clusterProgram, descriptors);
 
-				vkCmdPushConstants(commandBuffer, clusterProgramMS.layout, clusterProgramMS.pushConstantStages, 0, sizeof(globals), &globals);
+				vkCmdPushConstants(commandBuffer, clusterProgram.layout, clusterProgram.pushConstantStages, 0, sizeof(globals), &globals);
 				vkCmdDrawMeshTasksIndirectEXT(commandBuffer, ccb.buffer, 4, 1, 0);
 			}
 			else if (taskSubmit)
 			{
-				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, late ? meshlatePipelineMS : meshPipelineMS);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, late ? meshtasklatePipeline : meshtaskPipeline);
 				
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc };
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer };
 				
-				//vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramMS.updateTemplate, meshProgramMS.layout, 0, descriptors);
-				pushDescriptors(meshProgramMS, descriptors);
+				pushDescriptors(meshtaskProgram, descriptors);
 
-				vkCmdPushConstants(commandBuffer, meshProgramMS.layout, meshProgramMS.pushConstantStages, 0, sizeof(globals), &globals);
+				vkCmdPushConstants(commandBuffer, meshtaskProgram.layout, meshtaskProgram.pushConstantStages, 0, sizeof(globals), &globals);
 				
 				vkCmdDrawMeshTasksIndirectEXT(commandBuffer, dccb.buffer, 4, 1, 0);
 			}
@@ -1534,9 +1527,9 @@ int main(int argc, const char** argv)
 	vkDestroyPipeline(device, meshPipeline, 0);
 	destroyProgram(device, meshProgram);
 	{
-		vkDestroyPipeline(device, meshPipelineMS, 0);
-		vkDestroyPipeline(device, meshlatePipelineMS, 0);
-		destroyProgram(device, meshProgramMS);
+		vkDestroyPipeline(device, meshtaskPipeline, 0);
+		vkDestroyPipeline(device, meshtasklatePipeline, 0);
+		destroyProgram(device, meshtaskProgram);
 	}
 	{
 		vkDestroyPipeline(device, drawcullPipeline, 0);
@@ -1557,8 +1550,8 @@ int main(int argc, const char** argv)
 		vkDestroyPipeline(device, clusterculllatePipeline, 0);
 		destroyProgram(device, clustercullProgram);
 
-		vkDestroyPipeline(device, clusterPipelineMS, 0);
-		destroyProgram(device, clusterProgramMS);
+		vkDestroyPipeline(device, clusterPipeline, 0);
+		destroyProgram(device, clusterProgram);
 	}
 	{
 		vkDestroyPipeline(device, depthreducePipeline, 0);
@@ -1576,7 +1569,6 @@ int main(int argc, const char** argv)
 	{
 		destroyShader(meshletTS, device);
 		destroyShader(meshletMS, device);
-		destroyShader(clusterMS, device);
 	}
 
 	vkDestroySampler(device, depthSampler, 0);

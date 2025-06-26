@@ -95,7 +95,7 @@ struct MeshTaskCommand
 	uint meshletVisibilityOffset;
 };
 
-struct MeshTaskPayload {
-	uint drawId;
-	uint meshletIndices[TASK_WGSIZE];	
+struct MeshTaskPayload
+{
+	uint clusterIndices[TASK_WGSIZE];	
 };

@@ -9,11 +9,12 @@
 #include "mesh.h"
 #include "math.h"
 
+#define CULL TASK_CULL
+
 layout(local_size_x = TASK_WGSIZE, local_size_y = 1, local_size_z = 1) in;
 
 layout (constant_id = 0) const bool LATE = false;
 
-#define CULL TASK_CULL
 
 layout(push_constant) uniform block
 {
@@ -56,10 +57,10 @@ shared int sharedCount;
 void main()
 {
     // we convert 2D index to 1D index using a fixed *64 factor, see tasksubmit.comp.glsl
-	MeshTaskCommand command = taskCommands[gl_WorkGroupID.x * 64 + gl_WorkGroupID.y];
+    uint commandId = gl_WorkGroupID.x * 64 + gl_WorkGroupID.y;
+	MeshTaskCommand command = taskCommands[commandId];
     uint drawId = command.drawId;
 	MeshDraw meshDraw = draws[drawId];
-    payload.drawId = drawId;
 
     Mesh mesh = meshes[meshDraw.meshIndex];
 
@@ -146,14 +147,14 @@ void main()
     if (visible && !skip)
     {
         uint index = atomicAdd(sharedCount, 1);
-        payload.meshletIndices[index] = mi;
+        payload.clusterIndices[index] = commandId | (mgi << 24);
     }
 
     barrier(); // for sharedCount
 
 	EmitMeshTasksEXT(sharedCount, 1, 1);
 #else
-    payload.meshletIndices[gl_LocalInvocationID.x] = mi;
+    payload.clusterIndices[gl_LocalInvocationID.x] = commandId | (mgi << 24);
     EmitMeshTasksEXT(taskCount, 1, 1);    
 #endif
 }
