@@ -60,7 +60,7 @@ layout(location = 1) perprimitiveEXT out vec3 triangleNormal[];
 
 taskPayloadSharedEXT MeshTaskPayload payload;
 
-uint hash( uint a)
+uint hash(uint a)
 {
    a = (a+0x7ed55d16) + (a<<12);
    a = (a^0xc761c23c) ^ (a>>19);

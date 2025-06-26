@@ -95,7 +95,6 @@ void main()
     if (globals.clusterOcclusionEnabled == 1)
 	{
 		uint meshletVisibilityBit = meshletVisibility[mvi >> 5] & (1u << (mvi & 31));
-
         // in early pass, we have to *only* render clusters that were visible last frame, to build a reasonable depth pyramid out of visible triangles
 		if (!LATE && meshletVisibilityBit == 0)
 			visible = false;
@@ -106,7 +105,6 @@ void main()
 		if (LATE && lateDrawVisibility == 1 && meshletVisibilityBit != 0)
 			skip = true;
 	}
-
 
 	// backface cone culling
 	visible = visible && !coneCull(center, radius, coneAxis, coneCutoff, vec3(0, 0, 0));
@@ -125,13 +123,12 @@ void main()
         if (projectSphere(center, radius, globals.znear, P00, P11, aabb))
         {
             float width = (aabb.z - aabb.x) * globals.pyramidWidth;
-            float height = (aabb.z - aabb.y) * globals.pyramidHeight;
+            float height = (aabb.w - aabb.y) * globals.pyramidHeight;
 
             float level = floor(log2(max(width, height)));
 
-            // Sampler is set up to do min reuction, so this computes the minimum depth of a 2x2 texel quad
+            // Sampler is set up to do min reduction, so this computes the minimum depth of a 2x2 texel quad
             float depth = textureLod(depthPyramid, (aabb.xy + aabb.zw) * 0.5, level).x;
-
             float depthSphere = globals.znear / (center.z - radius);
 
             visible = visible && depthSphere > depth;

@@ -22,6 +22,7 @@ bool cullingEnabled = true;
 bool lodEnabled = true;
 bool occlusionEnabled = true;
 bool clusterOcclusionEnabled = true;
+bool taskShadingEnabled = false;
 
 bool debugPyramid = false;
 int debugPyramidLevel = 0;
@@ -445,6 +446,10 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 			debugPyramid = !debugPyramid;
 			return;
 		}
+		if (key == GLFW_KEY_T)
+		{
+			taskShadingEnabled = !taskShadingEnabled;
+		}
 		if (debugPyramid && (key >= GLFW_KEY_0 && key <= GLFW_KEY_9))
 		{
 			debugPyramidLevel = key - GLFW_KEY_0;
@@ -610,6 +615,7 @@ int main(int argc, const char** argv)
 
 	Shader meshletTS = {};
 	Shader meshletMS = {};
+	Shader clusterMS = {};
 	if (meshShadingEnabled)
 	{
 		bool tc = loadShader(meshletTS, device, SHADER_PATH "meshlet.task.spv");
@@ -617,6 +623,8 @@ int main(int argc, const char** argv)
 
 		bool rc = loadShader(meshletMS, device, SHADER_PATH "meshlet.mesh.spv");
 		assert(rc);
+
+		bool cc = loadShader(clusterMS, device, SHADER_PATH "cluster.mesh.spv");
 	}
 
 	Shader drawcullCS = {};
@@ -634,6 +642,18 @@ int main(int argc, const char** argv)
 	Shader tasksubmitCS = {};
 	{
 		bool rc = loadShader(tasksubmitCS, device, SHADER_PATH "tasksubmit.comp.spv");
+		assert(rc);
+	}
+
+	Shader clustersubmitCS = {};
+	{
+		bool rc = loadShader(clustersubmitCS, device, SHADER_PATH "clustersubmit.comp.spv");
+		assert(rc);
+	}
+
+	Shader clustercullCS = {};
+	{
+		bool rc = loadShader(clustercullCS, device, SHADER_PATH "clustercull.comp.spv");
 		assert(rc);
 	}
 
@@ -663,6 +683,13 @@ int main(int argc, const char** argv)
 	Program tasksubmitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &tasksubmitCS }, 0, pushDescriptorsSupported);
 	VkPipeline tasksubmitPipeline = createComputePipeline(device, pipelineCache, tasksubmitCS, tasksubmitProgram.layout);
 
+	Program clustersubmitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &clustersubmitCS }, 0, pushDescriptorsSupported);
+	VkPipeline clustersubmitPipeline = createComputePipeline(device, pipelineCache, clustersubmitCS, clustersubmitProgram.layout);
+
+	Program clustercullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &clustercullCS }, sizeof(Globals), pushDescriptorsSupported);
+	VkPipeline clustercullPipeline = createComputePipeline(device, pipelineCache, clustercullCS, clustercullProgram.layout, true, /* LATE= */ VK_FALSE);
+	VkPipeline clusterculllatePipeline = createComputePipeline(device, pipelineCache, clustercullCS, clustercullProgram.layout, true, /* LATE= */ VK_TRUE);
+
 	Program depthreduceProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthreduceCS }, sizeof(DepthReduceData), pushDescriptorsSupported);
 	VkPipeline depthreducePipeline = createComputePipeline(device, pipelineCache, depthreduceCS, depthreduceProgram.layout);
 
@@ -670,10 +697,13 @@ int main(int argc, const char** argv)
 	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders, sizeof(Globals), pushDescriptorsSupported);
 
 	Program meshProgramMS;
+	Program clusterProgramMS;
 	if (meshShadingEnabled)
 	{
 		Shaders shadersMS = { &meshletTS, &meshletMS, &meshFS };
 		meshProgramMS = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, shadersMS, sizeof(Globals), pushDescriptorsSupported);
+
+		clusterProgramMS = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &clusterMS, &meshFS }, sizeof(Globals), pushDescriptorsSupported);
 	}
 
 	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, shaders, meshProgram.layout);
@@ -681,12 +711,16 @@ int main(int argc, const char** argv)
 
 	VkPipeline meshPipelineMS = 0;
 	VkPipeline meshlatePipelineMS = 0;
+	VkPipeline clusterPipelineMS = 0;
 	
 	if (meshShadingEnabled)
 	{
 		meshPipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE);
 		meshlatePipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshProgramMS.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE);
 		assert(meshPipelineMS && meshlatePipelineMS);
+
+		clusterPipelineMS = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &clusterMS, &meshFS }, clusterProgramMS.layout);
+		assert(clusterPipelineMS);
 	}
 
 	VkQueryPool queryPoolTimestamp = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
@@ -827,7 +861,7 @@ int main(int argc, const char** argv)
 	bool dvbCleared = false;
 
 	Buffer dcb = {};
-	createBuffer(dcb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	createBuffer(dcb, device, memoryProperties, TASK_WGLIMIT * sizeof(MeshTaskCommand), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	Buffer dccb = {};
 	createBuffer(dccb, device, memoryProperties, 16, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -839,6 +873,14 @@ int main(int argc, const char** argv)
 	if (meshShadingSupported)
 	{
 		createBuffer(mvb, device, memoryProperties, meshletVisibilityBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	}
+
+	Buffer cib = {};
+	Buffer ccb = {};
+	if (meshShadingSupported)
+	{
+		createBuffer(cib, device, memoryProperties, CLUSTER_LIMIT * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		createBuffer(ccb, device, memoryProperties, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	}
 
 	uploadBuffer(device, commandPool, commandBuffer, queue, db, scratch, draws.data(), draws.size() * sizeof(MeshDraw));
@@ -990,7 +1032,8 @@ int main(int argc, const char** argv)
 		globals.pyramidHeight = float(depthPyramidHeight);
 		globals.clusterOcclusionEnabled = occlusionEnabled && clusterOcclusionEnabled && meshShadingSupported && meshShadingEnabled;
 
-		bool taskSubmit = meshShadingSupported && meshShadingEnabled;
+		bool taskSubmit = meshShadingSupported && meshShadingEnabled; // TODO; refactor this to be false when taskShadingEnabled is false
+		bool clusterSubmit = meshShadingSupported && meshShadingEnabled && !taskShadingEnabled;
 
 		auto fullbarrier = [&]()
 		{
@@ -1112,6 +1155,63 @@ int main(int argc, const char** argv)
 
 			vkCmdBeginQuery(commandBuffer, queryPoolPipeline, query, 0);
 
+			if (clusterSubmit)
+			{
+				VkBufferMemoryBarrier2 prefillBarrier = bufferBarrier(ccb.buffer,
+					VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+					VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+				pipelineBarrier(commandBuffer, 0, 1, &prefillBarrier, 0, nullptr);
+
+				vkCmdFillBuffer(commandBuffer, ccb.buffer, 0, 4, 0);
+
+				VkBufferMemoryBarrier2 fillBarriers[] =
+				{
+					bufferBarrier(cib.buffer,
+						VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_READ_BIT,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT),
+					bufferBarrier(ccb.buffer,
+						VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT),
+				};
+				pipelineBarrier(commandBuffer, 0, COUNTOF(fillBarriers), fillBarriers, 0, nullptr);
+
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, late ? clusterculllatePipeline : clustercullPipeline);
+
+				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mlb.buffer, mvb.buffer, pyramidDesc, cib.buffer, ccb.buffer };
+				// vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramMS.updateTemplate, meshProgramMS.layout, 0, descriptors);
+				pushDescriptors(clustercullProgram, descriptors);
+
+				vkCmdPushConstants(commandBuffer, clustercullProgram.layout, clustercullProgram.pushConstantStages, 0, sizeof(globals), &globals);
+				vkCmdDispatchIndirect(commandBuffer, dccb.buffer, 4);
+
+				VkBufferMemoryBarrier2 syncBarrier = bufferBarrier(ccb.buffer,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+
+				pipelineBarrier(commandBuffer, 0, 1, &syncBarrier, 0, nullptr);
+
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, clustersubmitPipeline);
+
+				DescriptorInfo descriptors2[] = { ccb.buffer, cib.buffer };
+				// vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, tasksubmitProgram.updateTemplate, tasksubmitProgram.layout, 0, descriptors);
+				pushDescriptors(clustersubmitProgram, descriptors2);
+
+				vkCmdDispatch(commandBuffer, 1, 1, 1);
+
+				VkBufferMemoryBarrier2 cullBarriers[] =
+				{
+					bufferBarrier(cib.buffer,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+						VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_READ_BIT),
+					bufferBarrier(ccb.buffer,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+						VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
+				};
+
+				pipelineBarrier(commandBuffer, 0, COUNTOF(cullBarriers), cullBarriers, 0, nullptr);
+			}
+
 			VkRenderingAttachmentInfo colorAttachment = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
 			colorAttachment.imageView = colorTarget.imageView;
 			colorAttachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
@@ -1142,11 +1242,21 @@ int main(int argc, const char** argv)
 			vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 			vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-			if (taskSubmit)
+			if (clusterSubmit)
+			{
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, clusterPipelineMS);
+
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, cib.buffer };
+				// vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, clusterProgramMS.updateTemplate, clusterProgramMS.layout, 0, descriptors);
+				pushDescriptors(clusterProgramMS, descriptors);
+
+				vkCmdPushConstants(commandBuffer, clusterProgramMS.layout, clusterProgramMS.pushConstantStages, 0, sizeof(globals), &globals);
+				vkCmdDrawMeshTasksIndirectEXT(commandBuffer, ccb.buffer, 4, 1, 0);
+			}
+			else if (taskSubmit)
 			{
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, late ? meshlatePipelineMS : meshPipelineMS);
 				
-				// TODO: double-check synchronization
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
 				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc };
 				
@@ -1380,8 +1490,9 @@ int main(int argc, const char** argv)
 		double modelsPerSec = double(drawCount) / double(frameGPUAvg * 1e-3);
 
 		char title[512];
-		snprintf(title, sizeof(title), "mesh shading %s; frustum culling: %s; occlusion culling: %s; lod: %s, cluster OC: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, render: %.2f ms, pyramid: %.2f ms, cull late: %.2f, renderlate: %.2f ms); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
+		snprintf(title, sizeof(title), "mesh shading %s; task shading %s; frustum culling: %s; occlusion culling: %s; lod: %s, cluster OC: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, render: %.2f ms, pyramid: %.2f ms, cull late: %.2f, renderlate: %.2f ms); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
 			taskSubmit ? "ON" : "OFF",
+			taskSubmit && taskShadingEnabled ? "ON" : "OFF",
 			cullingEnabled ? "ON" : "OFF",
 			occlusionEnabled ? "ON" : "OFF",
 			lodEnabled ? "ON" : "OFF",
@@ -1416,6 +1527,8 @@ int main(int argc, const char** argv)
 		destroyBuffer(mvdb, device);
 		destroyBuffer(midb, device);
 		destroyBuffer(mvb, device);
+		destroyBuffer(cib, device);
+		destroyBuffer(ccb, device);
 	}
 
 	destroyBuffer(ib, device);
@@ -1451,6 +1564,17 @@ int main(int argc, const char** argv)
 		destroyProgram(device, tasksubmitProgram);
 	}
 	{
+		vkDestroyPipeline(device, clustersubmitPipeline, 0);
+		destroyProgram(device, clustersubmitProgram);
+
+		vkDestroyPipeline(device, clustercullPipeline, 0);
+		vkDestroyPipeline(device, clusterculllatePipeline, 0);
+		destroyProgram(device, clustercullProgram);
+
+		vkDestroyPipeline(device, clusterPipelineMS, 0);
+		destroyProgram(device, clusterProgramMS);
+	}
+	{
 		vkDestroyPipeline(device, depthreducePipeline, 0);
 		destroyProgram(device, depthreduceProgram);
 	}
@@ -1460,10 +1584,13 @@ int main(int argc, const char** argv)
 	destroyShader(drawcullCS, device);
 	destroyShader(depthreduceCS, device);
 	destroyShader(tasksubmitCS, device);
+	destroyShader(clustersubmitCS, device);
+	destroyShader(clustercullCS, device);
 
 	{
 		destroyShader(meshletTS, device);
 		destroyShader(meshletMS, device);
+		destroyShader(clusterMS, device);
 	}
 
 	vkDestroySampler(device, depthSampler, 0);
