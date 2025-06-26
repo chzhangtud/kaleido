@@ -91,18 +91,6 @@ struct alignas(16) Meshlet
 	uint8_t triangleCount;
 };
 
-struct alignas(16) Globals
-{
-	mat4 projection;
-
-	float screenWidth, screenHeight, znear, zfar; // symmetric projection parameters
-	float frustum[4]; // data for left/right/top/bottom frustum planes
-
-	float pyramidWidth, pyramidHeight; // depth pyramid size in texels
-	int clusterOcclusionEnabled;
-	int lodEnabled;
-};
-
 struct alignas(16) MeshDraw
 {
 	vec3 position;
@@ -169,7 +157,7 @@ struct Geometry
 	std::vector<Mesh> meshes;
 };
 
-struct alignas(16) DrawCullData
+struct alignas(16) CullData
 {
 	float P00, P11, znear, zfar; // symmetric projection parameters
 	float frustum[4]; // data for left/right/top/bottom frustum planes
@@ -181,6 +169,13 @@ struct alignas(16) DrawCullData
 	int lodEnabled;
 	int occlusionEnabled;
 	int clusterOcclusionEnabled;
+};
+
+struct alignas(16) Globals
+{
+	mat4 projection;
+	CullData cullData;
+	float screenWidth, screenHeight;
 };
 
 struct alignas(16) DepthReduceData
@@ -675,7 +670,7 @@ int main(int argc, const char** argv)
 	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 
-	Program drawcullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcullCS }, sizeof(DrawCullData), pushDescriptorsSupported);
+	Program drawcullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawcullCS }, sizeof(CullData), pushDescriptorsSupported);
 	VkPipeline drawcullPipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE);
 	VkPipeline drawculllatePipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullProgram.layout, true, /* LATE= */ VK_TRUE,  /* TASK= */ VK_FALSE);
 	VkPipeline taskcullPipeline = createComputePipeline(device, pipelineCache, drawcullCS, drawcullProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
@@ -686,7 +681,7 @@ int main(int argc, const char** argv)
 	Program clustersubmitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &clustersubmitCS }, 0, pushDescriptorsSupported);
 	VkPipeline clustersubmitPipeline = createComputePipeline(device, pipelineCache, clustersubmitCS, clustersubmitProgram.layout);
 
-	Program clustercullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &clustercullCS }, sizeof(Globals), pushDescriptorsSupported);
+	Program clustercullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &clustercullCS }, sizeof(CullData), pushDescriptorsSupported);
 	VkPipeline clustercullPipeline = createComputePipeline(device, pipelineCache, clustercullCS, clustercullProgram.layout, true, /* LATE= */ VK_FALSE);
 	VkPipeline clusterculllatePipeline = createComputePipeline(device, pipelineCache, clustercullCS, clustercullProgram.layout, true, /* LATE= */ VK_TRUE);
 
@@ -999,7 +994,7 @@ int main(int argc, const char** argv)
 		vec4 frustumX = normalizePlane(projectionT[3] + projectionT[0]); // x + w < 0
 		vec4 frustumY = normalizePlane(projectionT[3] + projectionT[1]); // y + w < 0
 
-		DrawCullData cullData = {};
+		CullData cullData = {};
 		cullData.P00 = projection[0][0];
 		cullData.P11 = projection[1][1];
 		cullData.znear = znear;
@@ -1018,19 +1013,10 @@ int main(int argc, const char** argv)
 
 		Globals globals = {};
 		globals.projection = projection;
-		globals.lodEnabled = int(lodEnabled);
+		globals.cullData = cullData;
 
 		globals.screenWidth = float(swapchain.width);
 		globals.screenHeight = float(swapchain.height);
-		globals.znear = znear;
-		globals.zfar = drawDistance;
-		globals.frustum[0] = frustumX.x;
-		globals.frustum[1] = frustumX.z;
-		globals.frustum[2] = frustumY.y;
-		globals.frustum[3] = frustumY.z;
-		globals.pyramidWidth = float(depthPyramidWidth);
-		globals.pyramidHeight = float(depthPyramidHeight);
-		globals.clusterOcclusionEnabled = occlusionEnabled && clusterOcclusionEnabled && meshShadingSupported && meshShadingEnabled;
 
 		bool taskSubmit = meshShadingSupported && meshShadingEnabled; // TODO; refactor this to be false when taskShadingEnabled is false
 		bool clusterSubmit = meshShadingSupported && meshShadingEnabled && !taskShadingEnabled;
@@ -1182,7 +1168,7 @@ int main(int argc, const char** argv)
 				// vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgramMS.updateTemplate, meshProgramMS.layout, 0, descriptors);
 				pushDescriptors(clustercullProgram, descriptors);
 
-				vkCmdPushConstants(commandBuffer, clustercullProgram.layout, clustercullProgram.pushConstantStages, 0, sizeof(globals), &globals);
+				vkCmdPushConstants(commandBuffer, clustercullProgram.layout, clustercullProgram.pushConstantStages, 0, sizeof(cullData), &cullData);
 				vkCmdDispatchIndirect(commandBuffer, dccb.buffer, 4);
 
 				VkBufferMemoryBarrier2 syncBarrier = bufferBarrier(ccb.buffer,
