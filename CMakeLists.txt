@@ -5,82 +5,84 @@ project(kaleido VERSION 0.1)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(external)
 
-# add external libs
-add_subdirectory(external/glfw)
-add_subdirectory(external/meshoptimizer)
-add_subdirectory(external/volk)
-add_subdirectory(external/zeux_objparser)
-add_subdirectory(external/glm)
-add_subdirectory(external/fast_obj)
+file(GLOB GLSL_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.glsl")
+file(GLOB GLSL_HEADER_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.h")
 
-if (MSVC)
-    set_property(TARGET glfw PROPERTY FOLDER "external")
-    set_property(TARGET volk PROPERTY FOLDER "external")
-    set_property(TARGET meshoptimizer PROPERTY FOLDER "external")
-    set_property(TARGET zeux_objparser PROPERTY FOLDER "external")
-    set_property(TARGET glm PROPERTY FOLDER "external")
-    set_property(TARGET fast_obj PROPERTY FOLDER "external")
-endif()
-
-# find all glsl files and add them to a folder
-file(GLOB GLSL_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.glsl" "${CMAKE_SOURCE_DIR}/src/shaders/*.h")
-source_group("shaders" FILES ${GLSL_FILES})
+source_group("shaders" FILES ${GLSL_FILES} ${GLSL_HEADER_FILES})
 
 file(GLOB_RECURSE SRC_FILES "src/*.cpp" "src/*.h")
 list(FILTER SRC_FILES EXCLUDE REGEX "src/shaders/.*")
-add_executable(kaleido ${SRC_FILES} ${GLSL_FILES})
-
-# target_include_directories(kaleido PRIVATE ${VULKAN_INCLUDE_DIR})
+add_executable(kaleido ${SRC_FILES} ${GLSL_FILES} ${GLSL_HEADER_FILES})
 
 if (WIN32)
     target_compile_definitions(kaleido PRIVATE VK_USE_PLATFORM_WIN32_KHR
                                                 GLFW_EXPOSE_NATIVE_WIN32
                                                 NOMINMAX)
     message(STATUS "Windows platform detected: VK_USE_PLATFORM_WIN32_KHR defined.")
-else()
-    # unsupported platform
 endif()
 
-target_link_libraries(kaleido PRIVATE   glfw
-                                        volk
-                                        meshoptimizer
-                                        zeux_objparser
-                                        glm
-                                        fast_obj)
+target_link_libraries(kaleido PRIVATE 
+    glfw
+    volk
+    meshoptimizer
+    zeux_objparser
+    glm
+    fast_obj
+    cgltf
+)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (Debug/Release)" FORCE)
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(kaleido PRIVATE -D_DEBUG)  # enable debug mode
+    target_compile_definitions(kaleido PRIVATE -D_DEBUG)
     message(STATUS "Debug mode enabled: assert is active.")
 else()
-    target_compile_definitions(kaleido PRIVATE -DNDEBUG)  # disable assert()
+    target_compile_definitions(kaleido PRIVATE -DNDEBUG)
     message(STATUS "Release mode enabled: assert is disabled.")
 endif()
 
-# copy assets
 set(SHADERS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/shaders")
 set(SHADERS_DEST_DIR "${CMAKE_BINARY_DIR}/shaders")
 
-file(GLOB SPV_FILES "${SHADERS_SOURCE_DIR}/*.spv")
+set(SPV_FILES)
+if(WIN32)
+    if(DEFINED ENV{VULKAN_SDK})
+        set(GLSLANG_VALIDATOR "$ENV{VULKAN_SDK}/Bin/glslangValidator.exe")
+    else()
+        message(FATAL_ERROR "VULKAN_SDK environment variable not set!")
+    endif()
+else()
+    # TODO: add other platforms
+    set(GLSLANG_VALIDATOR "glslangValidator")
+endif()
 
-add_custom_target(copy_shaders ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DEST_DIR}
-    COMMENT "Copying .spv files to build directory"
-)
+file(MAKE_DIRECTORY ${SHADERS_DEST_DIR})
 
-foreach(SPV_FILE ${SPV_FILES})
-    add_custom_command(TARGET copy_shaders PRE_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SPV_FILE} ${SHADERS_DEST_DIR}
-        COMMENT "Copying ${SPV_FILE} to ${SHADERS_DEST_DIR}"
+foreach(GLSL_FILE IN LISTS GLSL_FILES)
+    file(RELATIVE_PATH REL_PATH "${SHADERS_SOURCE_DIR}" ${GLSL_FILE})
+
+    string(REPLACE "/" "_" SAFE_NAME "${REL_PATH}")
+    string(REPLACE "\\" "_" SAFE_NAME "${SAFE_NAME}")
+    string(REGEX REPLACE "\\.glsl$" "" BASE_NAME "${SAFE_NAME}")
+
+    set(SPV_FILE "${SHADERS_DEST_DIR}/${BASE_NAME}.spv")
+    list(APPEND SPV_FILES ${SPV_FILE})
+
+    add_custom_command(
+        OUTPUT ${SPV_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DEST_DIR}
+        COMMAND ${GLSLANG_VALIDATOR} --target-env vulkan1.3 ${GLSL_FILE} -V -o ${SPV_FILE}
+        DEPENDS ${GLSL_FILE}
+        COMMENT "Compiling shader ${GLSL_FILE} -> ${SPV_FILE}"
+        VERBATIM
     )
 endforeach()
 
-add_dependencies(kaleido copy_shaders)
+add_custom_target(CompileShaders ALL DEPENDS ${SPV_FILES})
+
+add_dependencies(kaleido CompileShaders)
 
