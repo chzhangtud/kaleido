@@ -27,6 +27,7 @@ bool taskShadingEnabled = false;
 
 bool debugPyramid = false;
 int debugPyramidLevel = 0;
+int debugLodStep = 0;
 
 #define SHADER_PATH "shaders/"
 
@@ -193,7 +194,7 @@ struct Camera
 	float fovY;
 };
 
-size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
+size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, bool fast = false)
 {
 	size_t max_vertices = MESH_MAXVTX;
 	size_t max_triangles = MESH_MAXTRI;
@@ -203,9 +204,10 @@ size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, con
 	std::vector<unsigned int> meshletVertexData(meshlets.size() * max_vertices);
 	std::vector<unsigned char> meshletIndexData(meshlets.size() * max_triangles * 3);
 
-	meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(),
-		&vertices[0].vx, vertices.size(), sizeof(Vertex), max_vertices, max_triangles, cone_weight));
-
+	if (fast)
+		meshlets.resize(meshopt_buildMeshletsScan(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(), vertices.size(), max_vertices, max_triangles));
+	else
+		meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(), &vertices[0].vx, vertices.size(), sizeof(Vertex), max_vertices, max_triangles, cone_weight));
 	uint32_t meshletVertexOffset = uint32_t(result.meshletVertexData.size());
 	uint32_t meshletIndexOffset = uint32_t(result.meshletIndexData.size());
 
@@ -289,7 +291,7 @@ bool loadObj(std::vector<Vertex>& vertices, const char* path)
 	return true;
 }
 
-void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, bool buildMeshlets)
+void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, bool buildMeshlets, bool fast = false)
 {
 	std::vector<uint32_t> remap(indices.size());
 	size_t uniqueVertices = meshopt_generateVertexRemap(remap.data(), indices.data(), indices.size(), vertices.data(), vertices.size(), sizeof(Vertex));
@@ -299,7 +301,11 @@ void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vector<uin
 
 	vertices.resize(uniqueVertices);
 
-	meshopt_optimizeVertexCache(indices.data(), indices.data(), indices.size(), vertices.size());
+	if (fast)
+		meshopt_optimizeVertexCacheFifo(indices.data(), indices.data(), indices.size(), vertices.size(), 16);
+	else
+		meshopt_optimizeVertexCache(indices.data(), indices.data(), indices.size(), vertices.size());
+
 	meshopt_optimizeVertexFetch(vertices.data(), indices.data(), indices.size(), vertices.data(), vertices.size(), sizeof(Vertex));
 
 	Mesh mesh = {};
@@ -345,21 +351,36 @@ void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vector<uin
 		result.indices.insert(result.indices.end(), lodIndices.begin(), lodIndices.end());
 
 		lod.meshletOffset = uint32_t(result.meshlets.size());
-		lod.meshletCount = buildMeshlets ? uint32_t(appendMeshlets(result, vertices, lodIndices)) : 0;
+		lod.meshletCount = buildMeshlets ? uint32_t(appendMeshlets(result, vertices, lodIndices, fast)) : 0;
 
 		lod.error = lodError * lodScale;
 		if (mesh.lodCount < COUNTOF(mesh.lods))
 		{
-			size_t nextIndicesTarget = size_t(lodIndices.size() * 0.65f);
-			size_t nextIndices = meshopt_simplifyWithAttributes(lodIndices.data(), lodIndices.data(), lodIndices.size(), &vertices[0].vx, vertices.size(), sizeof(Vertex), &normals[0].x, sizeof(vec3), normalWeights, 3, NULL, nextIndicesTarget, 1e-4f, 0, &lodError);
+			// note: we're using the same value for all LODs; if this changes, we need to remove/change 95% exit criteria below
+			const float maxError = 1e-1f;
+			const unsigned int options = 0;
+
+			size_t nextIndicesTarget = (size_t(lodIndices.size() * 0.65f) / 3) * 3;
+			float nextError = 0.f;
+			size_t nextIndices = meshopt_simplifyWithAttributes(lodIndices.data(), lodIndices.data(), lodIndices.size(), &vertices[0].vx, vertices.size(), sizeof(Vertex), &normals[0].x, sizeof(vec3), normalWeights, 3, NULL, nextIndicesTarget, maxError, options, &nextError);
 			assert(nextIndices <= lodIndices.size());
 
-			if (nextIndices == lodIndices.size())
+			// we've reached the error bound
+			if (nextIndices == lodIndices.size() || nextIndices == 0)
+				break;
+
+			// while we could keep this LOD, it's too close to the last one (and it can't go below that due to constant error bound above)
+			if (nextIndices >= size_t(double(lodIndices.size()) * 0.95))
 				break;
 
 			lodIndices.resize(nextIndices);
 
-			meshopt_optimizeVertexCache(lodIndices.data(), lodIndices.data(), lodIndices.size(), vertices.size());
+			lodError = std::max(lodError, nextError); // important! since we start from last LOD, we need to accumulate the error
+
+			if (fast)
+				meshopt_optimizeVertexCacheFifo(lodIndices.data(), lodIndices.data(), lodIndices.size(), vertices.size(), 16);
+			else
+				meshopt_optimizeVertexCache(lodIndices.data(), lodIndices.data(), lodIndices.size(), vertices.size());
 		}
 	}
 
@@ -371,7 +392,7 @@ void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vector<uin
 
 }
 
-bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
+bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false)
 {
 	std::vector<Vertex> vertices;
 	if (!loadObj(vertices, path))
@@ -383,23 +404,8 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 
 		indices[i] = uint32_t(i);
 
-	appendMesh(result, vertices, indices, buildMeshlets);
+	appendMesh(result, vertices, indices, buildMeshlets, fast);
 	return true;
-}
-
-// TODO: add to cgltf?
-
-
-const cgltf_accessor* findAccessor(const cgltf_primitive* prim, cgltf_attribute_type type, cgltf_int index = 0)
-{
-	for (size_t i = 0; i < prim->attributes_count; ++i)
-	{
-		const cgltf_attribute& attr = prim->attributes[i];
-		if (attr.type == type && attr.index == index)
-			return attr.data;
-	}
-
-	return NULL;
 }
 
 void decomposeTransform(float translation[3], float rotation[4], float scale[3], const float* transform)
@@ -449,8 +455,10 @@ void decomposeTransform(float translation[3], float rotation[4], float scale[3],
 	rotation[qc ^ 3] = qs * (r12 + qs3 * r21);
 }
 
-bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, Camera& camera, const char* path, bool buildMeshlets)
+bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, Camera& camera, const char* path, bool buildMeshlets, bool fast = false)
 {
+	double timer = glfwGetTime();
+
 	cgltf_options options = {};
 	cgltf_data* data = NULL;
 	cgltf_result res = cgltf_parse_file(&options, path, &data);
@@ -490,7 +498,7 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, Camera& camera,
 
 			std::vector<float> scratch(vertexCount * 4);
 
-			if (const cgltf_accessor* pos = findAccessor(&prim, cgltf_attribute_type_position))
+			if (const cgltf_accessor* pos = cgltf_find_accessor(&prim, cgltf_attribute_type_position, 0))
 			{
 				assert(cgltf_num_components(pos->type) == 3);
 				cgltf_accessor_unpack_floats(pos, scratch.data(), vertexCount * 3);
@@ -503,7 +511,7 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, Camera& camera,
 				}
 			}
 
-			if (const cgltf_accessor* nrm = findAccessor(&prim, cgltf_attribute_type_normal))
+			if (const cgltf_accessor* nrm = cgltf_find_accessor(&prim, cgltf_attribute_type_normal, 0))
 			{
 				assert(cgltf_num_components(nrm->type) == 3);
 				cgltf_accessor_unpack_floats(nrm, scratch.data(), vertexCount * 3);
@@ -516,7 +524,7 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, Camera& camera,
 				}
 			}
 
-			if (const cgltf_accessor* tex = findAccessor(&prim, cgltf_attribute_type_texcoord))
+			if (const cgltf_accessor* tex = cgltf_find_accessor(&prim, cgltf_attribute_type_texcoord, 0))
 			{
 				assert(cgltf_num_components(tex->type) == 2);
 				cgltf_accessor_unpack_floats(tex, scratch.data(), vertexCount * 2);
@@ -530,7 +538,7 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, Camera& camera,
 
 			std::vector<uint32_t> indices(prim.indices->count);
 			cgltf_accessor_unpack_indices(prim.indices, indices.data(), 4, indices.size());
-			appendMesh(geometry, vertices, indices, buildMeshlets);
+			appendMesh(geometry, vertices, indices, buildMeshlets, fast);
 		}
 
 		primitives.push_back(std::make_pair(unsigned(meshOffset), unsigned(geometry.meshes.size() - meshOffset)));
@@ -585,8 +593,23 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, Camera& camera,
 		}
 	}
 
-	printf("Loaded %s: %d meshes, %d draws, %d vertices\n", path, int(geometry.meshes.size()), int(draws.size()), int(geometry.vertices.size()));
-	
+	printf(LOGI("Loaded %s: %d meshes, %d draws, %d vertices in %.2f sec\n"),
+		path, int(geometry.meshes.size()), int(draws.size()), int(geometry.vertices.size()),
+		glfwGetTime() - timer);
+
+	if (buildMeshlets)
+	{
+		unsigned int meshletVtxs = 0, meshletTris = 0;
+
+		for (Meshlet& meshlet : geometry.meshlets)
+		{
+			meshletVtxs += meshlet.vertexCount;
+			meshletTris += meshlet.triangleCount;
+		}
+
+		printf("Meshlets: %d meshlets, %d triangles, %d vertex refs\n", int(geometry.meshlets.size()), int(meshletTris), int(meshletVtxs));
+	}
+
 	return true;
 }
 
@@ -666,6 +689,11 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		if (debugPyramid && (key >= GLFW_KEY_0 && key <= GLFW_KEY_9))
 		{
 			debugPyramidLevel = key - GLFW_KEY_0;
+			return;
+		}
+		else if (key >= GLFW_KEY_0 && key <= GLFW_KEY_9)
+		{
+			debugLodStep = key - GLFW_KEY_0;
 			return;
 		}
 	}
@@ -956,13 +984,14 @@ int main(int argc, const char** argv)
 	camera.fovY = glm::radians(70.f);
 
 	bool sceneMode = false;
+	bool fastMode = getenv("FAST") && atoi(getenv("FAST"));
 
 	if (argc == 2)
 	{
 		const char* ext = strrchr(argv[1], '.');
 		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
 		{
-			if (!loadScene(geometry, draws, camera, argv[1], meshShadingSupported))
+			if (!loadScene(geometry, draws, camera, argv[1], meshShadingSupported, fastMode))
 			{
 				printf("Error: scene %s failed to load\n", argv[1]);
 				return 1;
@@ -976,7 +1005,7 @@ int main(int argc, const char** argv)
 	{
 		for (int i = 1; i < argc; ++i)
 		{
-			if (!loadMesh(geometry, argv[i], meshShadingSupported))
+			if (!loadMesh(geometry, argv[i], meshShadingSupported, fastMode))
 				printf("Error: mesh %s failed to load\n", argv[i]);
 		}
 	}
@@ -1224,7 +1253,7 @@ int main(int argc, const char** argv)
 		cullData.cullingEnabled = int(cullingEnabled);
 		cullData.lodEnabled = int(lodEnabled);
 		cullData.occlusionEnabled = int(occlusionEnabled);
-		cullData.lodTarget = (2 / cullData.P11) * (1.f / float(swapchain.height)); // 1px
+		cullData.lodTarget = (2 / cullData.P11) * (1.f / float(swapchain.height)) * (1 << debugLodStep); // 1px
 		cullData.pyramidWidth = float(depthPyramidWidth);
 		cullData.clusterOcclusionEnabled = occlusionEnabled && clusterOcclusionEnabled && meshShadingSupported && meshShadingEnabled;
 
