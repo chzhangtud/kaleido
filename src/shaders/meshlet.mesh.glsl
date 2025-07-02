@@ -128,7 +128,8 @@ void main()
         vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
         vec2 texcoord = vec2(v.tu, v.tv);
 
-        vec4 clip = globals.projection * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1.0);
+        normal = rotateQuat(normal, meshDraw.orientation);
+        vec4 clip = globals.projection * (globals.cullData.view * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1));
 		gl_MeshVerticesEXT[i].gl_Position = clip;
 
         color[i] = vec4(normal * 0.5 + vec3(0.5), 1.0);
@@ -176,7 +177,7 @@ void main()
 		vec2 eb = pb - pa;
 		vec2 ec = pc - pa;
 
-		culled = culled || (eb.x * ec.y <= eb.y * ec.x); // TODO, to find reason of wired check result here.
+		culled = culled || (eb.x * ec.y <= eb.y * ec.x);
 
 		// small primitive culling
 		vec2 bmin = min(pa, min(pb, pc));

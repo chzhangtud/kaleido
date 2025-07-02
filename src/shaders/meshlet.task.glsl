@@ -81,16 +81,20 @@ void main()
 #if CULL
     sharedCount = 0;
 	barrier(); // for sharedCount
-	
+
+    CullData cullData = globals.cullData;
+
     vec3 center = rotateQuat(meshlets[mi].center, meshDraw.orientation) * meshDraw.scale + meshDraw.position;
+    center = (cullData.view * vec4(center, 1)).xyz;
+
 	float radius = meshlets[mi].radius * meshDraw.scale;
 	vec3 coneAxis = rotateQuat(vec3(int(meshlets[mi].coneAxis[0]) / 127.0,
 									int(meshlets[mi].coneAxis[1]) / 127.0,
 									int(meshlets[mi].coneAxis[2]) / 127.0), meshDraw.orientation);
-	float coneCutoff = int(meshlets[mi].coneCutoff) / 127.0;
+	coneAxis = mat3(cullData.view) * coneAxis;
+    float coneCutoff = int(meshlets[mi].coneCutoff) / 127.0;
 
-    CullData cullData = globals.cullData;
-	
+    	
     bool valid = mgi < taskCount;
     bool visible = valid;
     bool skip = false;

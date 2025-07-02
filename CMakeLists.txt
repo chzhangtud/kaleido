@@ -45,6 +45,13 @@ else()
     message(STATUS "Release mode enabled: assert is disabled.")
 endif()
 
+target_compile_definitions(kaleido PRIVATE
+    GLFW_INCLUDE_NONE
+    GLM_FORCE_XYZW_ONLY
+    GLM_FORCE_QUAT_DATA_XYZW
+    GLM_FORCE_QUAT_CTOR_XYZW
+)
+
 set(SHADERS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/shaders")
 set(SHADERS_DEST_DIR "${CMAKE_BINARY_DIR}/shaders")
 

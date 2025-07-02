@@ -42,7 +42,9 @@ void main()
     vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
     vec2 texcoord = vec2(v.tu, v.tv);
 
-    gl_Position = globals.projection * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1.0);
+    normal = rotateQuat(normal, meshDraw.orientation);
+
+	gl_Position = globals.projection * (globals.cullData.view * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1));
 
     color = vec4(normal * 0.5 + vec3(0.5), 1.0);
 }

@@ -67,10 +67,12 @@ void main()
 
 #if CULL
 	vec3 center = rotateQuat(meshlets[mi].center, meshDraw.orientation) * meshDraw.scale + meshDraw.position;
+	center = (cullData.view * vec4(center, 1)).xyz;
 	float radius = meshlets[mi].radius * meshDraw.scale;
 	vec3 coneAxis = rotateQuat(vec3(int(meshlets[mi].coneAxis[0]) / 127.0,
 									int(meshlets[mi].coneAxis[1]) / 127.0,
 									int(meshlets[mi].coneAxis[2]) / 127.0), meshDraw.orientation);
+	coneAxis = mat3(cullData.view) * coneAxis;
 	float coneCutoff = int(meshlets[mi].coneCutoff) / 127.0;
 
 	bool valid = mgi < taskCount;
