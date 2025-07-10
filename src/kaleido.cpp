@@ -14,6 +14,7 @@
 #include "device.h"
 #include "swapchain.h"
 #include "resources.h"
+#include "texture.h"
 #include "shaders.h"
 #include "math.h"
 #include "config.h"
@@ -455,7 +456,7 @@ void decomposeTransform(float translation[3], float rotation[4], float scale[3],
 	rotation[qc ^ 3] = qs * (r12 + qs3 * r21);
 }
 
-bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, Camera& camera, const char* path, bool buildMeshlets, bool fast = false)
+bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, Camera& camera, const char* path, bool buildMeshlets, bool fast = false)
 {
 	double timer = glfwGetTime();
 
@@ -591,6 +592,31 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, Camera& camera,
 			camera.orientation = quat(rotation[0], rotation[1], rotation[2], rotation[3]);
 			camera.fovY = node->camera->data.perspective.yfov;
 		}
+	}
+
+	for (size_t i = 0; i < data->textures_count; ++i)
+	{
+		cgltf_texture* texture = &data->textures[i];
+		assert(texture->image);
+
+		cgltf_image* image = texture->image;
+		assert(image->uri);
+
+		std::string ipath = path;
+		std::string::size_type pos = ipath.find_last_of('/\\');
+		if (pos == std::string::npos)
+			ipath = "";
+		else
+			ipath = ipath.substr(0, pos + 1);
+
+		std::string uri = image->uri;
+		uri.resize(cgltf_decode_uri(&uri[0]));
+
+		std::string::size_type dot = uri.find_last_of('.');
+		if (dot != std::string::npos)
+			uri.replace(dot, uri.size() - dot, ".dds");
+
+		texturePaths.push_back(ipath + uri);
 	}
 
 	printf(LOGI("Loaded %s: %d meshes, %d draws, %d vertices in %.2f sec\n"),
@@ -975,8 +1001,12 @@ int main(int argc, const char** argv)
 	VkPhysicalDeviceMemoryProperties memoryProperties;
 	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
 
+	Buffer scratch = {};
+	createBuffer(scratch, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
 	Geometry geometry;
 	std::vector<MeshDraw> draws;
+	std::vector<std::string> texturePaths;
 
 	Camera camera;
 	camera.position = { 0.f, 0.f, 0.f };
@@ -991,9 +1021,9 @@ int main(int argc, const char** argv)
 		const char* ext = strrchr(argv[1], '.');
 		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
 		{
-			if (!loadScene(geometry, draws, camera, argv[1], meshShadingSupported, fastMode))
+			if (!loadScene(geometry, draws, texturePaths, camera, argv[1], meshShadingSupported, fastMode))
 			{
-				printf("Error: scene %s failed to load\n", argv[1]);
+				printf(LOGE("Error: scene %s failed to load\n"), argv[1]);
 				return 1;
 			}
 
@@ -1001,18 +1031,38 @@ int main(int argc, const char** argv)
 		}
 	}
 
+	std::vector<Image> images;
+	double imageTimer = glfwGetTime();
+
+	for (size_t i = 0; i < texturePaths.size(); ++i)
+	{
+		Image image;
+		if (!loadImage(image, device, commandPool, commandBuffer, queue, memoryProperties, scratch, texturePaths[i].c_str()))
+		{
+			printf(LOGE("Error: image %s failed to load\n"), texturePaths[i].c_str());
+			return 1;
+		}
+
+		images.push_back(image);
+	}
+
+	printf(LOGI("Loaded %d textures in %.2f sec\n"), int(images.size()), glfwGetTime() - imageTimer);
+
 	if (!sceneMode)
 	{
 		for (int i = 1; i < argc; ++i)
 		{
 			if (!loadMesh(geometry, argv[i], meshShadingSupported, fastMode))
-				printf("Error: mesh %s failed to load\n", argv[i]);
+			{
+				printf(LOGE("Error: mesh %s failed to load\n"), argv[i]);
+				return 1;
+			}
 		}
 	}
 
 	if (geometry.meshes.empty())
 	{
-		printf("Error: no meshes loaded!\n");
+		printf(LOGE("Error: no meshes loaded!\n"));
 		return 1;
 	}
 
@@ -1066,9 +1116,6 @@ int main(int argc, const char** argv)
 	}
 
 	uint32_t meshletVisibilityBytes = (meshletVisibilityCount + 31) / 32 * sizeof(uint32_t);
-
-	Buffer scratch = {};
-	createBuffer(scratch, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	Buffer mb = {};
 	createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -1713,6 +1760,11 @@ int main(int argc, const char** argv)
 			vkDestroyImageView(device, depthPyramidMips[i], 0);
 
 		destroyImage(depthPyramid, device);
+	}
+
+	for (Image& image : images)
+	{
+		destroyImage(image, device);
 	}
 
 	destroyImage(colorTarget, device);
