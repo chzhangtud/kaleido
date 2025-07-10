@@ -30,6 +30,7 @@ layout(binding = 2) readonly buffer Vertices
 } vb;
 
 layout(location = 0) out vec4 color;
+layout(location = 1) out vec2 uv;
 
 void main()
 {
@@ -40,7 +41,7 @@ void main()
 
     vec3 position = vec3(v.vx, v.vy, v.vz);
     vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
-    vec2 texcoord = vec2(v.tu, v.tv);
+    uv = vec2(v.tu, v.tv);
 
     normal = rotateQuat(normal, meshDraw.orientation);
 

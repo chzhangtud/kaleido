@@ -65,6 +65,7 @@ layout(binding = 9) readonly buffer ClusterIndices
 };
 
 layout(location = 0) out vec4 color[];
+layout(location = 1) out vec2 uv[];
 
 #if TRIANGLE_NORMAL
 layout(location = 1) perprimitiveEXT out vec3 triangleNormal[];
@@ -133,6 +134,7 @@ void main()
 		gl_MeshVerticesEXT[i].gl_Position = clip;
 
         color[i] = vec4(normal * 0.5 + vec3(0.5), 1.0);
+        uv[i] = texcoord;
 #if CULL
 		vertexClip[i] = vec3((clip.xy / clip.w * 0.5 + vec2(0.5)) * screen, clip.w);
 #endif

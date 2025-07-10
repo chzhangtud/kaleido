@@ -15,6 +15,7 @@ struct Shader
 	uint32_t localSizeZ;
 
 	bool usePushConstants;
+	bool useDescriptorArray;
 };
 
 struct Program

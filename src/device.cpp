@@ -293,6 +293,13 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features12.samplerFilterMinmax = VK_TRUE;
 	features12.scalarBlockLayout = VK_TRUE;
 
+	features12.descriptorIndexing = VK_TRUE;
+	features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+	features12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+	features12.descriptorBindingPartiallyBound = VK_TRUE;
+	features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+	features12.runtimeDescriptorArray = VK_TRUE;
+
 	VkPhysicalDeviceVulkan13Features features13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
 	features13.dynamicRendering = VK_TRUE;
 	features13.synchronization2 = VK_TRUE;
