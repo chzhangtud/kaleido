@@ -103,6 +103,9 @@ struct alignas(16) MeshDraw
 	uint32_t meshIndex;
 	uint32_t vertexOffset;
 	uint32_t meshletVisibilityOffset;
+
+	int albedoTexture;
+	int normalTexture;
 };
 
 struct MeshDrawCommand
@@ -124,6 +127,7 @@ struct Vertex
 {
 	float vx, vy, vz;
 	uint8_t nx, ny, nz, nw;
+	uint8_t tx, ty, tz, tw;
 	uint16_t tu, tv;
 };
 
@@ -279,6 +283,8 @@ bool loadObj(std::vector<Vertex>& vertices, const char* path)
 			v.nx = uint8_t(obj->normals[gi.n * 3 + 0] * 127.f + 127.5f);
 			v.ny = uint8_t(obj->normals[gi.n * 3 + 1] * 127.f + 127.5f);
 			v.nz = uint8_t(obj->normals[gi.n * 3 + 2] * 127.f + 127.5f);
+			v.tx = v.ty = v.tz = 127;
+			v.tw = 254;
 			v.tu = meshopt_quantizeHalf(obj->texcoords[gi.t * 2 + 0]);
 			v.tv = meshopt_quantizeHalf(obj->texcoords[gi.t * 2 + 1]);
 		}
@@ -525,6 +531,20 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 				}
 			}
 
+			if (const cgltf_accessor* tan = cgltf_find_accessor(&prim, cgltf_attribute_type_tangent, 0))
+			{
+				assert(cgltf_num_components(tan->type) == 4);
+				cgltf_accessor_unpack_floats(tan, scratch.data(), vertexCount * 4);
+
+				for (size_t j = 0; j < vertexCount; ++j)
+				{
+					vertices[j].tx = uint8_t(scratch[j * 4 + 0] * 127.f + 127.5f);
+					vertices[j].ty = uint8_t(scratch[j * 4 + 1] * 127.f + 127.5f);
+					vertices[j].tz = uint8_t(scratch[j * 4 + 2] * 127.f + 127.5f);
+					vertices[j].tw = uint8_t(scratch[j * 4 + 3] * 127.f + 127.5f);
+				}
+			}
+
 			if (const cgltf_accessor* tex = cgltf_find_accessor(&prim, cgltf_attribute_type_texcoord, 0))
 			{
 				assert(cgltf_num_components(tex->type) == 2);
@@ -568,9 +588,24 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 				MeshDraw draw = {};
 				draw.position = vec3(translation[0], translation[1], translation[2]);
 				draw.scale = std::max(scale[0], std::max(scale[1], scale[2]));
+				draw.scale = std::max(scale[0], std::max(scale[1], scale[2]));
 				draw.orientation = quat(rotation[0], rotation[1], rotation[2], rotation[3]);
 				draw.meshIndex = range.first + j;
 				draw.vertexOffset = geometry.meshes[range.first + j].vertexOffset;
+
+				// TODO: incorrect if range.second diverges from mesh prim count
+				cgltf_material* material = node->mesh->primitives[j].material;
+
+				draw.albedoTexture =
+					material && material->pbr_metallic_roughness.base_color_texture.texture
+					? 1 + cgltf_texture_index(data, material->pbr_metallic_roughness.base_color_texture.texture)
+					: material && material->pbr_specular_glossiness.diffuse_texture.texture
+						? 1 + cgltf_texture_index(data, material->pbr_specular_glossiness.diffuse_texture.texture)
+						: 0;
+				draw.normalTexture =
+					material && material->normal_texture.texture
+					? 1 + cgltf_texture_index(data, material->normal_texture.texture)
+					: 0;
 
 				draws.push_back(draw);
 			}
@@ -909,10 +944,10 @@ int main(int argc, const char** argv)
 	VkQueue queue = 0;
 	vkGetDeviceQueue(device, graphicsFamily, 0, &queue);
 
-	VkSampler textureSampler = createSampler(device, VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT);
+	VkSampler textureSampler = createSampler(device, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
 	assert(textureSampler);
 
-	VkSampler depthSampler = createSampler(device, VK_SAMPLER_REDUCTION_MODE_MIN);
+	VkSampler depthSampler = createSampler(device, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_REDUCTION_MODE_MIN);
 	assert(depthSampler);
 
 	VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
@@ -1134,7 +1169,7 @@ int main(int argc, const char** argv)
 		VkWriteDescriptorSet write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		write.dstSet = textureSet;
 		write.dstBinding = 0;
-		write.dstArrayElement = i;
+		write.dstArrayElement = i + 1;
 		write.descriptorCount = 1;
 		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		write.pImageInfo = &imageInfo;

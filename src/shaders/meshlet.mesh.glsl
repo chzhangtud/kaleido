@@ -64,8 +64,10 @@ layout(binding = 9) readonly buffer ClusterIndices
 	uint clusterIndices[];
 };
 
-layout(location = 0) out vec4 color[];
-layout(location = 1) out vec2 uv[];
+layout(location = 0) out flat uint out_drawId[];
+layout(location = 1) out vec2 out_uv[];
+layout(location = 2) out vec3 out_normal[];
+layout(location = 3) out vec4 out_tangent[];
 
 #if TRIANGLE_NORMAL
 layout(location = 1) perprimitiveEXT out vec3 triangleNormal[];
@@ -127,14 +129,18 @@ void main()
 
         vec3 position = vec3(v.vx, v.vy, v.vz);
         vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
+        vec4 tangent = vec4(int(v.tx), int(v.ty), int(v.tz), int(v.tw)) / 127.0 - 1.0;
         vec2 texcoord = vec2(v.tu, v.tv);
 
         normal = rotateQuat(normal, meshDraw.orientation);
+        tangent.xyz = rotateQuat(tangent.xyz, meshDraw.orientation);
         vec4 clip = globals.projection * (globals.cullData.view * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1));
 		gl_MeshVerticesEXT[i].gl_Position = clip;
 
-        color[i] = vec4(normal * 0.5 + vec3(0.5), 1.0);
-        uv[i] = texcoord;
+        out_drawId[i] = command.drawId;
+		out_uv[i] = texcoord;
+		out_normal[i] = normal;
+		out_tangent[i] = tangent;
 #if CULL
 		vertexClip[i] = vec3((clip.xy / clip.w * 0.5 + vec2(0.5)) * screen, clip.w);
 #endif

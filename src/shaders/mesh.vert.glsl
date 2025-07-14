@@ -29,8 +29,10 @@ layout(binding = 2) readonly buffer Vertices
     Vertex vertices[];
 } vb;
 
-layout(location = 0) out vec4 color;
-layout(location = 1) out vec2 uv;
+layout(location = 0) out flat uint out_drawId;
+layout(location = 1) out vec2 out_uv;
+layout(location = 2) out vec3 out_normal;
+layout(location = 3) out vec4 out_tangent;
 
 void main()
 {
@@ -41,11 +43,16 @@ void main()
 
     vec3 position = vec3(v.vx, v.vy, v.vz);
     vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
-    uv = vec2(v.tu, v.tv);
+    vec4 tangent = vec4(int(v.tx), int(v.ty), int(v.tz), int(v.tw)) / 127.0 - 1.0;
+    tangent.xyz = rotateQuat(tangent.xyz, meshDraw.orientation);
+    vec2 texcoord = vec2(v.tu, v.tv);
 
     normal = rotateQuat(normal, meshDraw.orientation);
 
 	gl_Position = globals.projection * (globals.cullData.view * vec4(rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position, 1));
 
-    color = vec4(normal * 0.5 + vec3(0.5), 1.0);
+    out_drawId = drawId;
+	out_uv = texcoord;
+	out_normal = normal;
+	out_tangent = tangent;
 }

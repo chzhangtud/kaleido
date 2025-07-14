@@ -29,5 +29,5 @@ VkImageView createImageView(VkDevice device, VkImage image, VkFormat format, uin
 void createImage(Image& result, VkDevice device, const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t width, uint32_t height, uint32_t mipLevels, VkFormat format, VkBufferUsageFlags usage);
 void destroyImage(const Image& image, VkDevice device);
 uint32_t getImageMipLevels(uint32_t width, uint32_t height);
-VkSampler createSampler(VkDevice device, VkSamplerReductionModeEXT reductionMode);
+VkSampler createSampler(VkDevice device, VkSamplerMipmapMode mipmapMode, VkSamplerAddressMode addressMode, VkSamplerReductionModeEXT reductionMode = VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT);
 
