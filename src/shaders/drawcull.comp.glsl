@@ -71,7 +71,7 @@ void main()
 	visible = visible && center.z * cullData.frustum[1] - abs(center.x) * cullData.frustum[0] > -radius;
 	visible = visible && center.z * cullData.frustum[3] - abs(center.y) * cullData.frustum[2] > -radius;
 	// the near/far plane culling uses camera space Z directly
-	visible = visible && center.z + radius > cullData.znear && center.z - radius < cullData.zfar;
+	visible = visible && center.z - radius < -cullData.znear && center.z + radius > -cullData.zfar;
 	visible = visible || cullData.cullingEnabled == 0;
 
 	if (LATE && visible && cullData.occlusionEnabled == 1)

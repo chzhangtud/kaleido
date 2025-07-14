@@ -731,7 +731,7 @@ mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
 	return mat4(
 		f / aspectWbyH, 0.0f,	0.0f,	0.0f,
 		0.0f,			f,		0.0f,	0.0f,
-		0.0f,			0.0f,	0.0f,	1.0f,
+		0.0f,			0.0f,	0.0f,	-1.0f,
 		0.0f,			0.0f,	zNear,	0.0f);
 }
 
@@ -778,6 +778,47 @@ double rand01()
 uint32_t rand32()
 {
 	return pcg32_random_r(&rngstate);
+}
+
+Camera camera;
+bool firstMouse = true;
+float cameraSpeed = 5.0f;
+float lastX = 400, lastY = 300;
+float yaw = -90.0f;
+float pitch = 0.0f;
+void mouse_callback(GLFWwindow* window, double xpos, double ypos)
+{
+	static const float sensitivity = 0.1f;
+
+	if (firstMouse)
+	{
+		lastX = xpos;
+		lastY = ypos;
+		firstMouse = false;
+	}
+
+	float xoffset = xpos - lastX;
+	float yoffset = lastY - ypos;
+	lastX = xpos;
+	lastY = ypos;
+
+	xoffset *= sensitivity;
+	yoffset *= sensitivity;
+
+	yaw += xoffset;
+	pitch += yoffset;
+
+	if (pitch > 89.0f) pitch = 89.0f;
+	if (pitch < -89.0f) pitch = -89.0f;
+
+	glm::vec3 front;
+	front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+	front.y = sin(glm::radians(pitch));
+	front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+	front = glm::normalize(front);
+
+	glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+	camera.orientation = glm::quatLookAt(front, up);
 }
 
 int main(int argc, const char** argv)
@@ -1011,7 +1052,6 @@ int main(int argc, const char** argv)
 	std::vector<MeshDraw> draws;
 	std::vector<std::string> texturePaths;
 
-	Camera camera;
 	camera.position = { 0.f, 0.f, 0.f };
 	camera.orientation = { 0.f, 0.f, 0.f, 1.f };
 	camera.fovY = glm::radians(70.f);
@@ -1154,7 +1194,7 @@ int main(int argc, const char** argv)
 		}
 	}
 
-	float drawDistance = 200;
+	float drawDistance = 2000.f;
 	uint32_t meshletVisibilityCount = 0;
 
 	for (size_t i = 0; i < draws.size(); ++i)
@@ -1248,8 +1288,33 @@ int main(int argc, const char** argv)
 
 	uint64_t frameIndex = 0;
 
+	glfwSetCursorPosCallback(window, mouse_callback);
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+	float lastFrame = glfwGetTime();
 	while (!glfwWindowShouldClose(window))
 	{
+		// update camera position
+		float currentFrame = glfwGetTime();
+		float deltaTime = currentFrame - lastFrame;
+		lastFrame = currentFrame;
+
+		float velocity = cameraSpeed * deltaTime;
+
+		glm::vec3 front = camera.orientation * glm::vec3(0.0f, 0.0f, -1.0f);
+		glm::vec3 right = camera.orientation * glm::vec3(1.0f, 0.0f, 0.0f);
+		glm::vec3 up = glm::cross(right, front);
+
+		if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+			camera.position -= front * velocity;
+		if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+			camera.position += front * velocity;
+		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+			camera.position -= right * velocity;
+		if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+			camera.position += right * velocity;
+
+		
 		double frameCPUBegin = glfwGetTime() * 1000.0;
 
 		glfwPollEvents();
@@ -1331,11 +1396,12 @@ int main(int argc, const char** argv)
 		}
 
 		mat4 view = glm::mat4_cast(camera.orientation);
-		view[3] = vec4(camera.position, 1.0f);
-		view = inverse(view);
+		//view[3] = vec4(-camera.position, 1.0f);
+		//view = inverse(view);
 		// view = glm::scale(glm::identity<glm::mat4>(), vec3(1, 1, 1)) * view;
+		view = glm::lookAt(camera.position, camera.position + front, up);
 
-		float znear = 1.f;
+		float znear = 0.1f;
 		mat4 projection = perspectiveProjection(camera.fovY, float(swapchain.width) / float(swapchain.height), znear);
 		mat4 projectionT = transpose(projection);
 

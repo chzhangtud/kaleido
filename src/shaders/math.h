@@ -23,10 +23,11 @@ bool projectSphere(vec3 c, float r, float znear, float P00, float P11, out vec4 
 
 bool coneCull(vec3 center, float radius, vec3 cone_axis, float cone_cutoff, vec3 camera_position)
 {
-    return dot(camera_position - center, cone_axis) >= cone_cutoff * length(center - camera_position) + radius;
+    return dot(center - camera_position, cone_axis) >= cone_cutoff * length(center - camera_position) * length(cone_axis) + radius;
 }
 
 vec3 rotateQuat(vec3 v, vec4 q)
 {
-	return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+	vec3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
 }
