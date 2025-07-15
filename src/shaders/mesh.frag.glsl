@@ -63,5 +63,6 @@ void main()
 #if DEBUG
 	uint mhash = hash(drawId);
 	outputColor = vec4(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255), 255) / 255.0;
+	outputColor = vec4(normal, 1.0);
 #endif
 }

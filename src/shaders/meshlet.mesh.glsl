@@ -145,7 +145,7 @@ void main()
 		vertexClip[i] = vec3((clip.xy / clip.w * 0.5 + vec2(0.5)) * screen, clip.w);
 #endif
 #if DEBUG
-        color[i] = vec4(mcolor, 1.0);
+        out_normal[i] = mcolor;
 #endif
     }
 

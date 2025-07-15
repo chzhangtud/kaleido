@@ -1,4 +1,5 @@
 #include "shaders.h"
+#include "config.h"
 #include <stdio.h>
 
 #if VK_HEADER_VERSION >= 135
@@ -351,39 +352,6 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders
 	return setLayout;
 }
 
-static VkDescriptorSetLayout createSetArrayLayout(VkDevice device, Shaders shaders)
-{
-	VkDescriptorSetLayoutBinding binding = {};
-	binding.binding = 0;
-	binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	binding.descriptorCount = 65536;
-	binding.stageFlags = 0;
-
-	for (const Shader* shader : shaders)
-		if (shader->useDescriptorArray)
-			binding.stageFlags |= shader->stage;
-
-	if (binding.stageFlags == 0)
-		return nullptr;
-
-	// TODO: what the heck is up with VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT
-	VkDescriptorBindingFlags bindingFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
-	VkDescriptorSetLayoutBindingFlagsCreateInfo setBindingFlags = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
-	setBindingFlags.bindingCount = 1;
-	setBindingFlags.pBindingFlags = &bindingFlags;
-
-	VkDescriptorSetLayoutCreateInfo setCreateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-	setCreateInfo.pNext = &setBindingFlags;
-	setCreateInfo.bindingCount = 1;
-	setCreateInfo.pBindings = &binding;
-
-	VkDescriptorSetLayout setLayout = 0;
-	VK_CHECK(vkCreateDescriptorSetLayout(device, &setCreateInfo, 0, &setLayout));
-
-	return setLayout;
-}
-
-
 static VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout setLayout, VkDescriptorSetLayout arrayLayout, VkShaderStageFlags pushConstantStages, size_t pushConstantSize)
 {
 	VkDescriptorSetLayout layouts[2] = { setLayout, arrayLayout };
@@ -445,6 +413,54 @@ static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipeli
 	VK_CHECK(vkCreateDescriptorUpdateTemplate(device, &createInfo, 0, &updateTemplate));
 
 	return updateTemplate;
+}
+
+VkDescriptorSetLayout createDescriptorArrayLayout(VkDevice device)
+{
+	VkShaderStageFlags stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	VkDescriptorSetLayoutBinding setBinding = { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, DESCRIPTOR_LIMIT, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
+
+	VkDescriptorBindingFlags bindingFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |  VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+	VkDescriptorSetLayoutBindingFlagsCreateInfo setBindingFlags = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
+	setBindingFlags.bindingCount = 1;
+	setBindingFlags.pBindingFlags = &bindingFlags;
+
+	VkDescriptorSetLayoutCreateInfo setCreateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+	setCreateInfo.pNext = &setBindingFlags;
+	setCreateInfo.bindingCount = 1;
+	setCreateInfo.pBindings = &setBinding;
+
+	VkDescriptorSetLayout setLayout = 0;
+	VK_CHECK(vkCreateDescriptorSetLayout(device, &setCreateInfo, 0, &setLayout));
+
+	return setLayout;
+}
+
+std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice device, VkDescriptorSetLayout layout, uint32_t descriptorCount)
+{
+	VkDescriptorPoolSize poolSize = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorCount };
+	VkDescriptorPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+	poolInfo.maxSets = 1;
+	poolInfo.poolSizeCount = 1;
+	poolInfo.pPoolSizes = &poolSize;
+
+	VkDescriptorPool pool = nullptr;
+	VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, 0, &pool));
+
+	VkDescriptorSetVariableDescriptorCountAllocateInfo setAllocateCountInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO };
+	setAllocateCountInfo.descriptorSetCount = 1;
+	setAllocateCountInfo.pDescriptorCounts = &descriptorCount;
+
+	VkDescriptorSetAllocateInfo setAllocateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+	setAllocateInfo.pNext = &setAllocateCountInfo;
+	setAllocateInfo.descriptorPool = pool;
+	setAllocateInfo.descriptorSetCount = 1;
+	setAllocateInfo.pSetLayouts = &layout;
+
+	VkDescriptorSet set = 0;
+	VK_CHECK(vkAllocateDescriptorSets(device, &setAllocateInfo, &set));
+
+	return std::make_pair(pool, set);
 }
 
 VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, Shaders shaders, VkPipelineLayout layout, bool useSpecializationConstants, VkBool32 LATE, VkBool32 TASK)
@@ -576,24 +592,31 @@ VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache,
 	return pipeline;
 }
 
-Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize)
+Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize, VkDescriptorSetLayout arrayLayout)
 {
 	Program program = {};
 	for (const auto& shader : shaders)
 		if (shader->usePushConstants)
 			program.pushConstantStages |= shader->stage;
 
+	bool usesDescriptorArray = false;
+	for (const Shader* shader : shaders)
+	{
+		if (shader->useDescriptorArray)
+		{
+			usesDescriptorArray = true;
+			break;
+		}
+	}
+
+	assert(!usesDescriptorArray || arrayLayout);
+
 	program.bindPoint = bindPoint;
 	program.descriptorSetLayout = createDescriptorSetLayout(device, shaders);
 	assert(program.descriptorSetLayout);
 	
-	VkDescriptorSetLayout arrayLayout = createSetArrayLayout(device, shaders);
-
 	program.layout = createPipelineLayout(device, program.descriptorSetLayout, arrayLayout, program.pushConstantStages, pushConstantSize);
 	assert(program.layout);
-
-	if (arrayLayout)
-		vkDestroyDescriptorSetLayout(device, arrayLayout, 0);
 
 	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders);
 	assert(program.updateTemplate);
