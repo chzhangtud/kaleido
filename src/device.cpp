@@ -279,6 +279,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features.features.shaderInt16 = VK_TRUE;
 	features.features.shaderInt64 = VK_TRUE;
 	features.features.pipelineStatisticsQuery = VK_TRUE;
+	features.features.samplerAnisotropy = VK_TRUE;
 	
 	VkPhysicalDeviceVulkan11Features features11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 	features11.shaderDrawParameters = VK_TRUE;
