@@ -647,7 +647,8 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 	{
 		cgltf_texture* texture = &data->textures[i];
 		assert(texture->image);
-
+		
+		// TODO: the following may cause crash when buffer view is used instead of uri.
 		cgltf_image* image = texture->image;
 		assert(image->uri);
 
@@ -659,9 +660,18 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 			ipath = ipath.substr(0, pos + 1);
 
 		std::string uri = image->uri;
-		uri.resize(cgltf_decode_uri(&uri[0]));
 
-		texturePaths.push_back(ipath + uri);
+		const char* prefix_png = "data:image/png;base64,";
+		const char* prefix_jpg = "data:image/jpeg;base64,";
+		if (strncmp(uri.c_str(), prefix_png, strlen(prefix_png)) == 0 || strncmp(uri.c_str(), prefix_jpg, strlen(prefix_jpg)) == 0)
+		{
+			texturePaths.emplace_back(uri);
+		}
+		else
+		{
+			uri.resize(cgltf_decode_uri(&uri[0]));
+			texturePaths.emplace_back(ipath + uri);
+		}
 	}
 
 	printf(LOGI("Loaded %s: %d meshes, %d draws, %d vertices in %.2f sec\n"),

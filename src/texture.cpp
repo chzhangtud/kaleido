@@ -1,4 +1,4 @@
-#include "texture.h"
+﻿#include "texture.h"
 
 #include "common.h"
 #include "resources.h"
@@ -7,6 +7,9 @@
 #include <memory>
 
 #include <ktx.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 struct DDS_PIXELFORMAT
 {
@@ -482,16 +485,176 @@ bool loadKtxImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice
 	return true;
 }
 
+static std::vector<uint8_t> Base64Decode(const std::string& base64)
+{
+	static constexpr unsigned char kDecodingTable[] = {
+		64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+		64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+		64,64,64,64,64,64,64,64,64,64,64,62,64,64,64,63,
+		52,53,54,55,56,57,58,59,60,61,64,64,64, 0,64,64,
+		64, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+		15,16,17,18,19,20,21,22,23,24,25,64,64,64,64,64,
+		64,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+		41,42,43,44,45,46,47,48,49,50,51
+	};
+	std::vector<uint8_t> output;
+	int val = 0, valb = -8;
+	for (char c : base64) {
+		if (c > 127) break;
+		unsigned char d = kDecodingTable[c];
+		if (d == 64) break;
+		val = (val << 6) + d;
+		valb += 6;
+		if (valb >= 0) {
+			output.push_back((val >> valb) & 0xFF);
+			valb -= 8;
+		}
+	}
+	return output;
+}
+
+static bool ExtractBase64Data(const char* uri, std::string& outBase64)
+{
+	const char* prefix_png = "data:image/png;base64,";
+	const char* prefix_jpg = "data:image/jpeg;base64,";
+	if (strncmp(uri, prefix_png, strlen(prefix_png)) == 0) {
+		outBase64 = uri + strlen(prefix_png);
+		return true;
+	}
+	if (strncmp(uri, prefix_jpg, strlen(prefix_jpg)) == 0) {
+		outBase64 = uri + strlen(prefix_jpg);
+		return true;
+	}
+	return false;
+}
+
+bool loadUncompressedImage(
+	Image& image,
+	VkDevice device,
+	VkCommandPool commandPool,
+	VkCommandBuffer commandBuffer,
+	VkQueue queue,
+	const VkPhysicalDeviceMemoryProperties& memoryProperties,
+	const Buffer& scratch,
+	int texWidth,
+	int texHeight,
+	int texChannels)
+{	
+	VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+	VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+
+	createImage(image, device, memoryProperties, texWidth, texHeight, 1, format, usage);
+
+	VK_CHECK(vkResetCommandPool(device, commandPool, 0));
+
+	VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+	VkImageMemoryBarrier2 preBarrier = imageBarrier(image.image,
+		0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &preBarrier);
+
+	VkBufferImageCopy region = {};
+	region.bufferOffset = 0;
+	region.bufferRowLength = 0;
+	region.bufferImageHeight = 0;
+	region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	region.imageSubresource.mipLevel = 0;
+	region.imageSubresource.baseArrayLayer = 0;
+	region.imageSubresource.layerCount = 1;
+	region.imageOffset = { 0, 0, 0 };
+	region.imageExtent = { static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), 1 };
+
+	vkCmdCopyBufferToImage(commandBuffer, scratch.buffer, image.image,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+	VkImageMemoryBarrier2 postBarrier = imageBarrier(image.image,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &postBarrier);
+
+	VK_CHECK(vkEndCommandBuffer(commandBuffer));
+
+	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
+
+	VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+	VK_CHECK(vkDeviceWaitIdle(device));
+
+	return true;
+}
+
 bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const Buffer& scratch, const char* path)
 {
-	if (strstr(path, ".dds") || strstr(path, ".DDS"))
+	const char* prefix_png = "data:image/png;base64,";
+	const char* prefix_jpg = "data:image/jpeg;base64,";
+	if (strncmp(path, prefix_png, strlen(prefix_png)) == 0 || strncmp(path, prefix_jpg, strlen(prefix_jpg)) == 0)
+	{
+		std::string base64;
+		if (!ExtractBase64Data(path, base64)) {
+			printf(LOGE("Unsupported or invalid data URI format\n"));
+			return false;
+		}
+
+		std::vector<uint8_t> decoded = Base64Decode(base64);
+		if (decoded.empty()) {
+			printf(LOGE("Base64 decode failed\n"));
+			return false;
+		}
+
+		int texWidth, texHeight, texChannels;
+		stbi_uc* pixels = stbi_load_from_memory(decoded.data(), (int)decoded.size(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
+		if (!pixels) 
+		{
+			printf(LOGE("Failed to load image from memory: %s\n", stbi_failure_reason()));
+			return false;
+		}
+
+		size_t imageSize = texWidth * texHeight * 4;
+		if (scratch.size < imageSize) {
+			printf(LOGE("Scratch buffer too small\n"));
+			stbi_image_free(pixels);
+			return false;
+		}
+
+		memcpy(scratch.data, pixels, imageSize);
+		stbi_image_free(pixels);
+
+		return loadUncompressedImage(image, device, commandPool, commandBuffer, queue, memoryProperties, scratch, texWidth, texHeight, texChannels);
+	}
+	else if (strstr(path, ".png") || strstr(path, ".PNG") || strstr(path, ".jpg") || strstr(path, ".JPG"))
+	{
+		int texWidth, texHeight, texChannels;
+		stbi_uc* pixels = stbi_load(path, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha); // force RGBA8
+		if (!pixels)
+			return false;
+
+		size_t imageSize = texWidth * texHeight * 4; // 4 bytes per pixel
+
+		if (scratch.size < imageSize)
+		{
+			stbi_image_free(pixels);
+			return false;
+		}
+
+		memcpy(scratch.data, pixels, imageSize);
+		stbi_image_free(pixels);
+
+		return loadUncompressedImage(image, device, commandPool, commandBuffer, queue, memoryProperties, scratch, texWidth, texHeight, texChannels);
+	}
+	else if (strstr(path, ".dds") || strstr(path, ".DDS"))
 	{
 		return loadDDSImage(image, device, commandPool, commandBuffer, queue, memoryProperties, scratch, path);
 	}
 	else if (strstr(path, ".ktx") || strstr(path, ".KTX"))
 	{
 		return loadKtxImage(image, device, physicalDevice, commandPool, commandBuffer, queue, memoryProperties, path);
-	}
+	}	
 	else
 	{
 		printf(LOGE("Unsupported image format: %s\n"), path);
