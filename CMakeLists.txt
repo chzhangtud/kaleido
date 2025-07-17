@@ -31,6 +31,7 @@ target_link_libraries(kaleido PRIVATE
     glm
     fast_obj
     cgltf
+    stb_image
     ktx
 )
 
