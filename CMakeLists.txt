@@ -31,6 +31,7 @@ target_link_libraries(kaleido PRIVATE
     glm
     fast_obj
     cgltf
+    ktx
 )
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -92,4 +93,3 @@ endforeach()
 add_custom_target(CompileShaders ALL DEPENDS ${SPV_FILES})
 
 add_dependencies(kaleido CompileShaders)
-
