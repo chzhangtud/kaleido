@@ -661,10 +661,6 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 		std::string uri = image->uri;
 		uri.resize(cgltf_decode_uri(&uri[0]));
 
-		std::string::size_type dot = uri.find_last_of('.');
-		if (dot != std::string::npos)
-			uri.replace(dot, uri.size() - dot, ".dds");
-
 		texturePaths.push_back(ipath + uri);
 	}
 
@@ -1131,7 +1127,7 @@ int main(int argc, const char** argv)
 	for (size_t i = 0; i < texturePaths.size(); ++i)
 	{
 		Image image;
-		if (!loadImage(image, device, commandPool, commandBuffer, queue, memoryProperties, scratch, texturePaths[i].c_str()))
+		if (!loadImage(image, device, physicalDevice, commandPool, commandBuffer, queue, memoryProperties, scratch, texturePaths[i].c_str()))
 		{
 			printf(LOGE("Error: image %s failed to load\n"), texturePaths[i].c_str());
 			return 1;

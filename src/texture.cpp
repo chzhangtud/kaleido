@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <memory>
 
+#include <ktx.h>
+
 struct DDS_PIXELFORMAT
 {
 	unsigned int dwSize;
@@ -132,7 +134,7 @@ static size_t getImageSizeBC(unsigned int width, unsigned int height, unsigned i
 }
 
 
-bool loadImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const Buffer& scratch, const char* path)
+bool loadDDSImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const Buffer& scratch, const char* path)
 {
 	FILE* file = fopen(path, "rb");
 	if (!file)
@@ -227,4 +229,272 @@ bool loadImage(Image& image, VkDevice device, VkCommandPool commandPool, VkComma
 	VK_CHECK(vkDeviceWaitIdle(device));
 
 	return true;
+}
+
+
+uint32_t get_memory_type(uint32_t bits, const VkPhysicalDeviceMemoryProperties& memoryProperties, VkMemoryPropertyFlags properties, VkBool32* memory_type_found = nullptr)
+{
+	for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
+	{
+		if ((bits & 1) == 1)
+		{
+			if ((memoryProperties.memoryTypes[i].propertyFlags & properties) == properties)
+			{
+				if (memory_type_found)
+				{
+					*memory_type_found = true;
+				}
+				return i;
+			}
+		}
+		bits >>= 1;
+	}
+
+	if (memory_type_found)
+	{
+		*memory_type_found = false;
+		return ~0;
+	}
+	else
+	{
+		printf(LOGE("Could not find a matching memory type"));
+		assert(false);
+	}
+}
+
+bool loadKtxImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const char* path)
+{
+	VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
+
+	ktxTexture* ktxTexture = nullptr;
+	KTX_error_code result = ktxTexture_CreateFromNamedFile(path, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTexture);
+
+	if (ktxTexture == nullptr)
+	{
+		printf(LOGE("Error: KTX image %s failed to load: %s\n"), path, ktxErrorString(result));
+		return false;
+	}
+
+	uint32_t width = ktxTexture->baseWidth;
+	uint32_t height = ktxTexture->baseHeight;
+	uint32_t mipLevels = ktxTexture->numLevels;
+
+	bool useStaging = true;
+	bool forceLinearTiling = false;
+	if (forceLinearTiling)
+	{
+		VkFormatProperties formatProperties;
+		vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProperties);
+		useStaging = !(formatProperties.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+	}
+
+	VkMemoryAllocateInfo memoryAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+	VkMemoryRequirements memoryRequirements = {};
+
+	ktx_uint8_t* ktxImageData = ktxTexture->pData;
+	ktx_size_t ktxtextureSize = ktxTexture->dataSize;
+
+	if (useStaging)
+	{
+		// Copy data to an optimal tiled image
+		// This loads the texture data into a host local buffer that is copied to the optimal tiled image to the device
+
+		// Create a host-visible staging buffer that contains the raw image data
+		// This buffer will be the data source for copying texture data to the optimal tiled image on the device
+		VkBuffer stagingBuffer = 0;
+		VkDeviceMemory stagingMemory = 0;
+
+		VkBufferCreateInfo bufferCreateInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+		bufferCreateInfo.size = ktxtextureSize;
+		bufferCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+		bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		VK_CHECK(vkCreateBuffer(device, &bufferCreateInfo, nullptr, &stagingBuffer));
+
+		// Get memory requirements for the staging buffer (alignment, memory byte bits)
+		vkGetBufferMemoryRequirements(device, stagingBuffer, &memoryRequirements);
+		memoryAllocateInfo.allocationSize = memoryRequirements.size;
+		// Get memory type index for a host visible buffer
+		memoryAllocateInfo.memoryTypeIndex = get_memory_type(memoryRequirements.memoryTypeBits, memoryProperties, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		VK_CHECK(vkAllocateMemory(device, &memoryAllocateInfo, nullptr, &stagingMemory));
+		VK_CHECK(vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0));
+
+		// Copy texture data into hhost local staging buffer
+		uint8_t* data = nullptr;
+		VK_CHECK(vkMapMemory(device, stagingMemory, 0, memoryRequirements.size, 0, (void**)&data));
+		memcpy(data, ktxImageData, ktxtextureSize);
+		vkUnmapMemory(device, stagingMemory);
+
+		// Setup buffer copy regions for each mip level
+		std::vector<VkBufferImageCopy> bufferCopyRegions;
+		for (uint32_t i = 0; i < mipLevels; ++i)
+		{
+			ktx_size_t        offset;
+			KTX_error_code    result = ktxTexture_GetImageOffset(ktxTexture, i, 0, 0, &offset);
+			VkBufferImageCopy buffer_copy_region = {};
+			buffer_copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			buffer_copy_region.imageSubresource.mipLevel = i;
+			buffer_copy_region.imageSubresource.baseArrayLayer = 0;
+			buffer_copy_region.imageSubresource.layerCount = 1;
+			buffer_copy_region.imageExtent.width = ktxTexture->baseWidth >> i;
+			buffer_copy_region.imageExtent.height = ktxTexture->baseHeight >> i;
+			buffer_copy_region.imageExtent.depth = 1;
+			buffer_copy_region.bufferOffset = offset;
+			bufferCopyRegions.push_back(buffer_copy_region);
+		}
+
+		// Create optimal tiled target image on the device
+		VkImageCreateInfo imageCreateInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+		imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+		imageCreateInfo.format = format;
+		imageCreateInfo.mipLevels = mipLevels;
+		imageCreateInfo.arrayLayers = 1;
+		imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		// Set initial layout of the image to undefined
+		imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		imageCreateInfo.extent = { width, height, 1 };
+		imageCreateInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		VK_CHECK(vkCreateImage(device, &imageCreateInfo, nullptr, &image.image));
+
+		vkGetImageMemoryRequirements(device, image.image, &memoryRequirements);
+		memoryAllocateInfo.allocationSize = memoryRequirements.size;
+		memoryAllocateInfo.memoryTypeIndex = get_memory_type(memoryRequirements.memoryTypeBits, memoryProperties, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		VK_CHECK(vkAllocateMemory(device, &memoryAllocateInfo, nullptr, &image.memory));
+		VK_CHECK(vkBindImageMemory(device, image.image, image.memory, 0));
+
+		// Image memory barriers for the texture image
+
+		VK_CHECK(vkResetCommandPool(device, commandPool, 0));
+
+		VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+		VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+		// The sub resource range describes the regions of the image that will be transitioned using the memory barriers below
+		VkImageSubresourceRange subresource_range = {};
+		// Image only contains color data
+		subresource_range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		// Start at first mip level
+		subresource_range.baseMipLevel = 0;
+		// We will transition on all mip levels
+		subresource_range.levelCount = mipLevels;
+		// The 2D texture only has one layer
+		subresource_range.layerCount = 1;
+
+		// Transition the texture image layout to transfer target, so we can safely copy our buffer data to it.
+		VkImageMemoryBarrier imageMemoryBarrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+
+		imageMemoryBarrier.image = image.image;
+		imageMemoryBarrier.subresourceRange = subresource_range;
+		imageMemoryBarrier.srcAccessMask = 0;
+		imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	
+		// Insert a memory dependency at the proper pipeline stages that will execute the image layout transition
+		// Source pipeline stage is host write/read execution (VK_PIPELINE_STAGE_HOST_BIT)
+		// Destination pipeline stage is copy command execution (VK_PIPELINE_STAGE_TRANSFER_BIT)
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_HOST_BIT,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &imageMemoryBarrier);
+
+		// Copy mip levels from staging buffer
+		vkCmdCopyBufferToImage(
+			commandBuffer,
+			stagingBuffer,
+			image.image,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			static_cast<uint32_t>(bufferCopyRegions.size()),
+			bufferCopyRegions.data());
+
+		// Once the data has been uploaded we transfer to the texture image to the shader read layout, so it can be sampled from
+		imageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		// Insert a memory dependency at the proper pipeline stages that will execute the image layout transition
+		// Source pipeline stage stage is copy command execution (VK_PIPELINE_STAGE_TRANSFER_BIT)
+		// Destination pipeline stage fragment shader access (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &imageMemoryBarrier);
+
+		VK_CHECK(vkEndCommandBuffer(commandBuffer));
+
+		VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffer;
+
+		VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+
+		// TODO: waitIdle is ok here because loading image only happens at start, but if starting time 
+		// is too long, maybe it is better to try async loading and some other synchronization methods instead of 
+		// brute-force waiting idle.
+		VK_CHECK(vkDeviceWaitIdle(device));
+
+		// Clean up staging resources
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingMemory, nullptr);
+	}
+	else
+	{
+		// TODO: support this later
+		return false;
+	}
+
+	// now, the ktx_texture can be destroyed
+	ktxTexture_Destroy(ktxTexture);
+
+	// Create image view
+	// Textures are not directly accessed by the shaders and
+	// are abstracted by image views containing additional
+	// information and sub resource ranges
+	VkImageViewCreateInfo imageViewCreateInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+	imageViewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	imageViewCreateInfo.format = format;
+	imageViewCreateInfo.components = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
+	// The subresource range describes the set of mip levels (and array layers) that can be accessed through this image view
+	// It's possible to create multiple image views for a single image referring to different (and/or overlapping) ranges of the image
+	imageViewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
+	imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
+	imageViewCreateInfo.subresourceRange.layerCount = 1;
+	// Linear tiling usually won't support mip maps
+	// Only set mip map count if optimal tiling is used
+	imageViewCreateInfo.subresourceRange.levelCount = (useStaging) ? mipLevels : 1;
+	// The view will be based on the texture's image
+	imageViewCreateInfo.image = image.image;
+	VK_CHECK(vkCreateImageView(device, &imageViewCreateInfo, nullptr, &image.imageView));
+
+	return true;
+}
+
+bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const Buffer& scratch, const char* path)
+{
+	if (strstr(path, ".dds") || strstr(path, ".DDS"))
+	{
+		return loadDDSImage(image, device, commandPool, commandBuffer, queue, memoryProperties, scratch, path);
+	}
+	else if (strstr(path, ".ktx") || strstr(path, ".KTX"))
+	{
+		return loadKtxImage(image, device, physicalDevice, commandPool, commandBuffer, queue, memoryProperties, path);
+	}
+	else
+	{
+		printf(LOGE("Unsupported image format: %s\n"), path);
+		return false;
+	}
 }
