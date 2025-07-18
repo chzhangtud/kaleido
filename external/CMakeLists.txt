@@ -30,6 +30,34 @@ source_group("Header Files\\stb" FILES
     ${CMAKE_CURRENT_LIST_DIR}/stb/stb_image.h
 )
 
+# ImGui - standalone external project
+add_library(imgui STATIC)
+target_sources(imgui PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_draw.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_tables.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_widgets.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_glfw.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_vulkan.cpp
+)
+target_include_directories(imgui PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/imgui
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/backends
+)
+target_link_libraries(imgui PUBLIC glfw volk)
+source_group("imgui" FILES
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_draw.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_tables.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_widgets.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_demo.cpp
+)
+source_group("imgui\\backends" FILES
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_glfw.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_vulkan.cpp
+)
+
+
 # glfw settings
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
@@ -54,4 +82,5 @@ if (MSVC)
     set_property(TARGET ktx_version PROPERTY FOLDER "external/ktx")
     set_property(TARGET obj_basisu_cbind PROPERTY FOLDER "external/ktx")
     set_property(TARGET objUtil PROPERTY FOLDER "external/ktx")
+    set_property(TARGET imgui PROPERTY FOLDER "external")
 endif()

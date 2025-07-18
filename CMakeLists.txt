@@ -33,6 +33,7 @@ target_link_libraries(kaleido PRIVATE
     cgltf
     stb_image
     ktx
+    imgui
 )
 
 if(NOT CMAKE_BUILD_TYPE)
