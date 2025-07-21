@@ -78,7 +78,7 @@ static VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, VkS
 	createInfo.imageExtent.width = width;
 	createInfo.imageExtent.height = height;
 	createInfo.imageArrayLayers = 1;
-	createInfo.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	createInfo.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 	createInfo.queueFamilyIndexCount = 1;
 	createInfo.pQueueFamilyIndices = &familyIndex;
 	createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
@@ -148,6 +148,11 @@ void createSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevic
 
 void destroySwapchain(VkDevice device, Swapchain& swapchain)
 {
+	for (uint32_t i = 0; i < swapchain.imageCount; ++i)
+	{
+		vkDestroyImageView(device, swapchain.imageViews[i], 0);
+	}
+
 	vkDestroySwapchainKHR(device, swapchain.swapchain, 0);
 }
 

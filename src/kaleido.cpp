@@ -1343,7 +1343,7 @@ int main(int argc, const char** argv)
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
 	uint32_t imageCount = std::max(2u, surfaceCaps.minImageCount);
-	guiRenderer->Initialize(window, CURRENT_VK_VERSION, instance, physicalDevice, device, graphicsFamily, queue, textureSet.first, swapchainFormat, imageCount);
+	guiRenderer->Initialize(window, CURRENT_VK_VERSION, instance, physicalDevice, device, graphicsFamily, queue, renderingInfo, textureSet.first, swapchainFormat, imageCount);
 
 	float lastFrame = glfwGetTime();
 	while (!glfwWindowShouldClose(window))
@@ -1947,6 +1947,8 @@ int main(int argc, const char** argv)
 		frameIndex++;
 	}
 
+	guiRenderer->Shutdown(device);
+
 	VK_CHECK(vkDeviceWaitIdle(device));	
 
 	if (depthPyramid.image)
@@ -1986,6 +1988,7 @@ int main(int argc, const char** argv)
 	destroyBuffer(vb, device);
 	destroyBuffer(scratch, device);
 
+	vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 	vkDestroyCommandPool(device, commandPool, 0);
 
 	destroySwapchain(device, swapchain);

@@ -23,6 +23,7 @@ public:
         VkDevice device,
         uint32_t graphicsQueueFamily,
         VkQueue graphicsQueue,
+        const VkPipelineRenderingCreateInfo& renderingInfo,
         VkDescriptorPool descriptorPool,
         VkFormat swapchainFormat,
         uint32_t imageCount);
@@ -31,7 +32,7 @@ public:
     void EndFrame();
     void RenderDrawData(VkCommandBuffer cmdBuf, VkImageView targetView, VkExtent2D extent);
 
-    void Shutdown();
+    void Shutdown(VkDevice device);
 
 private:
     void CreateImGuiDescriptorPool(VkDevice device);
@@ -41,6 +42,5 @@ private:
     GLFWwindow* mWindow = nullptr;
     VkInstance mInstance = VK_NULL_HANDLE;
     VkDevice mDevice = VK_NULL_HANDLE;
-    VkRenderPass mDummyRenderPass = VK_NULL_HANDLE;
     VkDescriptorPool mDescriptorPool = VK_NULL_HANDLE;
 };

@@ -11,41 +11,6 @@ const std::shared_ptr<GuiRenderer>& GuiRenderer::GetInstance()
     return gInstance;
 }
 
-static VkRenderPass CreateDummyRenderPass(VkDevice device, VkFormat format)
-{
-    VkAttachmentDescription attachment = {};
-    attachment.format = format;
-    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    VkAttachmentReference colorRef = {};
-    colorRef.attachment = 0;
-    colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkSubpassDescription subpass = {};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorRef;
-
-    VkRenderPassCreateInfo rpInfo = {};
-    rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    rpInfo.attachmentCount = 1;
-    rpInfo.pAttachments = &attachment;
-    rpInfo.subpassCount = 1;
-    rpInfo.pSubpasses = &subpass;
-
-    VkRenderPass renderPass = VK_NULL_HANDLE;
-    if (vkCreateRenderPass(device, &rpInfo, nullptr, &renderPass) != VK_SUCCESS)
-    {
-        printf(LOGE("Failed to create dummy render pass for ImGui"));
-        assert(false);
-    }
-    return renderPass;
-}
-
 void GuiRenderer::Initialize(GLFWwindow* window,
     uint32_t apiVersion,
     VkInstance instance,
@@ -53,6 +18,7 @@ void GuiRenderer::Initialize(GLFWwindow* window,
     VkDevice device,
     uint32_t graphicsQueueFamily,
     VkQueue graphicsQueue,
+    const VkPipelineRenderingCreateInfo& renderingInfo,
     VkDescriptorPool descriptorPool,
     VkFormat swapchainFormat,
     uint32_t imageCount)
@@ -68,7 +34,6 @@ void GuiRenderer::Initialize(GLFWwindow* window,
     mWindow = window;
     mInstance = instance;
     mDevice = device;
-    mDummyRenderPass = CreateDummyRenderPass(device, swapchainFormat);
 
     if (!mDescriptorPool)
         CreateImGuiDescriptorPool(device);
@@ -95,8 +60,10 @@ void GuiRenderer::Initialize(GLFWwindow* window,
     initInfo.MinImageCount = imageCount;
     initInfo.ImageCount = imageCount;
     initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    initInfo.RenderPass = mDummyRenderPass;
+    initInfo.RenderPass = 0;
     initInfo.Allocator = nullptr;
+    initInfo.UseDynamicRendering = true;
+    initInfo.PipelineRenderingCreateInfo = renderingInfo;
 
     ImGui_ImplVulkan_Init(&initInfo);
 }
@@ -139,17 +106,12 @@ void GuiRenderer::RenderDrawData(VkCommandBuffer cmdBuf, VkImageView targetView,
     vkCmdEndRendering(cmdBuf);
 }
 
-void GuiRenderer::Shutdown()
+void GuiRenderer::Shutdown(VkDevice device)
 {
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
-
-    if (mDummyRenderPass)
-    {
-        vkDestroyRenderPass(mDevice, mDummyRenderPass, nullptr);
-        mDummyRenderPass = VK_NULL_HANDLE;
-    }
+    vkDestroyDescriptorPool(device, mDescriptorPool, nullptr);
 }
 
 void GuiRenderer::CreateImGuiDescriptorPool(VkDevice device)
