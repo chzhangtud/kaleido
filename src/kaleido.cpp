@@ -20,6 +20,7 @@
 #include "math.h"
 #include "config.h"
 #include "GuiRenderer.h"
+#include "ProfilingTools.h"
 
 bool meshShadingEnabled = true;
 bool cullingEnabled = true;
@@ -1352,13 +1353,6 @@ int main(int argc, const char** argv)
 		guiRenderer->BeginFrame();
 		ImVec2 windowSize = ImVec2(800, 600);
 		ImGui::SetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
-		ImGui::Begin("Settings");
-		ImGui::Button("Apply");
-		ImGui::SameLine();
-		bool check;
-		ImGui::Checkbox("Check", &check);
-		ImGui::End();
-		guiRenderer->EndFrame();
 
 		// update camera position
 		float currentFrame = glfwGetTime();
@@ -1865,8 +1859,193 @@ int main(int argc, const char** argv)
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &presentBarrier);
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 1);
-		
+
+		static bool bDisplaySettings = false;
+		static bool bDisplayProfiling = false;
+		if (ImGui::BeginMainMenuBar())
+		{
+			ImGui::Checkbox("Settings", &bDisplaySettings);
+			ImGui::Checkbox("Profiling", &bDisplayProfiling);
+			ImGui::EndMainMenuBar();
+		}
+
+		if (bDisplaySettings)
+		{
+			ImGui::Begin("Global Settings");
+			ImGui::Checkbox("Enable Mesh Shading", &meshShadingEnabled);
+			ImGui::Checkbox("Enable Task Shading", &taskShadingEnabled);
+			ImGui::Checkbox("Enable Culing", &cullingEnabled);
+			ImGui::Checkbox("Enable Occlusion Culling", &occlusionEnabled);
+			ImGui::Checkbox("Enable Cluster Occlusion Culling", &clusterOcclusionEnabled);
+			ImGui::Checkbox("Enable LoD", &lodEnabled);
+			ImGui::Checkbox("Enable Pyramid Debugging", &debugPyramid);
+			if (debugPyramid)
+			{
+				ImGui::SetNextItemWidth(100.f);
+				ImGui::DragInt("Level Index(Depth)", &debugPyramidLevel, 1, 0, 9);
+			}
+			if (lodEnabled)
+			{
+				ImGui::SetNextItemWidth(100.f);
+				ImGui::DragInt("Level Index(LoD)", &debugLodStep, 1, 0, 9);
+			}
+
+			ImGui::End();
+		}
+
+		static double cullGPUTime = 0.0;
+		static double pyramidGPUTime = 0.0;
+		static double culllateGPUTime = 0.0;
+		static double renderGPUTime = 0.0;
+		static double renderlateGPUTime = 0.0;
+
+		if (bDisplayProfiling)
+		{
+			ImGui::Begin("Performance Monitor");
+			// Frame Rate
+			{
+				static float framerate = 0.0f;
+				framerate = 0.9f * framerate + 0.1f * 1.0f / deltaTime;
+				static TimeSeriesPlot frPlot(100);
+				frPlot.addValue(framerate);
+				ImGui::SetNextItemWidth(400.f);
+				ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
+				ImGui::PlotLines("##Avg Frame Rate",
+					frPlot.data(),
+					frPlot.size(),
+					frPlot.currentOffset(),
+					nullptr,
+					0.0f, 40.0f,
+					ImVec2(0, 80));
+				ImGui::PopStyleColor();
+				ImGui::SameLine();
+				DisplayProfilingData("Avg Frame Rate: ", framerate, 60.f, 30.f, std::greater<float>());
+			}
+			// CPU time
+			{
+				static TimeSeriesPlot cpuPlot(100);
+				cpuPlot.addValue(frameCPUAvg);
+				ImGui::SetNextItemWidth(400.f);
+				ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 1.0f, 1.0f));
+				ImGui::PlotLines("##Avg CPU Time",
+					cpuPlot.data(),
+					cpuPlot.size(),
+					cpuPlot.currentOffset(),
+					nullptr,
+					0.0f, 40.0f,
+					ImVec2(0, 80));
+				ImGui::PopStyleColor();
+				ImGui::SameLine();
+				DisplayProfilingData("Avg CPU Time(ms): ", frameCPUAvg, 16.7, 33.4);
+			}
+			// GPU time
+			{
+				static TimeSeriesPlot gpuPlot(100);
+				gpuPlot.addValue(frameGPUAvg);
+				ImGui::SetNextItemWidth(400.f);
+				ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+				ImGui::PlotLines("##Avg GPU Time",
+					gpuPlot.data(),
+					gpuPlot.size(),
+					gpuPlot.currentOffset(),
+					nullptr,
+					0.0f, 40.0f,
+					ImVec2(0, 80));
+				ImGui::PopStyleColor();
+				ImGui::SameLine();
+				DisplayProfilingData("Avg GPU Time(ms): ", frameGPUAvg, 16.7, 33.4);
+			}
+			// GPU Culling time
+			{
+				static TimeSeriesPlot gpuCullPlot(100);
+				gpuCullPlot.addValue(cullGPUTime);
+				ImGui::SetNextItemWidth(400.f);
+				ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 0.0f, 1.0f, 1.0f));
+				ImGui::PlotLines("##Culling GPU Time",
+					gpuCullPlot.data(),
+					gpuCullPlot.size(),
+					gpuCullPlot.currentOffset(),
+					nullptr,
+					0.0f, 40.0f,
+					ImVec2(0, 80));
+				ImGui::PopStyleColor();
+				ImGui::SameLine();
+				DisplayProfilingData("Culling GPU Time(ms): ", cullGPUTime, 1.0, 2.0);
+			}
+			// GPU Culling late time
+			{
+				static TimeSeriesPlot gpuCullLatePlot(100);
+				gpuCullLatePlot.addValue(culllateGPUTime);
+				ImGui::SetNextItemWidth(400.f);
+				ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.5f, 1.0f, 0.0f, 1.0f));
+				ImGui::PlotLines("##Culling Late GPU Time",
+					gpuCullLatePlot.data(),
+					gpuCullLatePlot.size(),
+					gpuCullLatePlot.currentOffset(),
+					nullptr,
+					0.0f, 40.0f,
+					ImVec2(0, 80));
+				ImGui::PopStyleColor();
+				ImGui::SameLine();
+				DisplayProfilingData("Culling Late GPU Time(ms): ", culllateGPUTime, 1.0, 2.0);
+			}
+			// Rendering GPU time
+			{
+				static TimeSeriesPlot gpuRenderingPlot(100);
+				gpuRenderingPlot.addValue(renderGPUTime);
+				ImGui::SetNextItemWidth(400.f);
+				ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.5f, 1.0f));
+				ImGui::PlotLines("##Rendering GPU Time",
+					gpuRenderingPlot.data(),
+					gpuRenderingPlot.size(),
+					gpuRenderingPlot.currentOffset(),
+					nullptr,
+					0.0f, 40.0f,
+					ImVec2(0, 80));
+				ImGui::PopStyleColor();
+				ImGui::SameLine();
+				DisplayProfilingData("Rendering GPU Time(ms): ", renderGPUTime, 4.0, 8.0);
+			}
+			// Rendering GPU late time
+			{
+				static TimeSeriesPlot gpuRenderingLatePlot(100);
+				gpuRenderingLatePlot.addValue(renderlateGPUTime);
+				ImGui::SetNextItemWidth(400.f);
+				ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.3f, 0.5f, 0.3f, 1.0f));
+				ImGui::PlotLines("##Rendering Late GPU Time",
+					gpuRenderingLatePlot.data(),
+					gpuRenderingLatePlot.size(),
+					gpuRenderingLatePlot.currentOffset(),
+					nullptr,
+					0.0f, 40.0f,
+					ImVec2(0, 80));
+				ImGui::PopStyleColor();
+				ImGui::SameLine();
+				DisplayProfilingData("Rendering Late GPU Time(ms): ", renderlateGPUTime, 4.0, 8.0);
+			}
+			// Depth Pyramid GPU time
+			{
+				static TimeSeriesPlot depthPyramidPlot(100);
+				depthPyramidPlot.addValue(pyramidGPUTime);
+				ImGui::SetNextItemWidth(400.f);
+				ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.5f, 0.0f, 0.3f, 1.0f));
+				ImGui::PlotLines("##Depth Pyramid GPU Time",
+					depthPyramidPlot.data(),
+					depthPyramidPlot.size(),
+					depthPyramidPlot.currentOffset(),
+					nullptr,
+					0.0f, 40.0f,
+					ImVec2(0, 80));
+				ImGui::PopStyleColor();
+				ImGui::SameLine();
+				DisplayProfilingData("Depth Pyramid GPU Time(ms): ", pyramidGPUTime, 1.0, 2.0);
+			}
+			ImGui::End();
+		}
+
+		guiRenderer->EndFrame();
 		guiRenderer->RenderDrawData(commandBuffer, swapchain.imageViews[imageIndex], { swapchain.width, swapchain.height });
+	
 		VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
 		VkSemaphoreSubmitInfo waitSemaphoreInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
@@ -1908,7 +2087,7 @@ int main(int argc, const char** argv)
 		VK_CHECK(vkWaitForFences(device, 1, &frameFence, VK_TRUE, ~0ull));
 		VK_CHECK(vkResetFences(device, 1, &frameFence));
 
-		uint64_t timestampResults[12] = {};
+				uint64_t timestampResults[12] = {};
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
 
 		uint64_t pipelineResults[2] = {};
@@ -1918,12 +2097,12 @@ int main(int argc, const char** argv)
 
 		double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 		double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
-		double cullGPUTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
-		double pyramidGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
-		double culllateGPUTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
+		cullGPUTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
+		pyramidGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
+		culllateGPUTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
 
-		double renderGPUTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
-		double renderlateGPUTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
+		renderGPUTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
+		renderlateGPUTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
 		
 		double frameCPUEnd = glfwGetTime() * 1000.0;
 

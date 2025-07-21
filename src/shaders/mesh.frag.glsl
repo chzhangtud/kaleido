@@ -61,7 +61,7 @@ void main()
 	outputColor = vec4(albedo.rgb * sqrt(ndotl + 0.05) + emissive, albedo.a);
 
 	// TODO: requires pass filtering for performance
-	// if (albedo.a < 0.5) discard;
+	if (albedo.a < 0.5) discard;
 
 #if DEBUG
 	uint mhash = hash(drawId);
