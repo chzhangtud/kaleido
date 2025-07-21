@@ -56,7 +56,7 @@ source_group("imgui\\backends" FILES
     ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_glfw.cpp
     ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_vulkan.cpp
 )
-
+target_compile_definitions(imgui PRIVATE VK_NO_PROTOTYPES) # for avoid conflict when using volk
 
 # glfw settings
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)

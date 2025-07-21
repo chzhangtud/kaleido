@@ -1,4 +1,5 @@
 #pragma once
+#define CURRENT_VK_VERSION VK_API_VERSION_1_3
 
 VkInstance createInstance();
 

@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
+#define VK_NO_PROTOTYPES
 #define VOLK_IMPLEMENTATION
 #include <fast_obj.h>
 #include <meshoptimizer.h>
@@ -18,6 +19,7 @@
 #include "shaders.h"
 #include "math.h"
 #include "config.h"
+#include "GuiRenderer.h"
 
 bool meshShadingEnabled = true;
 bool cullingEnabled = true;
@@ -688,7 +690,7 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 			meshletTris += meshlet.triangleCount;
 		}
 
-		printf("Meshlets: %d meshlets, %d triangles, %d vertex refs\n", int(geometry.meshlets.size()), int(meshletTris), int(meshletVtxs));
+		printf(LOGI("Meshlets: %d meshlets, %d triangles, %d vertex refs\n", int(geometry.meshlets.size()), int(meshletTris), int(meshletVtxs)));
 	}
 
 	return true;
@@ -835,6 +837,7 @@ uint32_t rand32()
 	return pcg32_random_r(&rngstate);
 }
 
+bool mousePressed = false;
 Camera camera;
 bool firstMouse = true;
 float cameraSpeed = 5.0f;
@@ -843,6 +846,9 @@ float yaw = -90.0f;
 float pitch = 0.0f;
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
+	if (ImGui::GetIO().WantCaptureMouse) return;
+	if (!mousePressed) return;
+
 	static const float sensitivity = 0.1f;
 
 	if (firstMouse)
@@ -874,6 +880,22 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 
 	glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
 	camera.orientation = glm::quatLookAt(front, up);
+}
+
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
+{
+	if (button == GLFW_MOUSE_BUTTON_LEFT)
+	{
+		if (action == GLFW_PRESS)
+		{
+			mousePressed = true;
+			firstMouse = true;
+		}
+		else if (action == GLFW_RELEASE)
+		{
+			mousePressed = false;
+		}
+	}
 }
 
 int main(int argc, const char** argv)
@@ -1148,7 +1170,7 @@ int main(int argc, const char** argv)
 
 	printf(LOGI("Loaded %d textures in %.2f sec\n"), int(images.size()), glfwGetTime() - imageTimer);
 
-	uint32_t descriptorCount = texturePaths.size() + 1;
+	uint32_t descriptorCount = texturePaths.size() + 100;
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet = createDescriptorArray(device, textureSetLayout, descriptorCount);
 	
 	for (size_t i = 0; i < texturePaths.size(); ++i)
@@ -1313,12 +1335,31 @@ int main(int argc, const char** argv)
 
 	uint64_t frameIndex = 0;
 
+	glfwSetMouseButtonCallback(window, mouse_button_callback);
 	glfwSetCursorPosCallback(window, mouse_callback);
-	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+	// Initialize GUI renderer
+	const auto& guiRenderer = GuiRenderer::GetInstance();
+	VkSurfaceCapabilitiesKHR surfaceCaps;
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
+	uint32_t imageCount = std::max(2u, surfaceCaps.minImageCount);
+	guiRenderer->Initialize(window, CURRENT_VK_VERSION, instance, physicalDevice, device, graphicsFamily, queue, textureSet.first, swapchainFormat, imageCount);
 
 	float lastFrame = glfwGetTime();
 	while (!glfwWindowShouldClose(window))
 	{
+		glfwPollEvents();
+		guiRenderer->BeginFrame();
+		ImVec2 windowSize = ImVec2(800, 600);
+		ImGui::SetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
+		ImGui::Begin("Settings");
+		ImGui::Button("Apply");
+		ImGui::SameLine();
+		bool check;
+		ImGui::Checkbox("Check", &check);
+		ImGui::End();
+		guiRenderer->EndFrame();
+
 		// update camera position
 		float currentFrame = glfwGetTime();
 		float deltaTime = currentFrame - lastFrame;
@@ -1825,6 +1866,7 @@ int main(int argc, const char** argv)
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 1);
 		
+		guiRenderer->RenderDrawData(commandBuffer, swapchain.imageViews[imageIndex], { swapchain.width, swapchain.height });
 		VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
 		VkSemaphoreSubmitInfo waitSemaphoreInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
