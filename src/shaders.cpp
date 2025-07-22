@@ -464,23 +464,24 @@ std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice devi
 	return std::make_pair(pool, set);
 }
 
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, Shaders shaders, VkPipelineLayout layout, bool useSpecializationConstants, VkBool32 LATE, VkBool32 TASK)
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, Shaders shaders, VkPipelineLayout layout, bool useSpecializationConstants, VkBool32 LATE, VkBool32 TASK, VkBool32 POST)
 {
 	VkGraphicsPipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
 
 	// TODO: create a specialization constants module to replace code below
 	std::vector<VkSpecializationMapEntry> specializationEntries;
 	VkSpecializationInfo specializationInfo = {};
-	std::vector<VkBool32> data = { LATE, TASK };
+	std::vector<VkBool32> data = { LATE, TASK, POST };
 	if (useSpecializationConstants)
 	{
 		specializationEntries.push_back({ 0, 0, sizeof(VkBool32) });
 		specializationEntries.push_back({ 1, sizeof(VkBool32), sizeof(VkBool32) });
+		specializationEntries.push_back({ 2, 2 * sizeof(VkBool32), sizeof(VkBool32) });
 
 
 		specializationInfo.mapEntryCount = uint32_t(specializationEntries.size());
 		specializationInfo.pMapEntries = specializationEntries.data();
-		specializationInfo.dataSize = sizeof(LATE) +sizeof(TASK);
+		specializationInfo.dataSize = sizeof(LATE) +sizeof(TASK) + sizeof(POST);
 		specializationInfo.pData = data.data();
 	}
 

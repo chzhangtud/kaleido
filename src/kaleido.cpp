@@ -106,6 +106,7 @@ struct alignas(16) MeshDraw
 	uint32_t meshIndex;
 	uint32_t vertexOffset;
 	uint32_t meshletVisibilityOffset;
+	uint32_t postPass;
 
 	int albedoTexture;
 	int normalTexture;
@@ -183,6 +184,8 @@ struct alignas(16) CullData
 	int lodEnabled;
 	int occlusionEnabled;
 	int clusterOcclusionEnabled;
+
+	uint32_t postPass;
 };
 
 struct alignas(16) Globals
@@ -623,6 +626,9 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 					material && material->emissive_texture.texture
 					? 1 + cgltf_texture_index(data, material->emissive_texture.texture)
 					: 0;
+
+				if (material && material->alpha_mode != cgltf_alpha_mode_opaque)
+					draw.postPass = 1;
 
 				draws.push_back(draw);
 			}
@@ -1093,16 +1099,21 @@ int main(int argc, const char** argv)
 	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, shaders, meshProgram.layout);
 	assert(meshPipeline);
 
+	VkPipeline meshpostPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshVS, &meshFS }, meshProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE);
+	assert(meshpostPipeline);
+
 	VkPipeline meshtaskPipeline = 0;
 	VkPipeline meshtasklatePipeline = 0;
 	VkPipeline clusterPipeline = 0;
+	VkPipeline clusterpostPipeline = 0;
 	
 	if (meshShadingEnabled)
 	{
 		meshtaskPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
 		meshtasklatePipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE);
 		clusterPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletMS, &meshFS }, clusterProgram.layout);
-		assert(meshtaskPipeline && meshtasklatePipeline && clusterPipeline);
+		clusterpostPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletMS, &meshFS }, clusterProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE);
+		assert(meshtaskPipeline && meshtasklatePipeline && clusterPipeline && clusterpostPipeline);
 	}
 
 	VkQueryPool queryPoolTimestamp = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
@@ -1507,7 +1518,7 @@ int main(int argc, const char** argv)
 				vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
 		};
 
-		auto cull = [&](VkPipeline pipeline, uint32_t timestamp, const char* phase, bool late)
+		auto cull = [&](VkPipeline pipeline, uint32_t timestamp, const char* phase, bool late, unsigned int postPass = 0)
 		{
 			uint32_t rasterizationStage =
 				taskSubmit
@@ -1545,13 +1556,15 @@ int main(int argc, const char** argv)
 			pipelineBarrier(commandBuffer, 0, COUNTOF(fillBarriers), fillBarriers, 1, &pyramidBarrier);
 
 			{
+				CullData passData = cullData;
+				passData.postPass = postPass;
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 
 				DescriptorInfo pyramidDesc{depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL};
 				DescriptorInfo descriptors[] = { db.buffer, mb.buffer, dcb.buffer, dccb.buffer, dvb.buffer, pyramidDesc };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, drawcullProgram.updateTemplate, drawcullProgram.layout, 0, descriptors);
 
-				vkCmdPushConstants(commandBuffer, drawcullProgram.layout, drawcullProgram.pushConstantStages, 0, sizeof(cullData), &cullData);
+				vkCmdPushConstants(commandBuffer, drawcullProgram.layout, drawcullProgram.pushConstantStages, 0, sizeof(cullData), &passData);
 				vkCmdDispatch(commandBuffer, getGroupCount(uint32_t(draws.size()), drawcullCS.localSizeX), 1, 1);
 			}
 
@@ -1585,7 +1598,7 @@ int main(int argc, const char** argv)
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 		};	
 
-		auto render = [&](bool late, const VkClearColorValue& colorClear, const VkClearDepthStencilValue& depthClear, uint32_t query, uint32_t timestamp, const char* phase)
+		auto render = [&](bool late, const VkClearColorValue& colorClear, const VkClearDepthStencilValue& depthClear, uint32_t query, uint32_t timestamp, const char* phase, unsigned int postPass = 0)
 		{
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
 
@@ -1617,9 +1630,12 @@ int main(int argc, const char** argv)
 				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mlb.buffer, mvb.buffer, pyramidDesc, cib.buffer, ccb.buffer };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, clustercullProgram.updateTemplate, clustercullProgram.layout, 0, descriptors);
 
-				vkCmdPushConstants(commandBuffer, clustercullProgram.layout, clustercullProgram.pushConstantStages, 0, sizeof(cullData), &cullData);
-				vkCmdDispatchIndirect(commandBuffer, dccb.buffer, 4);
+				CullData passData = cullData;
+				passData.postPass = postPass;
 
+				vkCmdPushConstants(commandBuffer, clustercullProgram.layout, clustercullProgram.pushConstantStages, 0, sizeof(cullData), &passData);
+				vkCmdDispatchIndirect(commandBuffer, dccb.buffer, 4);
+				
 				VkBufferMemoryBarrier2 syncBarrier = bufferBarrier(ccb.buffer,
 					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
 					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
@@ -1676,9 +1692,12 @@ int main(int argc, const char** argv)
 			vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 			vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
+			Globals passGlobals = globals;
+			passGlobals.cullData.postPass = postPass;
+
 			if (clusterSubmit)
 			{
-				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, clusterPipeline);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass == 1 ? clusterpostPipeline : clusterPipeline);
 
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
 				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer };
@@ -1686,7 +1705,7 @@ int main(int argc, const char** argv)
 
 				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, clusterProgram.layout, 1, 1, &textureSet.second, 0, nullptr);
 
-				vkCmdPushConstants(commandBuffer, clusterProgram.layout, clusterProgram.pushConstantStages, 0, sizeof(globals), &globals);
+				vkCmdPushConstants(commandBuffer, clusterProgram.layout, clusterProgram.pushConstantStages, 0, sizeof(globals), &passGlobals);
 				vkCmdDrawMeshTasksIndirectEXT(commandBuffer, ccb.buffer, 4, 1, 0);
 			}
 			else if (taskSubmit)
@@ -1700,13 +1719,13 @@ int main(int argc, const char** argv)
 
 				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshtaskProgram.layout, 1, 1, &textureSet.second, 0, nullptr);
 
-				vkCmdPushConstants(commandBuffer, meshtaskProgram.layout, meshtaskProgram.pushConstantStages, 0, sizeof(globals), &globals);
+				vkCmdPushConstants(commandBuffer, meshtaskProgram.layout, meshtaskProgram.pushConstantStages, 0, sizeof(globals), &passGlobals);
 				
 				vkCmdDrawMeshTasksIndirectEXT(commandBuffer, dccb.buffer, 4, 1, 0);
 			}
 			else
 			{
-				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass == 1 ? meshpostPipeline :meshPipeline);
 
 				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
@@ -1715,7 +1734,7 @@ int main(int argc, const char** argv)
 
 				vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-				vkCmdPushConstants(commandBuffer, meshProgram.layout, meshProgram.pushConstantStages, 0, sizeof(globals), &globals);
+				vkCmdPushConstants(commandBuffer, meshProgram.layout, meshProgram.pushConstantStages, 0, sizeof(globals), &passGlobals);
 				vkCmdDrawIndexedIndirectCount(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
 			}
 
@@ -1806,6 +1825,12 @@ int main(int argc, const char** argv)
 
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
 		render(/* late= */ true, colorClear, depthClear, 1, 10, "late render");
+
+		// post cull: frustum + occlusion cull & fill extra objects
+		cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "post cull", /* late= */ true, /* postPass= */ 1);
+
+		// late render: render objects that are visible this frame but weren't drawn in the early pass
+		render(/* late= */ true, colorClear, depthClear, 2, 14, "post render", /* postPass= */ 1);
 
 		VkImageMemoryBarrier2 copyBarriers[] =
 		{
@@ -2090,10 +2115,10 @@ int main(int argc, const char** argv)
 				uint64_t timestampResults[12] = {};
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
 
-		uint64_t pipelineResults[2] = {};
+		uint64_t pipelineResults[3] = {};
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT));
 
-		uint64_t triangleCount = pipelineResults[0] + pipelineResults[1];
+		uint64_t triangleCount = pipelineResults[0] + pipelineResults[1] + pipelineResults[2];
 
 		double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 		double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
@@ -2176,6 +2201,7 @@ int main(int argc, const char** argv)
 	vkDestroyQueryPool(device, queryPoolPipeline, 0);
 
 	vkDestroyPipeline(device, meshPipeline, 0);
+	vkDestroyPipeline(device, meshpostPipeline, 0);
 	destroyProgram(device, meshProgram);
 	{
 		vkDestroyPipeline(device, meshtaskPipeline, 0);
@@ -2202,6 +2228,7 @@ int main(int argc, const char** argv)
 		destroyProgram(device, clustercullProgram);
 
 		vkDestroyPipeline(device, clusterPipeline, 0);
+		vkDestroyPipeline(device, clusterpostPipeline, 0);
 		destroyProgram(device, clusterProgram);
 	}
 	{

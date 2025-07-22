@@ -6,9 +6,9 @@
 #extension GL_EXT_nonuniform_qualifier: require
 
 #include "mesh.h"
-
 #define DEBUG 0
 
+layout(constant_id = 2) const bool POST = false;
 layout(binding = 1) readonly buffer Draws
 {
 	MeshDraw draws[];
@@ -60,8 +60,8 @@ void main()
 
 	outputColor = vec4(albedo.rgb * sqrt(ndotl + 0.05) + emissive, albedo.a);
 
-	// TODO: requires pass filtering for performance
-	if (albedo.a < 0.5) discard;
+	if (POST && albedo.a < 0.5)
+		discard;
 
 #if DEBUG
 	uint mhash = hash(drawId);

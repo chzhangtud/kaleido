@@ -79,7 +79,7 @@ void main()
 	bool visible = valid;
 	bool skip = false;
 
-	if (cullData.clusterOcclusionEnabled == 1)
+	if (cullData.clusterOcclusionEnabled == 1 && cullData.postPass == 0)
 	{
 		uint meshletVisibilityBit = meshletVisibility[mvi >> 5] & (1u << (mvi & 31));
 		// in early pass, we have to *only* render clusters that were visible last frame, to build a reasonable depth pyramid out of visible triangles
