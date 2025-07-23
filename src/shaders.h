@@ -53,10 +53,16 @@ struct DescriptorInfo
 	{
 		VkDescriptorImageInfo image;
 		VkDescriptorBufferInfo buffer;
+		VkAccelerationStructureKHR accelerationStructure;
 	};
 
 	DescriptorInfo()
 	{
+	}
+
+	DescriptorInfo(VkAccelerationStructureKHR structure)
+	{
+		accelerationStructure = structure;
 	}
 
 	DescriptorInfo(VkImageView imageView, VkImageLayout imageLayout)

@@ -23,7 +23,6 @@
 #include "ProfilingTools.h"
 
 bool meshShadingEnabled = true;
-bool raytracingEnabled = true;
 bool cullingEnabled = true;
 bool lodEnabled = true;
 bool occlusionEnabled = true;
@@ -864,7 +863,7 @@ VkAccelerationStructureKHR buildTLAS(VkDevice device, Buffer& tlasBuffer, const 
 		const MeshDraw& draw = draws[i];
 		assert(draw.meshIndex < blas.size());
 
-		mat3 xform = glm::mat3_cast(draw.orientation) * draw.scale;
+		mat3 xform = transpose(glm::mat3_cast(draw.orientation)) * draw.scale;
 
 		VkAccelerationStructureInstanceKHR instance = {};
 		memcpy(instance.transform.matrix[0], &xform[0], sizeof(float) * 3);
@@ -1159,7 +1158,6 @@ int main(int argc, const char** argv)
 	}
 
 	meshShadingEnabled = meshShadingSupported;
-	raytracingEnabled = raytracingSupported;
 
 	VkPhysicalDeviceProperties props = {};
 	vkGetPhysicalDeviceProperties(physicalDevice, &props);
@@ -1168,7 +1166,7 @@ int main(int argc, const char** argv)
 	uint32_t graphicsFamily = getGraphicsFamilyIndex(physicalDevice);
 	assert(graphicsFamily != VK_QUEUE_FAMILY_IGNORED);
 
-	VkDevice device = createDevice(instance, physicalDevice, graphicsFamily, meshShadingEnabled, raytracingEnabled);
+	VkDevice device = createDevice(instance, physicalDevice, graphicsFamily, meshShadingEnabled, raytracingSupported);
 	assert(device);
 
 	volkLoadDevice(device);
@@ -1923,7 +1921,7 @@ int main(int argc, const char** argv)
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass == 1 ? clusterpostPipeline : clusterPipeline);
 
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer };
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, tlas };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, clusterProgram.updateTemplate, clusterProgram.layout, 0, descriptors);
 
 				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, clusterProgram.layout, 1, 1, &textureSet.second, 0, nullptr);
@@ -1936,7 +1934,7 @@ int main(int argc, const char** argv)
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, late ? meshtasklatePipeline : meshtaskPipeline);
 				
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer };
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, tlas };
 				
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshtaskProgram.updateTemplate, meshtaskProgram.layout, 0, descriptors);
 
@@ -1950,7 +1948,7 @@ int main(int argc, const char** argv)
 			{
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass == 1 ? meshpostPipeline :meshPipeline);
 
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer };
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), tlas };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
 
 				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshProgram.layout, 1, 1, &textureSet.second, 0, nullptr);
