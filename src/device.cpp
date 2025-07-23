@@ -55,7 +55,7 @@ VkInstance createInstance()
 	{
 		createInfo.ppEnabledLayerNames = debugLayers;
 		createInfo.enabledLayerCount = sizeof(debugLayers) / sizeof(debugLayers[0]);
-		printf("Enabled Vulkan validation layers (sync validation %s)\n", SYNC_VALIDATION ? "enabled" : "disabled");
+		printf(LOGI("Enabled Vulkan validation layers (sync validation %s)\n", SYNC_VALIDATION ? "enabled" : "disabled"));
 	}
 
 	else
@@ -251,7 +251,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	return result;
 }
 
-VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool meshShadingEnabled)
+VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool meshShadingEnabled, bool raytracingSupported)
 {
 	float queuePriorities[] = { 1.0f };
 
@@ -269,6 +269,13 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	if (meshShadingEnabled)
 	{
 		extensions.emplace_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+	}
+
+	if (raytracingSupported)
+	{
+		extensions.emplace_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+		extensions.emplace_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+		extensions.emplace_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 	}
 
 	VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
@@ -300,6 +307,11 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
 	features12.runtimeDescriptorArray = VK_TRUE;
 
+	if (raytracingSupported)
+	{
+		features12.bufferDeviceAddress = VK_TRUE;
+	}
+
 	VkPhysicalDeviceVulkan13Features features13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
 	features13.dynamicRendering = VK_TRUE;
 	features13.synchronization2 = VK_TRUE;
@@ -309,6 +321,14 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
 	featuresMesh.taskShader = VK_TRUE;
 	featuresMesh.meshShader = VK_TRUE;
+
+	// This will only be used if raytraicingSupported = true (see below)
+	VkPhysicalDeviceRayQueryFeaturesKHR featuresRayQuery = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR };
+	featuresRayQuery.rayQuery = VK_TRUE;
+
+	VkPhysicalDeviceAccelerationStructureFeaturesKHR featuresRayTracing = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
+	featuresRayTracing.accelerationStructure = VK_TRUE;
+	featuresRayTracing.pNext = &featuresRayQuery;
 
 	VkDeviceCreateInfo createInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	createInfo.queueCreateInfoCount = 1;
@@ -326,7 +346,17 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	if (meshShadingEnabled)
 	{
 		features13.pNext = &featuresMesh;
-		featuresMesh.pNext = nullptr;
+	}
+	if (raytracingSupported)
+	{
+		if (meshShadingEnabled)
+		{
+			featuresMesh.pNext = &featuresRayTracing;
+		}
+		else
+		{
+			features13.pNext = &featuresRayTracing;
+		}
 	}
 
 	vkGetPhysicalDeviceFeatures(physicalDevice, &features.features);
