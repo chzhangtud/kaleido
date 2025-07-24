@@ -28,6 +28,7 @@ bool lodEnabled = true;
 bool occlusionEnabled = true;
 bool clusterOcclusionEnabled = true;
 bool taskShadingEnabled = false;
+bool shadowEnabled = true;
 
 bool debugPyramid = false;
 int debugPyramidLevel = 0;
@@ -192,6 +193,7 @@ struct alignas(16) Globals
 {
 	mat4 projection;
 	vec3 sunDirection;
+	int shadowEnabled;
 	CullData cullData;
 	float screenWidth, screenHeight;
 };
@@ -746,27 +748,27 @@ float halfToFloat(uint16_t v)
 	return result.f;
 }
 
-void buildBLAS(VkDevice device, Geometry& geometry, const Buffer& vb, const Buffer& ib, std::vector<VkAccelerationStructureKHR>& blas, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
+void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& vb, const Buffer& ib, std::vector<VkAccelerationStructureKHR>& blas, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
 {
-	std::vector<uint32_t> primitiveCounts(geometry.meshes.size());
-	std::vector<VkAccelerationStructureGeometryKHR> geometries(geometry.meshes.size());
-	std::vector<VkAccelerationStructureBuildGeometryInfoKHR> buildInfos(geometry.meshes.size());
+	std::vector<uint32_t> primitiveCounts(meshes.size());
+	std::vector<VkAccelerationStructureGeometryKHR> geometries(meshes.size());
+	std::vector<VkAccelerationStructureBuildGeometryInfoKHR> buildInfos(meshes.size());
 
 	const size_t kAlignment = 256; // required by spec for acceleration structures, could be smaller for scratch but it's a small waste
 
 	size_t totalAccelerationSize = 0;
 	size_t totalScratchSize = 0;
 
-	std::vector<size_t> accelerationOffsets(geometry.meshes.size());
-	std::vector<size_t> accelerationSizes(geometry.meshes.size());
-	std::vector<size_t> scratchOffsets(geometry.meshes.size());
+	std::vector<size_t> accelerationOffsets(meshes.size());
+	std::vector<size_t> accelerationSizes(meshes.size());
+	std::vector<size_t> scratchOffsets(meshes.size());
 
 	VkDeviceAddress vbAddress = getBufferAddress(vb, device);
 	VkDeviceAddress ibAddress = getBufferAddress(ib, device);
 
-	for (size_t i = 0; i < geometry.meshes.size(); ++i)
+	for (size_t i = 0; i < meshes.size(); ++i)
 	{
-		const Mesh& mesh = geometry.meshes[i];
+		const Mesh& mesh = meshes[i];
 		VkAccelerationStructureGeometryKHR& geo = geometries[i];
 		VkAccelerationStructureBuildGeometryInfoKHR& buildInfo = buildInfos[i];
 
@@ -788,7 +790,7 @@ void buildBLAS(VkDevice device, Geometry& geometry, const Buffer& vb, const Buff
 
 		buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
 		buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-		buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+		buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
 		buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
 		buildInfo.geometryCount = 1;
 		buildInfo.pGeometries = &geo;
@@ -809,12 +811,12 @@ void buildBLAS(VkDevice device, Geometry& geometry, const Buffer& vb, const Buff
 	Buffer scratch;
 	createBuffer(scratch, device, memoryProperties, totalScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	VkDeviceAddress scratchAddress = getBufferAddress(scratch, device);
-	blas.resize(geometry.meshes.size());
+	blas.resize(meshes.size());
 
-	std::vector<VkAccelerationStructureBuildRangeInfoKHR> buildRanges(geometry.meshes.size());
-	std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> buildRangePtrs(geometry.meshes.size());
+	std::vector<VkAccelerationStructureBuildRangeInfoKHR> buildRanges(meshes.size());
+	std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> buildRangePtrs(meshes.size());
 
-	for (size_t i = 0; i < geometry.meshes.size(); ++i)
+	for (size_t i = 0; i < meshes.size(); ++i)
 	{
 		VkAccelerationStructureCreateInfoKHR accelerationInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
 		accelerationInfo.buffer = blasBuffer.buffer;
@@ -836,7 +838,7 @@ void buildBLAS(VkDevice device, Geometry& geometry, const Buffer& vb, const Buff
 
 	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
-	vkCmdBuildAccelerationStructuresKHR(commandBuffer, geometry.meshes.size(), buildInfos.data(), buildRangePtrs.data());
+	vkCmdBuildAccelerationStructuresKHR(commandBuffer, meshes.size(), buildInfos.data(), buildRangePtrs.data());
 
 	VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
@@ -845,10 +847,97 @@ void buildBLAS(VkDevice device, Geometry& geometry, const Buffer& vb, const Buff
 	submitInfo.pCommandBuffers = &commandBuffer;
 
 	VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
-
 	VK_CHECK(vkDeviceWaitIdle(device));
 
 	destroyBuffer(scratch, device);
+}
+
+void compactBLAS(VkDevice device, std::vector<VkAccelerationStructureKHR>& blas, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
+{
+	const size_t kAlignment = 256; // required by spec for acceleration structures
+
+	VkQueryPoolCreateInfo createInfo = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+	createInfo.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+	createInfo.queryCount = blas.size();
+
+	VkQueryPool queryPool = 0;
+	VK_CHECK(vkCreateQueryPool(device, &createInfo, 0, &queryPool));
+	VK_CHECK(vkResetCommandPool(device, commandPool, 0));
+
+	VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+	vkCmdResetQueryPool(commandBuffer, queryPool, 0, blas.size());
+	vkCmdWriteAccelerationStructuresPropertiesKHR(commandBuffer, blas.size(), blas.data(), VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, queryPool, 0);
+
+	VK_CHECK(vkEndCommandBuffer(commandBuffer));
+
+	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
+
+	VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+	VK_CHECK(vkDeviceWaitIdle(device));
+
+	std::vector<VkDeviceSize> compactedSizes(blas.size());
+
+	VK_CHECK(vkGetQueryPoolResults(device, queryPool, 0, blas.size(), blas.size() * sizeof(VkDeviceSize), compactedSizes.data(), sizeof(VkDeviceSize), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
+	vkDestroyQueryPool(device, queryPool, 0);
+
+	size_t totalCompactedSize = 0;
+	std::vector<size_t> compactedOffsets(blas.size());
+
+	for (size_t i = 0; i < blas.size(); ++i)
+	{
+		compactedOffsets[i] = totalCompactedSize;
+		totalCompactedSize = (totalCompactedSize + compactedSizes[i] + kAlignment - 1) & ~(kAlignment - 1);
+	}
+
+	printf(LOGI("BLAS compacted accelerationStructureSize: %.2f MB\n", double(totalCompactedSize) / 1e6));
+
+	Buffer compactedBuffer;
+	createBuffer(compactedBuffer, device, memoryProperties, totalCompactedSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	std::vector<VkAccelerationStructureKHR> compactedBlas(blas.size());
+
+	for (size_t i = 0; i < blas.size(); ++i)
+	{
+		VkAccelerationStructureCreateInfoKHR accelerationInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
+		accelerationInfo.buffer = compactedBuffer.buffer;
+		accelerationInfo.offset = compactedOffsets[i];
+		accelerationInfo.size = compactedSizes[i];
+		accelerationInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+
+		VK_CHECK(vkCreateAccelerationStructureKHR(device, &accelerationInfo, nullptr, &compactedBlas[i]));
+	}
+
+	VK_CHECK(vkResetCommandPool(device, commandPool, 0));
+	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+	for (size_t i = 0; i < blas.size(); ++i)
+	{
+		VkCopyAccelerationStructureInfoKHR copyInfo = { VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR };
+		copyInfo.src = blas[i];
+		copyInfo.dst = compactedBlas[i];
+		copyInfo.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+
+		vkCmdCopyAccelerationStructureKHR(commandBuffer, &copyInfo);
+	}
+
+	VK_CHECK(vkEndCommandBuffer(commandBuffer));
+	VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+	VK_CHECK(vkDeviceWaitIdle(device));
+
+	for (size_t i = 0; i < blas.size(); ++i)
+	{
+		vkDestroyAccelerationStructureKHR(device, blas[i], nullptr);
+		blas[i] = compactedBlas[i];
+	}
+
+	destroyBuffer(blasBuffer, device);
+	blasBuffer = compactedBuffer;
 }
 
 VkAccelerationStructureKHR buildTLAS(VkDevice device, Buffer& tlasBuffer, const std::vector<MeshDraw>& draws, const std::vector<VkAccelerationStructureKHR>& blas, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
@@ -881,7 +970,8 @@ VkAccelerationStructureKHR buildTLAS(VkDevice device, Buffer& tlasBuffer, const 
 		instance.transform.matrix[1][3] = draw.position.y;
 		instance.transform.matrix[2][3] = draw.position.z;
 		instance.instanceCustomIndex = i;
-		instance.mask = 0xFF;
+		instance.mask = 1 << draw.postPass;
+		instance.flags = draw.postPass ? VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR : 0;
 		instance.accelerationStructureReference = blasAddresses[draw.meshIndex];
 
 		memcpy(static_cast<VkAccelerationStructureInstanceKHR*>(instances.data) + i, &instance, sizeof(VkAccelerationStructureInstanceKHR));
@@ -987,6 +1077,11 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		if (key == GLFW_KEY_T)
 		{
 			taskShadingEnabled = !taskShadingEnabled;
+		}
+		if (key == GLFW_KEY_S && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL))
+		{
+			shadowEnabled = !shadowEnabled;
+			return;
 		}
 		if (debugPyramid && (key >= GLFW_KEY_0 && key <= GLFW_KEY_9))
 		{
@@ -1559,7 +1654,9 @@ int main(int argc, const char** argv)
 	Buffer tlasBuffer = {};
 	if (raytracingSupported)
 	{
-		buildBLAS(device, geometry, vb, ib, blas, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
+		buildBLAS(device, geometry.meshes, vb, ib, blas, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
+		if (!fastMode)
+			compactBLAS(device, blas, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
 		tlas = buildTLAS(device, tlasBuffer, draws, blas, commandPool, commandBuffer, queue, memoryProperties);
 	}
 
@@ -1606,15 +1703,17 @@ int main(int argc, const char** argv)
 		glm::vec3 right = camera.orientation * glm::vec3(1.0f, 0.0f, 0.0f);
 		glm::vec3 up = glm::cross(right, front);
 
-		if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-			camera.position -= front * velocity;
-		if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-			camera.position += front * velocity;
-		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-			camera.position -= right * velocity;
-		if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-			camera.position += right * velocity;
-
+		if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) != GLFW_PRESS)
+		{
+			if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+				camera.position -= front * velocity;
+			if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+				camera.position += front * velocity;
+			if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+				camera.position -= right * velocity;
+			if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+				camera.position += right * velocity;
+		}
 		
 		double frameCPUBegin = glfwGetTime() * 1000.0;
 
@@ -1730,6 +1829,7 @@ int main(int argc, const char** argv)
 		Globals globals = {};
 		globals.projection = projection;
 		globals.sunDirection = sunDirection;
+		globals.shadowEnabled = shadowEnabled;
 		globals.cullData = cullData;
 
 		globals.screenWidth = float(swapchain.width);
@@ -2135,6 +2235,7 @@ int main(int argc, const char** argv)
 			ImGui::Checkbox("Enable Cluster Occlusion Culling", &clusterOcclusionEnabled);
 			ImGui::Checkbox("Enable LoD", &lodEnabled);
 			ImGui::Checkbox("Enable Pyramid Debugging", &debugPyramid);
+			ImGui::Checkbox("Enable Shadowing", &shadowEnabled);
 			if (debugPyramid)
 			{
 				ImGui::SetNextItemWidth(100.f);

@@ -44,6 +44,7 @@ struct Globals
 {
 	mat4 projection;
 	vec3 sunDirection;
+	int shadowEnabled;
 	CullData cullData;
 	float screenWidth, screenHeight;
 };
