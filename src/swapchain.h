@@ -4,7 +4,6 @@ struct Swapchain
 {
 	VkSwapchainKHR swapchain;
 	std::vector<VkImage> images;
-	std::vector<VkImageView> imageViews;
 	uint32_t width, height;
 	uint32_t imageCount;
 };
