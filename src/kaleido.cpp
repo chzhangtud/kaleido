@@ -471,6 +471,15 @@ void decomposeTransform(float translation[3], float rotation[4], float scale[3],
 	rotation[qc ^ 3] = qs * (r12 + qs3 * r21);
 }
 
+bool mousePressed = false;
+Camera camera;
+bool firstMouse = true;
+float cameraSpeed = 5.0f;
+float lastX = 400, lastY = 300;
+float pitch = 0.0f;
+float yaw = 0.0f;
+float roll = 0.0f;
+
 bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, bool fast = false)
 {
 	double timer = glfwGetTime();
@@ -649,6 +658,10 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 
 			camera.position = vec3(translation[0], translation[1], translation[2]);
 			camera.orientation = quat(rotation[0], rotation[1], rotation[2], rotation[3]);
+			glm::vec3 angles = glm::degrees(glm::eulerAngles(camera.orientation));
+			pitch = angles.x;
+			yaw = angles.y;
+			roll = angles.z;
 			camera.fovY = node->camera->data.perspective.yfov;
 		}
 
@@ -1163,13 +1176,6 @@ uint32_t rand32()
 	return pcg32_random_r(&rngstate);
 }
 
-bool mousePressed = false;
-Camera camera;
-bool firstMouse = true;
-float cameraSpeed = 5.0f;
-float lastX = 400, lastY = 300;
-float yaw = -90.0f;
-float pitch = 0.0f;
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
 	if (ImGui::GetIO().WantCaptureMouse) return;
@@ -1182,10 +1188,11 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 		lastX = xpos;
 		lastY = ypos;
 		firstMouse = false;
+		return;
 	}
 
-	float xoffset = xpos - lastX;
-	float yoffset = lastY - ypos;
+	float xoffset = lastX - xpos;
+	float yoffset = ypos - lastY;
 	lastX = xpos;
 	lastY = ypos;
 
@@ -1195,14 +1202,34 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 	yaw += xoffset;
 	pitch += yoffset;
 
-	if (pitch > 89.0f) pitch = 89.0f;
-	if (pitch < -89.0f) pitch = -89.0f;
+	//if (pitch > 89.0f) pitch = 89.0f;
+	//if (pitch < -89.0f) pitch = -89.0f;
 
-	glm::vec3 front;
-	front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
-	front.y = sin(glm::radians(pitch));
-	front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-	front = glm::normalize(front);
+	glm::mat3 matPitch =
+	{
+		glm::vec3(1.0f, 0.0f, 0.0f),
+		glm::vec3(0.0f, cos(glm::radians(pitch)), -sin(glm::radians(pitch))),
+		glm::vec3(0.0f, sin(glm::radians(pitch)), cos(glm::radians(pitch)))
+	};
+	matPitch = glm::transpose(matPitch);
+
+	glm::mat3 matYaw =
+	{
+		glm::vec3(cos(glm::radians(yaw)), 0.0f, sin(glm::radians(yaw))),
+		glm::vec3(0.0f, 1.0f, 0.0f),
+		glm::vec3(-sin(glm::radians(yaw)), 0.0f, cos(glm::radians(yaw)))
+	};
+	matYaw = glm::transpose(matYaw);
+
+	glm::mat3 matRoll =
+	{
+		glm::vec3(cos(glm::radians(roll)), -sin(glm::radians(roll)), 0.0f),
+		glm::vec3(sin(glm::radians(roll)), cos(glm::radians(roll)), 0.0f),
+		glm::vec3(0.0f, 0.0f, 1.0f)
+	};
+	matRoll = glm::transpose(matRoll);
+
+	glm::vec3 front = matRoll * matYaw * matPitch * glm::vec3(0.0f, 0.0f, -1.0f);
 
 	glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
 	camera.orientation = glm::quatLookAt(front, up);
@@ -1440,7 +1467,7 @@ int main(int argc, const char** argv)
 	if (meshShadingEnabled)
 	{
 		meshtaskPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
-		meshtasklatePipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE);
+		meshtasklatePipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletTS, &meshletMS, &meshFS }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_TRUE);
 		clusterPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletMS, &meshFS }, clusterProgram.layout);
 		clusterpostPipeline = createGraphicsPipeline(device, pipelineCache, renderingInfo, { &meshletMS, &meshFS }, clusterProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE);
 		assert(meshtaskPipeline && meshtasklatePipeline && clusterPipeline && clusterpostPipeline);
