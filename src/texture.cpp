@@ -73,7 +73,7 @@ enum DXGI_FORMAT
 	DXGI_FORMAT_BC7_UNORM_SRGB = 99,
 };
 
-static unsigned int fourCC(const char(&str)[5])
+static unsigned int fourCC(const char (&str)[5])
 {
 	return (unsigned(str[0]) << 0) | (unsigned(str[1]) << 8) | (unsigned(str[2]) << 16) | (unsigned(str[3]) << 24);
 }
@@ -136,14 +136,13 @@ static size_t getImageSizeBC(unsigned int width, unsigned int height, unsigned i
 	return result;
 }
 
-
 bool loadDDSImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const Buffer& scratch, const char* path)
 {
 	FILE* file = fopen(path, "rb");
 	if (!file)
 		return false;
 
-	std::unique_ptr<FILE, int(*)(FILE*)> filePtr(file, fclose);
+	std::unique_ptr<FILE, int (*)(FILE*)> filePtr(file, fclose);
 
 	unsigned int magic = 0;
 	if (fread(&magic, sizeof(magic), 1, file) != 1 || magic != fourCC("DDS "))
@@ -197,8 +196,8 @@ bool loadDDSImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCo
 	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
 	VkImageMemoryBarrier2 preBarrier = imageBarrier(image.image,
-		0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	    0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+	    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &preBarrier);
 
 	size_t bufferOffset = 0;
@@ -206,7 +205,13 @@ bool loadDDSImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCo
 
 	for (unsigned int i = 0; i < header.dwMipMapCount; ++i)
 	{
-		VkBufferImageCopy region = { bufferOffset, 0, 0, { VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1, }, { 0, 0, 0 }, { mipWidth, mipHeight, 1 } };
+		VkBufferImageCopy region = { bufferOffset, 0, 0, {
+			                                                 VK_IMAGE_ASPECT_COLOR_BIT,
+			                                                 i,
+			                                                 0,
+			                                                 1,
+			                                             },
+			{ 0, 0, 0 }, { mipWidth, mipHeight, 1 } };
 		vkCmdCopyBufferToImage(commandBuffer, scratch.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
 		bufferOffset += ((mipWidth + 3) / 4) * ((mipHeight + 3) / 4) * blockSize;
@@ -217,8 +222,8 @@ bool loadDDSImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCo
 	assert(bufferOffset == imageSize);
 
 	VkImageMemoryBarrier2 postBarrier = imageBarrier(image.image,
-		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	    VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &postBarrier);
 
 	VK_CHECK(vkEndCommandBuffer(commandBuffer));
@@ -233,7 +238,6 @@ bool loadDDSImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCo
 
 	return true;
 }
-
 
 uint32_t get_memory_type(uint32_t bits, const VkPhysicalDeviceMemoryProperties& memoryProperties, VkMemoryPropertyFlags properties, VkBool32* memory_type_found = nullptr)
 {
@@ -331,8 +335,8 @@ bool loadKtxImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice
 		std::vector<VkBufferImageCopy> bufferCopyRegions;
 		for (uint32_t i = 0; i < mipLevels; ++i)
 		{
-			ktx_size_t        offset;
-			KTX_error_code    result = ktxTexture_GetImageOffset(ktxTexture, i, 0, 0, &offset);
+			ktx_size_t offset;
+			KTX_error_code result = ktxTexture_GetImageOffset(ktxTexture, i, 0, 0, &offset);
 			VkBufferImageCopy buffer_copy_region = {};
 			buffer_copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 			buffer_copy_region.imageSubresource.mipLevel = i;
@@ -395,27 +399,27 @@ bool loadKtxImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice
 		imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 		imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	
+
 		// Insert a memory dependency at the proper pipeline stages that will execute the image layout transition
 		// Source pipeline stage is host write/read execution (VK_PIPELINE_STAGE_HOST_BIT)
 		// Destination pipeline stage is copy command execution (VK_PIPELINE_STAGE_TRANSFER_BIT)
 		vkCmdPipelineBarrier(
-			commandBuffer,
-			VK_PIPELINE_STAGE_HOST_BIT,
-			VK_PIPELINE_STAGE_TRANSFER_BIT,
-			0,
-			0, nullptr,
-			0, nullptr,
-			1, &imageMemoryBarrier);
+		    commandBuffer,
+		    VK_PIPELINE_STAGE_HOST_BIT,
+		    VK_PIPELINE_STAGE_TRANSFER_BIT,
+		    0,
+		    0, nullptr,
+		    0, nullptr,
+		    1, &imageMemoryBarrier);
 
 		// Copy mip levels from staging buffer
 		vkCmdCopyBufferToImage(
-			commandBuffer,
-			stagingBuffer,
-			image.image,
-			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			static_cast<uint32_t>(bufferCopyRegions.size()),
-			bufferCopyRegions.data());
+		    commandBuffer,
+		    stagingBuffer,
+		    image.image,
+		    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		    static_cast<uint32_t>(bufferCopyRegions.size()),
+		    bufferCopyRegions.data());
 
 		// Once the data has been uploaded we transfer to the texture image to the shader read layout, so it can be sampled from
 		imageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -427,13 +431,13 @@ bool loadKtxImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice
 		// Source pipeline stage stage is copy command execution (VK_PIPELINE_STAGE_TRANSFER_BIT)
 		// Destination pipeline stage fragment shader access (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
 		vkCmdPipelineBarrier(
-			commandBuffer,
-			VK_PIPELINE_STAGE_TRANSFER_BIT,
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			0,
-			0, nullptr,
-			0, nullptr,
-			1, &imageMemoryBarrier);
+		    commandBuffer,
+		    VK_PIPELINE_STAGE_TRANSFER_BIT,
+		    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		    0,
+		    0, nullptr,
+		    0, nullptr,
+		    1, &imageMemoryBarrier);
 
 		VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
@@ -443,8 +447,8 @@ bool loadKtxImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice
 
 		VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
-		// TODO: waitIdle is ok here because loading image only happens at start, but if starting time 
-		// is too long, maybe it is better to try async loading and some other synchronization methods instead of 
+		// TODO: waitIdle is ok here because loading image only happens at start, but if starting time
+		// is too long, maybe it is better to try async loading and some other synchronization methods instead of
 		// brute-force waiting idle.
 		VK_CHECK(vkDeviceWaitIdle(device));
 
@@ -488,24 +492,28 @@ bool loadKtxImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice
 static std::vector<uint8_t> Base64Decode(const std::string& base64)
 {
 	static constexpr unsigned char kDecodingTable[] = {
-		64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
-		64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
-		64,64,64,64,64,64,64,64,64,64,64,62,64,64,64,63,
-		52,53,54,55,56,57,58,59,60,61,64,64,64, 0,64,64,
-		64, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
-		15,16,17,18,19,20,21,22,23,24,25,64,64,64,64,64,
-		64,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
-		41,42,43,44,45,46,47,48,49,50,51
+		64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+		64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+		64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 62, 64, 64, 64, 63,
+		52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 64, 64, 64, 0, 64, 64,
+		64, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+		15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 64, 64, 64, 64, 64,
+		64, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+		41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
 	};
 	std::vector<uint8_t> output;
 	int val = 0, valb = -8;
-	for (char c : base64) {
-		if (c > 127) break;
+	for (char c : base64)
+	{
+		if (c > 127)
+			break;
 		unsigned char d = kDecodingTable[c];
-		if (d == 64) break;
+		if (d == 64)
+			break;
 		val = (val << 6) + d;
 		valb += 6;
-		if (valb >= 0) {
+		if (valb >= 0)
+		{
 			output.push_back((val >> valb) & 0xFF);
 			valb -= 8;
 		}
@@ -517,11 +525,13 @@ static bool ExtractBase64Data(const char* uri, std::string& outBase64)
 {
 	const char* prefix_png = "data:image/png;base64,";
 	const char* prefix_jpg = "data:image/jpeg;base64,";
-	if (strncmp(uri, prefix_png, strlen(prefix_png)) == 0) {
+	if (strncmp(uri, prefix_png, strlen(prefix_png)) == 0)
+	{
 		outBase64 = uri + strlen(prefix_png);
 		return true;
 	}
-	if (strncmp(uri, prefix_jpg, strlen(prefix_jpg)) == 0) {
+	if (strncmp(uri, prefix_jpg, strlen(prefix_jpg)) == 0)
+	{
 		outBase64 = uri + strlen(prefix_jpg);
 		return true;
 	}
@@ -529,17 +539,17 @@ static bool ExtractBase64Data(const char* uri, std::string& outBase64)
 }
 
 bool loadUncompressedImage(
-	Image& image,
-	VkDevice device,
-	VkCommandPool commandPool,
-	VkCommandBuffer commandBuffer,
-	VkQueue queue,
-	const VkPhysicalDeviceMemoryProperties& memoryProperties,
-	const Buffer& scratch,
-	int texWidth,
-	int texHeight,
-	int texChannels)
-{	
+    Image& image,
+    VkDevice device,
+    VkCommandPool commandPool,
+    VkCommandBuffer commandBuffer,
+    VkQueue queue,
+    const VkPhysicalDeviceMemoryProperties& memoryProperties,
+    const Buffer& scratch,
+    int texWidth,
+    int texHeight,
+    int texChannels)
+{
 	VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
 	VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
@@ -553,8 +563,8 @@ bool loadUncompressedImage(
 	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
 	VkImageMemoryBarrier2 preBarrier = imageBarrier(image.image,
-		0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	    0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+	    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &preBarrier);
 
 	VkBufferImageCopy region = {};
@@ -569,11 +579,11 @@ bool loadUncompressedImage(
 	region.imageExtent = { static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), 1 };
 
 	vkCmdCopyBufferToImage(commandBuffer, scratch.buffer, image.image,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
 	VkImageMemoryBarrier2 postBarrier = imageBarrier(image.image,
-		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	    VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &postBarrier);
 
 	VK_CHECK(vkEndCommandBuffer(commandBuffer));
@@ -595,13 +605,15 @@ bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, V
 	if (strncmp(path, prefix_png, strlen(prefix_png)) == 0 || strncmp(path, prefix_jpg, strlen(prefix_jpg)) == 0)
 	{
 		std::string base64;
-		if (!ExtractBase64Data(path, base64)) {
+		if (!ExtractBase64Data(path, base64))
+		{
 			printf(LOGE("Unsupported or invalid data URI format\n"));
 			return false;
 		}
 
 		std::vector<uint8_t> decoded = Base64Decode(base64);
-		if (decoded.empty()) {
+		if (decoded.empty())
+		{
 			printf(LOGE("Base64 decode failed\n"));
 			return false;
 		}
@@ -609,14 +621,15 @@ bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, V
 		int texWidth, texHeight, texChannels;
 		stbi_uc* pixels = stbi_load_from_memory(decoded.data(), (int)decoded.size(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
-		if (!pixels) 
+		if (!pixels)
 		{
 			printf(LOGE("Failed to load image from memory: %s\n", stbi_failure_reason()));
 			return false;
 		}
 
 		size_t imageSize = texWidth * texHeight * 4;
-		if (scratch.size < imageSize) {
+		if (scratch.size < imageSize)
+		{
 			printf(LOGE("Scratch buffer too small\n"));
 			stbi_image_free(pixels);
 			return false;
@@ -654,7 +667,7 @@ bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, V
 	else if (strstr(path, ".ktx") || strstr(path, ".KTX"))
 	{
 		return loadKtxImage(image, device, physicalDevice, commandPool, commandBuffer, queue, memoryProperties, path);
-	}	
+	}
 	else
 	{
 		printf(LOGE("Unsupported image format: %s\n"), path);

@@ -46,11 +46,10 @@ VkInstance createInstance()
 	createInfo.pApplicationInfo = &appInfo;
 
 #if KHR_VALIDATION || SYNC_VALIDATION
-	const char* debugLayers[] =
-	{
+	const char* debugLayers[] = {
 		"VK_LAYER_KHRONOS_validation"
 	};
-	
+
 	if (isLayerSupported("VK_LAYER_KHRONOS_validation"))
 	{
 		createInfo.ppEnabledLayerNames = debugLayers;
@@ -64,8 +63,7 @@ VkInstance createInstance()
 	}
 
 #if SYNC_VALIDATION
-	VkValidationFeatureEnableEXT enabledValidationFeatures[] =
-	{
+	VkValidationFeatureEnableEXT enabledValidationFeatures[] = {
 		VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
 		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
 	};
@@ -78,8 +76,7 @@ VkInstance createInstance()
 #endif
 #endif
 
-	const char* extensions[] =
-	{
+	const char* extensions[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
 #ifdef VK_USE_PLATFORM_WIN32_KHR
 		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
@@ -98,18 +95,17 @@ VkInstance createInstance()
 }
 
 static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
-	VkDebugReportObjectTypeEXT objectType,
-	uint64_t object,
-	size_t location,
-	int32_t messageCode,
-	const char* pLayerPrefix,
-	const char* pMessage,
-	void* pUserData)
+    VkDebugReportObjectTypeEXT objectType,
+    uint64_t object,
+    size_t location,
+    int32_t messageCode,
+    const char* pLayerPrefix,
+    const char* pMessage,
+    void* pUserData)
 {
 	const char* type =
-		(flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) ? ERROR_HEADER :
-		(flags & VK_DEBUG_REPORT_WARNING_BIT_EXT) ? WARNING_HEADER :
-		INFO_HEADER;
+	    (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) ? ERROR_HEADER : (flags & VK_DEBUG_REPORT_WARNING_BIT_EXT) ? WARNING_HEADER
+	                                                                                                       : INFO_HEADER;
 
 	char message[4096];
 	snprintf(message, COUNTOF(message), "%s: %s\n", type, pMessage);
@@ -133,9 +129,7 @@ VkDebugReportCallbackEXT registerDebugCallback(VkInstance instance)
 	if (!vkCreateDebugReportCallbackEXT)
 		return nullptr;
 	VkDebugReportCallbackCreateInfoEXT createInfo = { VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT };
-	createInfo.flags = VK_DEBUG_REPORT_WARNING_BIT_EXT
-		| VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT
-		| VK_DEBUG_REPORT_ERROR_BIT_EXT;
+	createInfo.flags = VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT | VK_DEBUG_REPORT_ERROR_BIT_EXT;
 	createInfo.pfnCallback = debugReportCallback;
 
 	VkDebugReportCallbackEXT callback = 0;
@@ -213,9 +207,9 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 			uint32_t requiredMajor = VK_VERSION_MAJOR(CURRENT_VK_VERSION);
 			uint32_t requiredMinor = VK_VERSION_MINOR(CURRENT_VK_VERSION);
 			uint32_t requiredPatch = VK_VERSION_PATCH(CURRENT_VK_VERSION);
-	
+
 			printf(LOGI("GPU%d skipped: Vulkan API version too low: %u.%u.%u, required: %u.%u.%u \n"),
-				i, major, minor, patch, requiredMajor, requiredMinor, requiredPatch);
+			    i, major, minor, patch, requiredMajor, requiredMinor, requiredPatch);
 			continue;
 		}
 
@@ -260,8 +254,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	queueInfo.queueCount = 1;
 	queueInfo.pQueuePriorities = queuePriorities;
 
-	std::vector<const char*> extensions =
-	{
+	std::vector<const char*> extensions = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 	};
@@ -286,7 +279,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features.features.shaderInt64 = VK_TRUE;
 	features.features.pipelineStatisticsQuery = VK_TRUE;
 	features.features.samplerAnisotropy = VK_TRUE;
-	
+
 	VkPhysicalDeviceVulkan11Features features11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 	features11.shaderDrawParameters = VK_TRUE;
 	features11.storageBuffer16BitAccess = VK_TRUE;
@@ -341,7 +334,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	createInfo.pNext = &features11;
 	features11.pNext = &features12;
 	features12.pNext = &features13;
-	
+
 	void** ppNext = &features13.pNext;
 
 	if (meshShadingEnabled)
@@ -364,4 +357,3 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 
 	return device;
 }
-

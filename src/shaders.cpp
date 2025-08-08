@@ -38,7 +38,7 @@ static VkShaderStageFlagBits getShaderStage(SpvExecutionModel model)
 		return VK_SHADER_STAGE_TASK_BIT_EXT;
 	default:
 		assert(!"Unsupported execution model.");
-		return VkShaderStageFlagBits(0);;
+		return VkShaderStageFlagBits(0);
 	}
 }
 
@@ -208,8 +208,8 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 
 			uint32_t typeKind = ids[ids[id.typeId].typeId].opcode;
 			VkDescriptorType resourceType = getDescriptorType(SpvOp(typeKind));
-			
-			assert((shader.resourceMask& (1 << id.binding)) == 0 || shader.resourceTypes[id.binding] == resourceType);
+
+			assert((shader.resourceMask & (1 << id.binding)) == 0 || shader.resourceTypes[id.binding] == resourceType);
 
 			shader.resourceTypes[id.binding] = resourceType;
 			shader.resourceMask |= 1 << id.binding;
@@ -250,7 +250,7 @@ static void parseShader(Shader& shader, const uint32_t* code, uint32_t codeSize)
 	}
 }
 
-static uint32_t gatherResources(Shaders shaders, VkDescriptorType(&resourceTypes)[32])
+static uint32_t gatherResources(Shaders shaders, VkDescriptorType (&resourceTypes)[32])
 {
 	uint32_t resourceMask = 0;
 
@@ -307,7 +307,7 @@ bool loadShader(Shader& shader, VkDevice device, const char* path)
 	assert(length % 4 == 0);
 	parseShader(shader, reinterpret_cast<const uint32_t*>(buffer), length / 4);
 	shader.module = shaderModule;
-	
+
 	delete[] buffer;
 
 	return true;
@@ -423,7 +423,7 @@ VkDescriptorSetLayout createDescriptorArrayLayout(VkDevice device)
 	VkShaderStageFlags stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	VkDescriptorSetLayoutBinding setBinding = { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, DESCRIPTOR_LIMIT, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
 
-	VkDescriptorBindingFlags bindingFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |  VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+	VkDescriptorBindingFlags bindingFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
 	VkDescriptorSetLayoutBindingFlagsCreateInfo setBindingFlags = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
 	setBindingFlags.bindingCount = 1;
 	setBindingFlags.pBindingFlags = &bindingFlags;
@@ -481,10 +481,9 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 		specializationEntries.push_back({ 1, sizeof(VkBool32), sizeof(VkBool32) });
 		specializationEntries.push_back({ 2, 2 * sizeof(VkBool32), sizeof(VkBool32) });
 
-
 		specializationInfo.mapEntryCount = uint32_t(specializationEntries.size());
 		specializationInfo.pMapEntries = specializationEntries.data();
-		specializationInfo.dataSize = sizeof(LATE) +sizeof(TASK) + sizeof(POST);
+		specializationInfo.dataSize = sizeof(LATE) + sizeof(TASK) + sizeof(POST);
 		specializationInfo.pData = data.data();
 	}
 
@@ -522,7 +521,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	VkPipelineRasterizationStateCreateInfo rasterizationState = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
 	rasterizationState.lineWidth = 1.f;
 	rasterizationState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-	//rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
+	// rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
 	rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
 	createInfo.pRasterizationState = &rasterizationState;
 
@@ -537,10 +536,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	createInfo.pDepthStencilState = &depthStencilState;
 
 	VkPipelineColorBlendAttachmentState colorAttachmentState = {};
-	colorAttachmentState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT
-		| VK_COLOR_COMPONENT_G_BIT
-		| VK_COLOR_COMPONENT_B_BIT
-		| VK_COLOR_COMPONENT_A_BIT;
+	colorAttachmentState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
 	VkPipelineColorBlendStateCreateInfo colorBlendState = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
 	colorBlendState.attachmentCount = 1;
@@ -574,7 +570,7 @@ VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache,
 	if (useSpecializationConstants)
 	{
 		specializationEntries.push_back({ 0, 0, sizeof(VkBool32) });
-		specializationEntries.push_back({ 1, sizeof(VkBool32), sizeof(VkBool32)});
+		specializationEntries.push_back({ 1, sizeof(VkBool32), sizeof(VkBool32) });
 
 		specializationInfo.mapEntryCount = uint32_t(specializationEntries.size());
 		specializationInfo.pMapEntries = specializationEntries.data();
@@ -619,15 +615,14 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 	program.bindPoint = bindPoint;
 	program.descriptorSetLayout = createDescriptorSetLayout(device, shaders);
 	assert(program.descriptorSetLayout);
-	
+
 	program.layout = createPipelineLayout(device, program.descriptorSetLayout, arrayLayout, program.pushConstantStages, pushConstantSize);
 	assert(program.layout);
 
 	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders);
 	assert(program.updateTemplate);
 
-
-	return program; 
+	return program;
 }
 
 void destroyProgram(VkDevice device, Program& program)

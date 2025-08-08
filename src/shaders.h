@@ -92,5 +92,4 @@ struct DescriptorInfo
 		buffer.offset = 0;
 		buffer.range = VK_WHOLE_SIZE;
 	}
-	
 };

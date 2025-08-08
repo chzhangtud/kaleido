@@ -2,7 +2,7 @@
 #include "resources.h"
 
 VkImageMemoryBarrier2 imageBarrier(VkImage image, VkPipelineStageFlags2 srcStageMask, VkAccessFlags2 srcAccessMask, VkImageLayout oldLayout, VkPipelineStageFlags2 dstStageMask, VkAccessFlags2 dstAccessMask, VkImageLayout newLayout,
-	VkImageAspectFlags aspectMask, uint32_t baseMipLevel, uint32_t levelCount)
+    VkImageAspectFlags aspectMask, uint32_t baseMipLevel, uint32_t levelCount)
 {
 	VkImageMemoryBarrier2 result = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
 
@@ -257,4 +257,3 @@ VkSampler createSampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mi
 	VK_CHECK(vkCreateSampler(device, &createInfo, 0, &sampler));
 	return sampler;
 }
-
