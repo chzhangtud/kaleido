@@ -137,6 +137,10 @@ float pitch = 0.0f;
 float yaw = 0.0f;
 float roll = 0.0f;
 
+bool enableDollyZoom = false;
+float soRef = 5.0f;
+glm::vec3 cameraOriginForDolly = glm::vec3(0.0f);
+
 // deprecated
 float halfToFloat(uint16_t v)
 {
@@ -457,6 +461,26 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
 {
 	float f = 1.0f / tanf(fovY / 2.0f);
+	return mat4(
+	    f / aspectWbyH, 0.0f, 0.0f, 0.0f,
+	    0.0f, f, 0.0f, 0.0f,
+	    0.0f, 0.0f, 0.0f, -1.0f,
+	    0.0f, 0.0f, zNear, 0.0f);
+}
+
+mat4 perspectiveProjectionDollyZoom(float fovY, float aspectWbyH, float zNear, float so, float soRef)
+{
+	float f = 1.0f / tanf(fovY / 2.0f);
+
+	double halfWidth = zNear * tanf(fovY / 2.0);
+	double focalLengthRef = 1.0 / (1.0 / soRef + 1.0 / zNear);
+	double transVerseMag = zNear / soRef;
+	double focalLength = transVerseMag * so / (transVerseMag + 1.0);
+
+	zNear = 1.f / (1.f / focalLength - 1.f / so);
+
+	f = f * focalLength / focalLengthRef;
+
 	return mat4(
 	    f / aspectWbyH, 0.0f, 0.0f, 0.0f,
 	    0.0f, f, 0.0f, 0.0f,
@@ -1204,7 +1228,16 @@ int main(int argc, const char** argv)
 		view = glm::lookAt(camera.position, camera.position + front, up);
 
 		float znear = 0.1f;
-		mat4 projection = perspectiveProjection(camera.fovY, float(swapchain.width) / float(swapchain.height), znear);
+		mat4 projection;
+		if (enableDollyZoom)
+		{
+			float so = soRef - glm::abs(glm::dot(glm::normalize(front), camera.position - cameraOriginForDolly));
+			projection = perspectiveProjectionDollyZoom(camera.fovY, float(swapchain.width) / float(swapchain.height), znear, so, soRef);
+		}
+		else
+		{
+			projection = perspectiveProjection(camera.fovY, float(swapchain.width) / float(swapchain.height), znear);
+		}
 		mat4 projectionT = transpose(projection);
 
 		vec4 frustumX = normalizePlane(projectionT[3] + projectionT[0]); // x + w < 0
@@ -1590,10 +1623,12 @@ int main(int argc, const char** argv)
 
 		static bool bDisplaySettings = false;
 		static bool bDisplayProfiling = false;
+		static bool bDisplayScene = false;
 		if (ImGui::BeginMainMenuBar())
 		{
 			ImGui::Checkbox("Settings", &bDisplaySettings);
 			ImGui::Checkbox("Profiling", &bDisplayProfiling);
+			ImGui::Checkbox("Scene", &bDisplayScene);
 			ImGui::EndMainMenuBar();
 		}
 
@@ -1762,6 +1797,29 @@ int main(int argc, const char** argv)
 				ImGui::PopStyleColor();
 				ImGui::SameLine();
 				DisplayProfilingData("Depth Pyramid GPU Time(ms): ", pyramidGPUTime, 1.0, 2.0);
+			}
+			ImGui::End();
+		}
+
+		if (bDisplayScene)
+		{
+			ImGui::Begin("Scene");
+			if (ImGui::CollapsingHeader("Camera"))
+			{
+				ImGui::Text("Camera Position: (%.2f, %.2f, %.2f)", camera.position.x, camera.position.y, camera.position.z);
+				ImGui::Text("Camera Rotation: (Pitch %.2f, Yaw %.2f, Roll %.2f)", pitch, yaw, roll);
+				ImGui::SetNextItemWidth(200.f);
+				ImGui::DragFloat("Camera Moving Speed", &cameraSpeed, 0.01f, 0.0f, 10.f);
+				if (ImGui::Checkbox("Enable Dolly Zoom", &enableDollyZoom))
+				{
+					// Update the camera origin for dolly zoom
+					cameraOriginForDolly = camera.position;
+				}
+				if (enableDollyZoom)
+				{
+					ImGui::SetNextItemWidth(200.f);
+					ImGui::DragFloat("Dolly Zoom Ref Distance", &soRef, 0.01f, 1.0f, 100.f);
+				}
 			}
 			ImGui::End();
 		}
