@@ -490,7 +490,7 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 		}
 	}
 
-	printf("Loaded %s: %d meshes, %d draws, %d vertices in %.2f sec\n",
+	printf(LOGI("Loaded %s: %d meshes, %d draws, %d vertices in %.2f sec\n"),
 	    path, int(geometry.meshes.size()), int(draws.size()), int(geometry.vertices.size()),
 	    double(clock() - timer) / CLOCKS_PER_SEC);
 
