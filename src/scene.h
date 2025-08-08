@@ -1,0 +1,87 @@
+#pragma once
+
+#include "math.h"
+#include <stdint.h>
+#include <vector>
+#include <string>
+
+struct alignas(16) Meshlet
+{
+	vec3 center;
+	float radius;
+	int8_t coneAxis[3];
+	int8_t coneCutoff;
+
+	uint32_t vertexOffset;
+	uint32_t triangleOffset;
+	uint8_t vertexCount;
+	uint8_t triangleCount;
+};
+
+struct alignas(16) MeshDraw
+{
+	vec3 position;
+	float scale;
+	quat orientation;
+
+	uint32_t meshIndex;
+	uint32_t vertexOffset;
+	uint32_t meshletVisibilityOffset;
+	uint32_t postPass;
+
+	int albedoTexture;
+	int normalTexture;
+	int specularTexture;
+	int emissiveTexture;
+};
+
+struct Vertex
+{
+	float vx, vy, vz;
+	uint8_t nx, ny, nz, nw;
+	uint8_t tx, ty, tz, tw;
+	uint16_t tu, tv;
+};
+
+struct MeshLod
+{
+	uint32_t indexOffset;
+	uint32_t indexCount;
+	uint32_t meshletOffset;
+	uint32_t meshletCount;
+	float error;
+};
+
+struct alignas(16) Mesh
+{
+	vec3 center;
+	float radius;
+
+	uint32_t vertexOffset;
+	uint32_t vertexCount;
+	uint32_t lodCount;
+	uint32_t placeHolder;
+
+	MeshLod lods[8];
+};
+
+struct Geometry
+{
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
+	std::vector<Meshlet> meshlets;
+	std::vector<unsigned int> meshletVertexData;
+	std::vector<unsigned char> meshletIndexData;
+
+	std::vector<Mesh> meshes;
+};
+
+struct Camera
+{
+	vec3 position;
+	quat orientation;
+	float fovY;
+};
+
+bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false);
+bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false);
