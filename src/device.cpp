@@ -299,6 +299,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features12.descriptorBindingPartiallyBound = VK_TRUE;
 	features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
 	features12.runtimeDescriptorArray = VK_TRUE;
+	features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
 
 	if (raytracingSupported)
 	{
