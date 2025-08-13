@@ -7,7 +7,6 @@
 
 #define VK_NO_PROTOTYPES
 #define VOLK_IMPLEMENTATION
-#define GBUFFER_COUNT 2
 
 #include "common.h"
 #include "device.h"
@@ -122,11 +121,6 @@ struct alignas(16) Globals
 	float screenWidth, screenHeight;
 };
 
-struct alignas(16) DepthReduceData
-{
-	vec2 imageSize;
-};
-
 struct alignas(16) ShadeData
 {
 	vec3 sunDirection;
@@ -235,7 +229,7 @@ void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& v
 
 		buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
 		buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-		buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+		buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
 		buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
 		buildInfo.geometryCount = 1;
 		buildInfo.pGeometries = &geo;
@@ -303,7 +297,7 @@ void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& v
 		}
 		assert(i > start); // guaranteed as scratchBuffer.size >= maxScratchSize
 
-		vkCmdBuildAccelerationStructuresKHR(commandBuffer, i - start, &buildInfos[start], &buildRangePtrs[start]);
+		vkCmdBuildAccelerationStructuresKHR(commandBuffer, uint32_t(i - start), &buildInfos[start], &buildRangePtrs[start]);
 		start = i;
 
 		pipelineBarrier(commandBuffer, 0, 1, &scratchBarrier, 0, nullptr);
@@ -365,7 +359,7 @@ VkAccelerationStructureKHR buildTLAS(VkDevice device, Buffer& tlasBuffer, const 
 
 	VkAccelerationStructureBuildGeometryInfoKHR buildInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
 	buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-	buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR; // todo: fast build?
+	buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
 	buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
 	buildInfo.geometryCount = 1;
 	buildInfo.pGeometries = &geometry;
@@ -715,7 +709,7 @@ int main(int argc, const char** argv)
 	VkSampler depthSampler = createSampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_REDUCTION_MODE_MIN);
 	assert(depthSampler);
 
-	const size_t gbufferCount = GBUFFER_COUNT;
+	static const size_t gbufferCount = 2;
 	const VkFormat gbufferFormats[gbufferCount] = {
 		VK_FORMAT_R8G8B8A8_UNORM,
 		VK_FORMAT_A2B10G10R10_UNORM_PACK32,
@@ -816,7 +810,7 @@ int main(int argc, const char** argv)
 	VkPipeline clustercullPipeline = createComputePipeline(device, pipelineCache, clustercullCS, clustercullProgram.layout, true, /* LATE= */ VK_FALSE);
 	VkPipeline clusterculllatePipeline = createComputePipeline(device, pipelineCache, clustercullCS, clustercullProgram.layout, true, /* LATE= */ VK_TRUE);
 
-	Program depthreduceProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthreduceCS }, sizeof(DepthReduceData));
+	Program depthreduceProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthreduceCS }, sizeof(vec4));
 	VkPipeline depthreducePipeline = createComputePipeline(device, pipelineCache, depthreduceCS, depthreduceProgram.layout);
 
 	Shaders shaders = { &meshVS, &meshFS };
@@ -931,7 +925,7 @@ int main(int argc, const char** argv)
 
 	printf(LOGI("Loaded %d textures in %.2f sec\n"), int(images.size()), glfwGetTime() - imageTimer);
 
-	uint32_t descriptorCount = texturePaths.size() + 100;
+	uint32_t descriptorCount = uint32_t(texturePaths.size() + 1);
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet = createDescriptorArray(device, textureSetLayout, descriptorCount);
 
 	for (size_t i = 0; i < texturePaths.size(); ++i)
@@ -943,7 +937,7 @@ int main(int argc, const char** argv)
 		VkWriteDescriptorSet write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		write.dstSet = textureSet.second;
 		write.dstBinding = 0;
-		write.dstArrayElement = i + 1;
+		write.dstArrayElement = uint32_t(i + 1);
 		write.descriptorCount = 1;
 		write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 		write.pImageInfo = &imageInfo;
@@ -1453,7 +1447,7 @@ int main(int argc, const char** argv)
 				pipelineBarrier(commandBuffer, 0, COUNTOF(cullBarriers), cullBarriers, 0, nullptr);
 			}
 
-			VkRenderingAttachmentInfo gbufferAttachments[GBUFFER_COUNT] = {};
+			VkRenderingAttachmentInfo gbufferAttachments[gbufferCount] = {};
 			for (uint32_t i = 0; i < gbufferCount; ++i)
 			{
 				gbufferAttachments[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -1570,7 +1564,7 @@ int main(int argc, const char** argv)
 				uint32_t levelWidth = std::max(1u, depthPyramidWidth >> i);
 				uint32_t levelHeight = std::max(1u, depthPyramidHeight >> i);
 
-				DepthReduceData reduceData = { vec2(levelWidth, levelHeight) };
+				vec4 reduceData = vec4(levelWidth, levelHeight, 0.f, 0.f);
 
 				vkCmdPushConstants(commandBuffer, depthreduceProgram.layout, depthreduceProgram.pushConstantStages, 0, sizeof(reduceData), &reduceData);
 				vkCmdDispatch(commandBuffer, getGroupCount(levelWidth, depthreduceCS.localSizeX), getGroupCount(levelHeight, depthreduceCS.localSizeY), 1);
