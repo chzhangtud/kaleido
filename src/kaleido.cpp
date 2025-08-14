@@ -29,6 +29,8 @@ bool taskShadingEnabled = false;
 bool shadingEnabled = true;
 
 int debugLodStep = 0;
+bool reloadShaders = false;
+double reloadShadersTimer = 0;
 
 #define SHADER_PATH "shaders/"
 
@@ -461,6 +463,11 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 			debugLodStep = key - GLFW_KEY_0;
 			return;
 		}
+		if (key == GLFW_KEY_R)
+		{
+			reloadShaders = !reloadShaders;
+			reloadShadersTimer = 0;
+		}
 	}
 }
 
@@ -732,27 +739,17 @@ int main(int argc, const char** argv)
 
 	VkDescriptorSetLayout textureSetLayout = createDescriptorArrayLayout(device);
 
-	// TODO: this is critical for performance!
 	VkPipelineCache pipelineCache = 0;
 
 	Program drawcullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["drawcull.comp"] }, sizeof(CullData));
-	VkPipeline drawcullPipeline = createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE);
-	VkPipeline drawculllatePipeline = createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE);
-	VkPipeline taskcullPipeline = createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
-	VkPipeline taskculllatePipeline = createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE);
 
 	Program tasksubmitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["tasksubmit.comp"] }, 0);
-	VkPipeline tasksubmitPipeline = createComputePipeline(device, pipelineCache, tasksubmitProgram);
 
 	Program clustersubmitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["clustersubmit.comp"] }, 0);
-	VkPipeline clustersubmitPipeline = createComputePipeline(device, pipelineCache, clustersubmitProgram);
 
 	Program clustercullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["clustercull.comp"] }, sizeof(CullData));
-	VkPipeline clustercullPipeline = createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_FALSE);
-	VkPipeline clusterculllatePipeline = createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_TRUE);
 
 	Program depthreduceProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["depthreduce.comp"] }, sizeof(vec4));
-	VkPipeline depthreducePipeline = createComputePipeline(device, pipelineCache, depthreduceProgram);
 
 	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaders["mesh.vert"], &shaders["mesh.frag"] }, sizeof(Globals), textureSetLayout);
 
@@ -765,33 +762,65 @@ int main(int argc, const char** argv)
 		clusterProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaders["meshlet.mesh"], &shaders["mesh.frag"] }, sizeof(Globals), textureSetLayout);
 	}
 
-	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram);
-	assert(meshPipeline);
+	Program blitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["blit.comp"] }, sizeof(vec4));
+	Program shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shade.comp"] }, sizeof(ShadeData));
 
-	VkPipeline meshpostPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE);
-	assert(meshpostPipeline);
-
+	VkPipeline drawcullPipeline = 0;
+	VkPipeline drawculllatePipeline = 0;
+	VkPipeline taskcullPipeline = 0;
+	VkPipeline taskculllatePipeline = 0;
+	VkPipeline tasksubmitPipeline = 0;
+	VkPipeline clustersubmitPipeline = 0;
+	VkPipeline clustercullPipeline = 0;
+	VkPipeline clusterculllatePipeline = 0;
+	VkPipeline depthreducePipeline = 0;
+	VkPipeline meshPipeline = 0;
+	VkPipeline meshpostPipeline = 0;
 	VkPipeline meshtaskPipeline = 0;
 	VkPipeline meshtasklatePipeline = 0;
 	VkPipeline meshtaskpostPipeline = 0;
 	VkPipeline clusterPipeline = 0;
 	VkPipeline clusterpostPipeline = 0;
+	VkPipeline blitPipeline = 0;
+	VkPipeline shadePipeline = 0;
 
-	if (meshShadingEnabled)
+	auto pipelines = [&]()
 	{
-		meshtaskPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
-		meshtasklatePipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_FALSE);
-		meshtaskpostPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_TRUE);
-		clusterPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram);
-		clusterpostPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE);
-		assert(meshtaskPipeline && meshtasklatePipeline && clusterPipeline && clusterpostPipeline);
-	}
+		auto replace = [&](VkPipeline& pipeline, VkPipeline newPipeline)
+		{
+			if (pipeline)
+				vkDestroyPipeline(device, pipeline, 0);
+			assert(newPipeline);
+			pipeline = newPipeline;
+		};
 
-	Program blitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["blit.comp"] }, sizeof(vec4));
-	VkPipeline blitPipeline = createComputePipeline(device, pipelineCache, blitProgram);
+		replace(drawcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE));
+		replace(drawculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE));
+		replace(taskcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE));
+		replace(taskculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE));
 
-	Program shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shade.comp"] }, sizeof(ShadeData));
-	VkPipeline shadePipeline = createComputePipeline(device, pipelineCache, shadeProgram);
+		replace(tasksubmitPipeline, createComputePipeline(device, pipelineCache, tasksubmitProgram));
+		replace(clustersubmitPipeline, createComputePipeline(device, pipelineCache, clustersubmitProgram));
+		replace(clustercullPipeline, createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_FALSE));
+		replace(clusterculllatePipeline, createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_TRUE));
+		replace(depthreducePipeline, createComputePipeline(device, pipelineCache, depthreduceProgram));
+		replace(meshPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram));
+		replace(meshpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE));
+
+		if (meshShadingSupported)
+		{
+			replace(meshtaskPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE));
+			replace(meshtasklatePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_FALSE));
+			replace(meshtaskpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_TRUE));
+			replace(clusterPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram));
+			replace(clusterpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE));
+		}
+
+		replace(blitPipeline, createComputePipeline(device, pipelineCache, blitProgram));
+		replace(shadePipeline, createComputePipeline(device, pipelineCache, shadeProgram));
+	};
+
+	pipelines();
 
 	VkQueryPool queryPoolTimestamp = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
 	assert(queryPoolTimestamp);
@@ -1099,6 +1128,34 @@ int main(int argc, const char** argv)
 		double frameCPUBegin = glfwGetTime() * 1000.0;
 
 		glfwPollEvents();
+
+		if (reloadShaders && glfwGetTime() >= reloadShadersTimer)
+		{
+			bool changed = false;
+
+			for (Shader& shader : shaders.shaders)
+			{
+				if (shader.module)
+					vkDestroyShaderModule(device, shader.module, 0);
+
+				std::vector<char> oldSpirv = std::move(shader.spirv);
+
+				std::string spirvPath = "/shaders/" + shader.name + ".spv";
+				rcs = loadShader(shader, device, argv[0], spirvPath.c_str());
+				assert(rcs);
+
+				changed |= oldSpirv != shader.spirv;
+			}
+
+			if (changed)
+			{
+				VK_CHECK(vkDeviceWaitIdle(device));
+				pipelines();
+			}
+
+			reloadShadersTimer = glfwGetTime() + 1;
+		}
+
 
 		SwapchainStatus swapchainStatus = updateSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, window, swapchainFormat);
 
@@ -1646,6 +1703,7 @@ int main(int argc, const char** argv)
 				ImGui::SetNextItemWidth(100.f);
 				ImGui::DragInt("Level Index(LoD)", &debugLodStep, 1, 0, 9);
 			}
+			ImGui::Checkbox("Enable Reload Shaders", &reloadShaders);
 
 			ImGui::End();
 		}
@@ -1896,13 +1954,14 @@ int main(int argc, const char** argv)
 		double modelsPerSec = double(draws.size()) / double(frameGPUAvg * 1e-3);
 
 		char title[512];
-		snprintf(title, sizeof(title), "mesh shading %s; task shading %s; frustum culling: %s; occlusion culling: %s; lod: %s, cluster OC: %s; cpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, final: %.2f ms); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
+		snprintf(title, sizeof(title), "mesh shading %s; task shading %s; frustum culling: %s; occlusion culling: %s; lod: %s, cluster OC: %s; %scpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, final: %.2f ms); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
 		    taskSubmit ? "ON" : "OFF",
 		    taskSubmit && taskShadingEnabled ? "ON" : "OFF",
 		    cullingEnabled ? "ON" : "OFF",
 		    occlusionEnabled ? "ON" : "OFF",
 		    lodEnabled ? "ON" : "OFF",
 		    clusterOcclusionEnabled ? "ON" : "OFF",
+			reloadShaders ? "R* " : "",
 		    frameCPUAvg, frameGPUAvg,
 		    cullGPUTime + culllateGPUTime + cullpostGPUTime,
 		    pyramidGPUTime,
