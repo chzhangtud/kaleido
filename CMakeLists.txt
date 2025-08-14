@@ -56,7 +56,7 @@ target_compile_definitions(kaleido PRIVATE
 )
 
 set(SHADERS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/shaders")
-set(SHADERS_DEST_DIR "${CMAKE_BINARY_DIR}/shaders")
+set(SHADERS_DEST_DIR "${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/shaders")
 
 set(SPV_FILES)
 if(WIN32)

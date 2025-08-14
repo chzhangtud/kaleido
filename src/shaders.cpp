@@ -1,12 +1,15 @@
-#include "shaders.h"
+﻿#include "shaders.h"
 #include "config.h"
 #include <stdio.h>
+#include <filesystem>
 
 #if VK_HEADER_VERSION >= 135
 #include <spirv-headers/spirv.h>
 #else
 #include <vulkan/spirv.h>
 #endif
+
+namespace fs = std::filesystem;
 
 // https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.pdf
 
@@ -311,6 +314,73 @@ bool loadShader(Shader& shader, VkDevice device, const char* path)
 	delete[] buffer;
 
 	return true;
+}
+
+bool loadShader(Shader& shader, VkDevice device, const char* base, const char* path)
+{
+	std::string spath = base;
+	std::string::size_type pos = spath.find_last_of("/\\");
+	if (pos == std::string::npos)
+		spath = "";
+	else
+		spath = spath.substr(0, pos + 1);
+	spath += path;
+
+	return loadShader(shader, device, spath.c_str());
+}
+
+bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const char* path)
+{
+	std::string spath = base;
+	std::string::size_type pos = spath.find_last_of("/\\");
+	if (pos == std::string::npos)
+		spath = "";
+	else
+		spath = spath.substr(0, pos + 1);
+	spath += path;
+
+	try
+	{
+		for (const auto& entry : fs::directory_iterator(spath))
+		{
+			if (entry.is_regular_file())
+			{
+				const std::string filename = entry.path().filename().string();
+				const char* ext = strstr(filename.c_str(), ".spv");
+				if (!ext || strcmp(ext, ".spv") != 0)
+					continue;
+
+				std::string fpath = entry.path().string();
+				Shader shader = {};
+				if (!loadShader(shader, device, fpath.c_str()))
+				{
+					fprintf(stderr, "Warning: %s is not a valid SPIRV module\n", filename.c_str());
+					continue;
+				}
+
+				shader.name = filename.substr(0, filename.size() - 4);
+				shaders.shaders.push_back(shader);
+			}
+		}
+	}
+	catch (const std::filesystem::filesystem_error& e)
+	{
+		printf(LOGE("Error reading directory: %s"), e.what());
+		return false;
+	}
+
+	printf("Loaded %d shaders from %s\n", int(shaders.shaders.size()), spath.c_str());
+	return true;
+}
+
+const Shader& ShaderSet::operator[](const char* name) const
+{
+	for (const Shader& shader : shaders)
+		if (shader.name == name)
+			return shader;
+
+	fprintf(stderr, "Error: shader %s could not be loaded\n", name);
+	abort();
 }
 
 void destroyShader(Shader& shader, VkDevice device)
@@ -625,6 +695,15 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 
 	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders);
 	assert(program.updateTemplate);
+
+	const Shader* shader = shaders.size() == 1 ? *shaders.begin() : nullptr;
+
+	if (shader && shader->stage == VK_SHADER_STAGE_COMPUTE_BIT)
+	{
+		program.localSizeX = shader->localSizeX;
+		program.localSizeY = shader->localSizeY;
+		program.localSizeZ = shader->localSizeZ;
+	}
 
 	return program;
 }
