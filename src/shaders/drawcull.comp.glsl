@@ -145,9 +145,10 @@ void main()
 			uint dci = atomicAdd(commandCount, 1);
 
 			drawCommands[dci].drawId = di;
-			drawCommands[dci].vertexCount = lod.indexCount;
+			drawCommands[dci].indexCount = lod.indexCount;
 			drawCommands[dci].instanceCount = 1;
-			drawCommands[dci].firstVertex = lod.indexOffset;
+			drawCommands[dci].firstIndex = lod.indexOffset;
+			drawCommands[dci].vertexOffset = mesh.vertexOffset;
 			drawCommands[dci].firstInstance = 0;
 		}
 	}

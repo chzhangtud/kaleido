@@ -84,7 +84,7 @@ VkQueryPool createQueryPool(VkDevice device, uint32_t queryCount, VkQueryType qu
 struct MeshDrawCommand
 {
 	uint32_t drawId;
-	VkDrawIndirectCommand indirect; // 4 uint32_t
+	VkDrawIndexedIndirectCommand indirect; // 5 uint32_t
 };
 
 struct MeshTaskCommand

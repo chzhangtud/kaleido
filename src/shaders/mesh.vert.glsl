@@ -40,7 +40,7 @@ void main()
     uint drawId = drawCommands[gl_DrawIDARB].drawId;
 	MeshDraw meshDraw = draws[drawId];
 
-    Vertex v = vb.vertices[gl_VertexIndex + meshDraw.vertexOffset];
+    Vertex v = vb.vertices[gl_VertexIndex];
 
 	vec3 position = vec3(v.vx, v.vy, v.vz);
 	vec3 normal = vec3(int(v.nx), int(v.ny), int(v.nz)) / 127.0 - 1.0;

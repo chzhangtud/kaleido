@@ -91,10 +91,11 @@ struct MeshDrawCommand
 	uint drawId;
 
 	// VkDrawIndexedIndirectCommand
-	uint vertexCount;
-    uint instanceCount;
-    uint firstVertex;
-    uint firstInstance;
+	uint indexCount;
+	uint instanceCount;
+	uint firstIndex;
+	uint vertexOffset;
+	uint firstInstance;
 };
 
 struct MeshTaskCommand
