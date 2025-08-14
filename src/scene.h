@@ -14,6 +14,7 @@ struct alignas(16) Meshlet
 
 	uint32_t vertexOffset;
 	uint32_t triangleOffset;
+	uint32_t baseVertex;
 	uint8_t vertexCount;
 	uint8_t triangleCount;
 };
@@ -25,9 +26,9 @@ struct alignas(16) MeshDraw
 	quat orientation;
 
 	uint32_t meshIndex;
-	uint32_t vertexOffset;
 	uint32_t meshletVisibilityOffset;
 	uint32_t postPass;
+	uint32_t flags;
 
 	int albedoTexture;
 	int normalTexture;
@@ -37,7 +38,7 @@ struct alignas(16) MeshDraw
 
 struct Vertex
 {
-	float vx, vy, vz;
+	uint16_t vx, vy, vz, vw;
 	uint8_t nx, ny, nz, nw;
 	uint8_t tx, ty, tz, tw;
 	uint16_t tu, tv;

@@ -123,8 +123,10 @@ struct alignas(16) Globals
 
 struct alignas(16) ShadeData
 {
+	vec3 cameraPosition;
+	float pad0;
 	vec3 sunDirection;
-	float padding;
+	float pad1;
 
 	mat4 inverseViewProjection;
 
@@ -217,10 +219,10 @@ void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& v
 		geo.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
 		geo.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
 
-		static_assert(offsetof(Vertex, vz) == offsetof(Vertex, vx) + sizeof(float) * 2, "Vertex layout mismatch");
+		static_assert(offsetof(Vertex, vz) == offsetof(Vertex, vx) + sizeof(uint16_t) * 2, "Vertex layout mismatch");
 
 		geo.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-		geo.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+		geo.geometry.triangles.vertexFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 		geo.geometry.triangles.vertexData.deviceAddress = vbAddress + mesh.vertexOffset * sizeof(Vertex);
 		geo.geometry.triangles.vertexStride = sizeof(Vertex);
 		geo.geometry.triangles.maxVertex = mesh.vertexCount - 1;
@@ -996,7 +998,6 @@ int main(int argc, const char** argv)
 			draw.orientation = quat(cosf(angle * 0.5f), axis * sinf(angle * 0.5f));
 
 			draw.meshIndex = uint32_t(meshIndex);
-			draw.vertexOffset = mesh.vertexOffset;
 		}
 	}
 
@@ -1486,7 +1487,7 @@ int main(int argc, const char** argv)
 
 			if (clusterSubmit)
 			{
-				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass == 1 ? clusterpostPipeline : clusterPipeline);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass >= 1 ? clusterpostPipeline : clusterPipeline);
 
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
 				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler };
@@ -1499,7 +1500,7 @@ int main(int argc, const char** argv)
 			}
 			else if (taskSubmit)
 			{
-				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass == 1 ? meshtaskpostPipeline : late ? meshtasklatePipeline
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass >= 1 ? meshtaskpostPipeline : late ? meshtasklatePipeline
 				                                                                                                              : meshtaskPipeline);
 
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
@@ -1515,7 +1516,7 @@ int main(int argc, const char** argv)
 			}
 			else
 			{
-				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass == 1 ? meshpostPipeline : meshPipeline);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass >= 1 ? meshpostPipeline : meshPipeline);
 
 				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), textureSampler };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
@@ -1584,8 +1585,7 @@ int main(int argc, const char** argv)
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 5);
 		};
 
-		VkImageMemoryBarrier2 renderBeginBarriers[gbufferCount + 1] =
-		{
+		VkImageMemoryBarrier2 renderBeginBarriers[gbufferCount + 1] = {
 			imageBarrier(depthTarget.image,
 			    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 			    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
@@ -1601,7 +1601,7 @@ int main(int argc, const char** argv)
 
 		vkCmdResetQueryPool(commandBuffer, queryPoolPipeline, 0, 4);
 
-		//VkClearColorValue colorClear = { 48.f / 255.f, 10.f / 255.f, 36.f / 255.f, 1 };
+		// VkClearColorValue colorClear = { 48.f / 255.f, 10.f / 255.f, 36.f / 255.f, 1 };
 		VkClearColorValue colorClear = { 135.f / 255.f, 206.f / 255.f, 235.f / 255.f, 1 };
 		VkClearDepthStencilValue depthClear = { 0.f, 0 };
 
@@ -1623,8 +1623,7 @@ int main(int argc, const char** argv)
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
 		render(/* late= */ true, colorClear, depthClear, 2, 14, "post render", /* postPass= */ 1);
 
-		VkImageMemoryBarrier2 blitBarriers[2 + gbufferCount] =
-		{
+		VkImageMemoryBarrier2 blitBarriers[2 + gbufferCount] = {
 			imageBarrier(swapchain.images[imageIndex],
 			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
@@ -1649,8 +1648,9 @@ int main(int argc, const char** argv)
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadePipeline);
 				DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, gbufferTargets[1].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadeProgram.updateTemplate, shadeProgram.layout, 0, descriptors);
-				
+
 				ShadeData shadeData = {};
+				shadeData.cameraPosition = camera.position;
 				shadeData.sunDirection = sunDirection;
 				shadeData.inverseViewProjection = inverse(projection * view);
 				shadeData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
@@ -1963,12 +1963,12 @@ int main(int argc, const char** argv)
 		    occlusionEnabled ? "ON" : "OFF",
 		    lodEnabled ? "ON" : "OFF",
 		    clusterOcclusionEnabled ? "ON" : "OFF",
-		    frameCPUAvg, frameGPUAvg, 
-			cullGPUTime + culllateGPUTime + cullpostGPUTime,
-			pyramidGPUTime,
-			renderGPUTime + renderlateGPUTime + renderpostGPUTime,
-			finalGPUTime,
-			double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
+		    frameCPUAvg, frameGPUAvg,
+		    cullGPUTime + culllateGPUTime + cullpostGPUTime,
+		    pyramidGPUTime,
+		    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
+		    finalGPUTime,
+		    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);
 
 		frameIndex++;

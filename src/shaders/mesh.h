@@ -2,7 +2,7 @@
 
 struct Vertex
 {
-	float vx, vy, vz;
+	float16_t vx, vy, vz, vw;
     uint8_t nx, ny, nz, nw;
 	uint8_t tx, ty, tz, tw;
 	float16_t tu, tv;
@@ -18,6 +18,7 @@ struct Meshlet
 
 	uint vertexOffset;
 	uint triangleOffset;
+	uint baseVertex;
 	uint8_t vertexCount;
 	uint8_t triangleCount;
 };
@@ -76,9 +77,9 @@ struct MeshDraw
 	vec4 orientation;
 
 	uint meshIndex;
-	uint vertexOffset; // == meshes[meshIndex].vertexOffser, helps data locaclity in mesh shader
 	uint meshletVisibilityOffset;
 	uint postPass;
+	uint flags;
 
 	int albedoTexture;
 	int normalTexture;

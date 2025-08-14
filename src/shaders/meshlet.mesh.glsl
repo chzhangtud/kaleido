@@ -119,12 +119,13 @@ void main()
 
     SetMeshOutputsEXT(meshlets[mi].vertexCount, meshlets[mi].triangleCount);
 
+    uint baseVertex = meshlets[mi].baseVertex;
     uint vertexOffset = meshlets[mi].vertexOffset;
     uint triangleOffset = meshlets[mi].triangleOffset;
     
     for (uint i = ti; i < uint(meshlets[mi].vertexCount); i += MESH_WGSIZE)
     {
-        uint vi = meshletVertexData[vertexOffset + i] + meshDraw.vertexOffset;
+        uint vi = meshletVertexData[vertexOffset + i] + baseVertex;
 
         Vertex v = vertices[vi];
 

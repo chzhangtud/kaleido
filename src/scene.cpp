@@ -7,7 +7,7 @@
 #include <meshoptimizer.h>
 #include <time.h>
 
-size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, bool fast = false)
+size_t appendMeshlets(Geometry& result, const std::vector<vec3>& vertices, const std::vector<uint32_t>& indices, uint32_t baseVertex, bool fast = false)
 {
 	size_t max_vertices = MESH_MAXVTX;
 	size_t max_triangles = MESH_MAXTRI;
@@ -20,7 +20,7 @@ size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, con
 	if (fast)
 		meshlets.resize(meshopt_buildMeshletsScan(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(), vertices.size(), max_vertices, max_triangles));
 	else
-		meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(), &vertices[0].vx, vertices.size(), sizeof(Vertex), max_vertices, max_triangles, cone_weight));
+		meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(), &vertices[0].x, vertices.size(), sizeof(vec3), max_vertices, max_triangles, cone_weight));
 	uint32_t meshletVertexOffset = uint32_t(result.meshletVertexData.size());
 	uint32_t meshletIndexOffset = uint32_t(result.meshletIndexData.size());
 
@@ -35,11 +35,12 @@ size_t appendMeshlets(Geometry& result, const std::vector<Vertex>& vertices, con
 
 		m.vertexOffset = meshlet.vertex_offset + meshletVertexOffset;
 		m.triangleOffset = meshlet.triangle_offset + meshletIndexOffset;
+		m.baseVertex = baseVertex;
 		m.vertexCount = uint8_t(meshlet.vertex_count);
 		m.triangleCount = uint8_t(meshlet.triangle_count);
 
 		meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshletVertexData[meshlet.vertex_offset], &meshletIndexData[meshlet.triangle_offset],
-		    meshlet.triangle_count, &vertices[0].vx, vertices.size(), sizeof(Vertex));
+		    meshlet.triangle_count, &vertices[0].x, vertices.size(), sizeof(vec3));
 
 		m.center = vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
 		m.radius = bounds.radius;
@@ -85,9 +86,9 @@ static bool loadObj(std::vector<Vertex>& vertices, const char* path)
 
 			Vertex& v = vertices[vertex_offset++];
 
-			v.vx = obj->positions[gi.p * 3 + 0];
-			v.vy = obj->positions[gi.p * 3 + 1];
-			v.vz = obj->positions[gi.p * 3 + 2];
+			v.vx = meshopt_quantizeHalf(obj->positions[gi.p * 3 + 0]);
+			v.vy = meshopt_quantizeHalf(obj->positions[gi.p * 3 + 1]);
+			v.vz = meshopt_quantizeHalf(obj->positions[gi.p * 3 + 2]);
 			v.nx = uint8_t(obj->normals[gi.n * 3 + 0] * 127.f + 127.5f);
 			v.ny = uint8_t(obj->normals[gi.n * 3 + 1] * 127.f + 127.5f);
 			v.nz = uint8_t(obj->normals[gi.n * 3 + 2] * 127.f + 127.5f);
@@ -130,6 +131,13 @@ static void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vec
 
 	result.vertices.insert(result.vertices.end(), vertices.begin(), vertices.end());
 
+	std::vector<vec3> positions(vertices.size());
+	for (size_t i = 0; i < vertices.size(); ++i)
+	{
+		Vertex& v = vertices[i];
+		positions[i] = vec3(meshopt_dequantizeHalf(v.vx), meshopt_dequantizeHalf(v.vy), meshopt_dequantizeHalf(v.vz));
+	}
+
 	std::vector<vec3> normals(vertices.size());
 	for (size_t i = 0; i < vertices.size(); ++i)
 	{
@@ -139,18 +147,19 @@ static void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vec
 
 	vec3 center = vec3(0.f);
 
-	for (const auto& v : vertices)
-		center += vec3(v.vx, v.vy, v.vz);
+	for (const auto& v : positions)
+		center += v;
+
 	center /= float(vertices.size());
 
 	float radius = 0.f;
-	for (const auto& v : vertices)
-		radius = glm::max(radius, distance(center, vec3(v.vx, v.vy, v.vz)));
+	for (const auto& v : positions)
+		radius = glm::max(radius, distance(center, v));
 
 	mesh.center = center;
 	mesh.radius = radius;
 
-	float lodScale = meshopt_simplifyScale(&vertices[0].vx, vertices.size(), sizeof(Vertex));
+	float lodScale = meshopt_simplifyScale(&positions[0].x, vertices.size(), sizeof(vec3));
 
 	std::vector<uint32_t> lodIndices = indices;
 	float lodError = 0.f;
@@ -166,7 +175,7 @@ static void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vec
 		result.indices.insert(result.indices.end(), lodIndices.begin(), lodIndices.end());
 
 		lod.meshletOffset = uint32_t(result.meshlets.size());
-		lod.meshletCount = buildMeshlets ? uint32_t(appendMeshlets(result, vertices, lodIndices, fast)) : 0;
+		lod.meshletCount = buildMeshlets ? uint32_t(appendMeshlets(result, positions, lodIndices, mesh.vertexOffset, fast)) : 0;
 
 		lod.error = lodError * lodScale;
 		if (mesh.lodCount < COUNTOF(mesh.lods))
@@ -177,7 +186,7 @@ static void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vec
 
 			size_t nextIndicesTarget = (size_t(lodIndices.size() * 0.65f) / 3) * 3;
 			float nextError = 0.f;
-			size_t nextIndices = meshopt_simplifyWithAttributes(lodIndices.data(), lodIndices.data(), lodIndices.size(), &vertices[0].vx, vertices.size(), sizeof(Vertex), &normals[0].x, sizeof(vec3), normalWeights, 3, NULL, nextIndicesTarget, maxError, options, &nextError);
+			size_t nextIndices = meshopt_simplifyWithAttributes(lodIndices.data(), lodIndices.data(), lodIndices.size(), &positions[0].x, vertices.size(), sizeof(vec3), &normals[0].x, sizeof(vec3), normalWeights, 3, NULL, nextIndicesTarget, maxError, options, &nextError);
 			assert(nextIndices <= lodIndices.size());
 
 			// we've reached the error bound
@@ -277,9 +286,9 @@ static void loadVertices(std::vector<Vertex>& vertices, const cgltf_primitive& p
 
 		for (size_t j = 0; j < vertexCount; ++j)
 		{
-			vertices[j].vx = scratch[j * 3 + 0];
-			vertices[j].vy = scratch[j * 3 + 1];
-			vertices[j].vz = scratch[j * 3 + 2];
+			vertices[j].vx = meshopt_quantizeHalf(scratch[j * 3 + 0]);
+			vertices[j].vy = meshopt_quantizeHalf(scratch[j * 3 + 1]);
+			vertices[j].vz = meshopt_quantizeHalf(scratch[j * 3 + 2]);
 		}
 	}
 
@@ -403,7 +412,6 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 				draw.scale = std::max(scale[0], std::max(scale[1], scale[2]));
 				draw.orientation = quat(rotation[0], rotation[1], rotation[2], rotation[3]);
 				draw.meshIndex = range.first + j;
-				draw.vertexOffset = geometry.meshes[range.first + j].vertexOffset;
 
 				cgltf_material* material = primitiveMaterials[range.first + j - firstMeshOffset];
 
@@ -504,7 +512,7 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 			meshletTris += meshlet.triangleCount;
 		}
 
-		printf(LOGI("Meshlets: %d meshlets, %d triangles, %d vertex refs\n", int(geometry.meshlets.size()), int(meshletTris), int(meshletVtxs)));
+		printf(LOGI("Meshlets: %d meshlets, %d triangles, %d vertex refs\n"), int(geometry.meshlets.size()), int(meshletTris), int(meshletVtxs));
 	}
 
 	return true;

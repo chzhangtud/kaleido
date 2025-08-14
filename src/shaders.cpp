@@ -541,7 +541,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	assert(renderingInfo.colorAttachmentCount <= COUNTOF(colorAttachmentStates));
 	for (uint32_t i = 0; i < renderingInfo.colorAttachmentCount; ++i)
 		colorAttachmentStates[i].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-	
+
 	VkPipelineColorBlendStateCreateInfo colorBlendState = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
 	colorBlendState.attachmentCount = renderingInfo.colorAttachmentCount;
 	colorBlendState.pAttachments = colorAttachmentStates;
