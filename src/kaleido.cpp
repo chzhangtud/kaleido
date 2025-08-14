@@ -110,6 +110,7 @@ struct alignas(16) CullData
 	int lodEnabled;
 	int occlusionEnabled;
 	int clusterOcclusionEnabled;
+	int clusterBackfaceEnabled;
 
 	uint32_t postPass;
 };
@@ -735,23 +736,23 @@ int main(int argc, const char** argv)
 	VkPipelineCache pipelineCache = 0;
 
 	Program drawcullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["drawcull.comp"] }, sizeof(CullData));
-	VkPipeline drawcullPipeline = createComputePipeline(device, pipelineCache, shaders["drawcull.comp"], drawcullProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE);
-	VkPipeline drawculllatePipeline = createComputePipeline(device, pipelineCache, shaders["drawcull.comp"], drawcullProgram.layout, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE);
-	VkPipeline taskcullPipeline = createComputePipeline(device, pipelineCache, shaders["drawcull.comp"], drawcullProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
-	VkPipeline taskculllatePipeline = createComputePipeline(device, pipelineCache, shaders["drawcull.comp"], drawcullProgram.layout, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE);
+	VkPipeline drawcullPipeline = createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE);
+	VkPipeline drawculllatePipeline = createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE);
+	VkPipeline taskcullPipeline = createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
+	VkPipeline taskculllatePipeline = createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE);
 
 	Program tasksubmitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["tasksubmit.comp"] }, 0);
-	VkPipeline tasksubmitPipeline = createComputePipeline(device, pipelineCache, shaders["tasksubmit.comp"], tasksubmitProgram.layout);
+	VkPipeline tasksubmitPipeline = createComputePipeline(device, pipelineCache, tasksubmitProgram);
 
 	Program clustersubmitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["clustersubmit.comp"] }, 0);
-	VkPipeline clustersubmitPipeline = createComputePipeline(device, pipelineCache, shaders["clustersubmit.comp"], clustersubmitProgram.layout);
+	VkPipeline clustersubmitPipeline = createComputePipeline(device, pipelineCache, clustersubmitProgram);
 
 	Program clustercullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["clustercull.comp"] }, sizeof(CullData));
-	VkPipeline clustercullPipeline = createComputePipeline(device, pipelineCache, shaders["clustercull.comp"], clustercullProgram.layout, true, /* LATE= */ VK_FALSE);
-	VkPipeline clusterculllatePipeline = createComputePipeline(device, pipelineCache, shaders["clustercull.comp"], clustercullProgram.layout, true, /* LATE= */ VK_TRUE);
+	VkPipeline clustercullPipeline = createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_FALSE);
+	VkPipeline clusterculllatePipeline = createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_TRUE);
 
 	Program depthreduceProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["depthreduce.comp"] }, sizeof(vec4));
-	VkPipeline depthreducePipeline = createComputePipeline(device, pipelineCache, shaders["depthreduce.comp"], depthreduceProgram.layout);
+	VkPipeline depthreducePipeline = createComputePipeline(device, pipelineCache, depthreduceProgram);
 
 	Program meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaders["mesh.vert"], &shaders["mesh.frag"] }, sizeof(Globals), textureSetLayout);
 
@@ -764,10 +765,10 @@ int main(int argc, const char** argv)
 		clusterProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaders["meshlet.mesh"], &shaders["mesh.frag"] }, sizeof(Globals), textureSetLayout);
 	}
 
-	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, { &shaders["mesh.vert"], &shaders["mesh.frag"] }, meshProgram.layout);
+	VkPipeline meshPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram);
 	assert(meshPipeline);
 
-	VkPipeline meshpostPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, { &shaders["mesh.vert"], &shaders["mesh.frag"] }, meshProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE);
+	VkPipeline meshpostPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE);
 	assert(meshpostPipeline);
 
 	VkPipeline meshtaskPipeline = 0;
@@ -778,19 +779,19 @@ int main(int argc, const char** argv)
 
 	if (meshShadingEnabled)
 	{
-		meshtaskPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, { &shaders["meshlet.task"], &shaders["meshlet.mesh"], &shaders["mesh.frag"] }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
-		meshtasklatePipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, { &shaders["meshlet.task"], &shaders["meshlet.mesh"], &shaders["mesh.frag"] }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_FALSE);
-		meshtaskpostPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, { &shaders["meshlet.task"], &shaders["meshlet.mesh"], &shaders["mesh.frag"] }, meshtaskProgram.layout, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_TRUE);
-		clusterPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, { &shaders["meshlet.mesh"], &shaders["mesh.frag"] }, clusterProgram.layout);
-		clusterpostPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, { &shaders["meshlet.mesh"], &shaders["mesh.frag"] }, clusterProgram.layout, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE);
+		meshtaskPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE);
+		meshtasklatePipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_FALSE);
+		meshtaskpostPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_TRUE);
+		clusterPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram);
+		clusterpostPipeline = createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE);
 		assert(meshtaskPipeline && meshtasklatePipeline && clusterPipeline && clusterpostPipeline);
 	}
 
 	Program blitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["blit.comp"] }, sizeof(vec4));
-	VkPipeline blitPipeline = createComputePipeline(device, pipelineCache, shaders["blit.comp"], blitProgram.layout);
+	VkPipeline blitPipeline = createComputePipeline(device, pipelineCache, blitProgram);
 
 	Program shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shade.comp"] }, sizeof(ShadeData));
-	VkPipeline shadePipeline = createComputePipeline(device, pipelineCache, shaders["shade.comp"], shadeProgram.layout);
+	VkPipeline shadePipeline = createComputePipeline(device, pipelineCache, shadeProgram);
 
 	VkQueryPool queryPoolTimestamp = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
 	assert(queryPoolTimestamp);
@@ -1283,6 +1284,7 @@ int main(int argc, const char** argv)
 
 			{
 				CullData passData = cullData;
+				passData.clusterBackfaceEnabled = postPass == 0;
 				passData.postPass = postPass;
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 
@@ -1418,6 +1420,8 @@ int main(int argc, const char** argv)
 
 			vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 			vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+			
+			vkCmdSetCullMode(commandBuffer, postPass == 0 ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
 
 			Globals passGlobals = globals;
 			passGlobals.cullData.postPass = postPass;
@@ -1473,9 +1477,9 @@ int main(int argc, const char** argv)
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 		};
 
-		auto pyramid = [&]()
+		auto pyramid = [&](uint32_t timestamp)
 		{
-			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 4);
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
 
 			VkImageMemoryBarrier2 depthBarriers[] = {
 				imageBarrier(depthTarget.image,
@@ -1519,7 +1523,7 @@ int main(int argc, const char** argv)
 			    VK_IMAGE_ASPECT_DEPTH_BIT);
 			pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &depthWriteBarrier);
 
-			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 5);
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 		};
 
 		VkImageMemoryBarrier2 renderBeginBarriers[gbufferCount + 1] = {
@@ -1545,11 +1549,11 @@ int main(int argc, const char** argv)
 		// early cull: frustum cull & fill objects that *were* visible last frame
 		cull(taskSubmit ? taskcullPipeline : drawcullPipeline, 2, "early cull", /* late= */ false);
 		// early render: render objects that were visible last frame
-		render(/* late= */ false, colorClear, depthClear, 0, 8, "early render");
+		render(/* late= */ false, colorClear, depthClear, 0, 4, "early render");
 		// depth pyramid generation
-		pyramid();
+		pyramid(6);
 		// late cull: frustum + occlusion cull & fill objects that were *not* visible last frame
-		cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 6, "late cull", /* late= */ true);
+		cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 8, "late cull", /* late= */ true);
 
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
 		render(/* late= */ true, colorClear, depthClear, 1, 10, "late render");
@@ -1876,12 +1880,11 @@ int main(int argc, const char** argv)
 		double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 		double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
 		cullGPUTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
-		pyramidGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
-		culllateGPUTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
-		cullpostGPUTime = double(timestampResults[13] - timestampResults[12]) * props.limits.timestampPeriod * 1e-6;
-
-		renderGPUTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
+		renderGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
+		pyramidGPUTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
+		culllateGPUTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
 		renderlateGPUTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
+		cullpostGPUTime = double(timestampResults[13] - timestampResults[12]) * props.limits.timestampPeriod * 1e-6;
 		renderpostGPUTime = double(timestampResults[15] - timestampResults[14]) * props.limits.timestampPeriod * 1e-6;
 		finalGPUTime = double(timestampResults[17] - timestampResults[16]) * props.limits.timestampPeriod * 1e-6;
 		double frameCPUEnd = glfwGetTime() * 1000.0;

@@ -369,7 +369,7 @@ bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const ch
 		return false;
 	}
 
-	printf("Loaded %d shaders from %s\n", int(shaders.shaders.size()), spath.c_str());
+	printf(LOGI("Loaded %d shaders from %s\n"), int(shaders.shaders.size()), spath.c_str());
 	return true;
 }
 
@@ -379,7 +379,7 @@ const Shader& ShaderSet::operator[](const char* name) const
 		if (shader.name == name)
 			return shader;
 
-	fprintf(stderr, "Error: shader %s could not be loaded\n", name);
+	printf(LOGE("Error: shader %s could not be loaded\n"), name);
 	abort();
 }
 
@@ -539,7 +539,7 @@ std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice devi
 	return std::make_pair(pool, set);
 }
 
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, Shaders shaders, VkPipelineLayout layout, bool useSpecializationConstants, VkBool32 LATE, VkBool32 TASK, VkBool32 POST)
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, bool useSpecializationConstants, VkBool32 LATE, VkBool32 TASK, VkBool32 POST)
 {
 	VkGraphicsPipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
 
@@ -560,8 +560,10 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	}
 
 	std::vector<VkPipelineShaderStageCreateInfo> stages = {};
-	for (const auto& shader : shaders)
+	for (size_t i = 0; i < program.shaderCount; ++i)
 	{
+		const Shader* shader = program.shaders[i];
+
 		VkPipelineShaderStageCreateInfo stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
 		stage.stage = shader->stage;
 		stage.module = shader->module;
@@ -617,13 +619,13 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	colorBlendState.pAttachments = colorAttachmentStates;
 	createInfo.pColorBlendState = &colorBlendState;
 
-	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE };
 	VkPipelineDynamicStateCreateInfo dynamicState = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
 	dynamicState.dynamicStateCount = sizeof(dynamicStates) / sizeof(dynamicStates[0]);
 	dynamicState.pDynamicStates = dynamicStates;
 	createInfo.pDynamicState = &dynamicState;
 
-	createInfo.layout = layout;
+	createInfo.layout = program.layout;
 	createInfo.pNext = &renderingInfo;
 
 	VkPipeline pipeline = 0;
@@ -632,8 +634,11 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	return pipeline;
 }
 
-VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Shader& shader, VkPipelineLayout layout, bool useSpecializationConstants, VkBool32 LATE, VkBool32 TASK)
+VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Program& program, bool useSpecializationConstants, VkBool32 LATE, VkBool32 TASK)
 {
+	assert(program.shaderCount == 1);
+	const Shader& shader = *program.shaders[0];
+
 	assert(shader.stage == VK_SHADER_STAGE_COMPUTE_BIT);
 	VkComputePipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
 
@@ -659,7 +664,7 @@ VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache,
 	stage.pSpecializationInfo = &specializationInfo;
 
 	createInfo.stage = stage;
-	createInfo.layout = layout;
+	createInfo.layout = program.layout;
 
 	VkPipeline pipeline = 0;
 	vkCreateComputePipelines(device, pipelineCache, 1, &createInfo, 0, &pipeline);
@@ -704,6 +709,12 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 		program.localSizeY = shader->localSizeY;
 		program.localSizeZ = shader->localSizeZ;
 	}
+
+	memset(program.shaders, 0, sizeof(program.shaders));
+	program.shaderCount = 0;
+
+	for (const Shader* shader : shaders)
+		program.shaders[program.shaderCount++] = shader;
 
 	return program;
 }
