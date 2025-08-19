@@ -2,6 +2,18 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
+# glfw settings
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+
+# KTX settings
+set(KTX_FEATURE_TOOLS OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_TESTS OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_DOC OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_LOADTEST OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_GL_UPLOAD OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_ETC_UNPACK OFF CACHE BOOL "" FORCE)
+
 add_subdirectory(glfw)
 add_subdirectory(volk)
 add_subdirectory(meshoptimizer)
@@ -57,14 +69,6 @@ source_group("imgui\\backends" FILES
     ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_vulkan.cpp
 )
 target_compile_definitions(imgui PRIVATE VK_NO_PROTOTYPES) # for avoid conflict when using volk
-
-# glfw settings
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-
-# KTX settings
-set(KTX_FEATURE_TESTS OFF CACHE BOOL "" FORCE)
-set(KTX_FEATURE_ETC_UNPACK OFF CACHE BOOL "" FORCE)
 
 if (MSVC)
     set_property(TARGET glfw PROPERTY FOLDER "external/glfw")
