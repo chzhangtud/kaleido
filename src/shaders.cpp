@@ -293,25 +293,24 @@ bool loadShader(Shader& shader, VkDevice device, const char* path)
 	assert(length >= 0);
 	fseek(file, 0, SEEK_SET);
 
-	char* buffer = new char[length];
-	assert(buffer);
+	std::vector<char> spirv(length);
 
-	size_t rc = fread(buffer, 1, length, file);
+	size_t rc = fread(spirv.data(), 1, length, file);
 	assert(rc == size_t(length));
 	fclose(file);
 
 	VkShaderModuleCreateInfo createInfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
 	createInfo.codeSize = length; // note: this needs to be in bytes.
-	createInfo.pCode = reinterpret_cast<const uint32_t*>(buffer);
+	createInfo.pCode = reinterpret_cast<const uint32_t*>(spirv.data());
 
 	VkShaderModule shaderModule = 0;
-	VK_CHECK(vkCreateShaderModule(device, &createInfo, 0, &shaderModule));
+	if (device)
+		VK_CHECK(vkCreateShaderModule(device, &createInfo, 0, &shaderModule));
 
 	assert(length % 4 == 0);
-	parseShader(shader, reinterpret_cast<const uint32_t*>(buffer), length / 4);
+	parseShader(shader, reinterpret_cast<const uint32_t*>(spirv.data()), length / 4);
+	shader.spirv = std::move(spirv);
 	shader.module = shaderModule;
-
-	delete[] buffer;
 
 	return true;
 }
