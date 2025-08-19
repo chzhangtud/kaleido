@@ -6,6 +6,9 @@
 #include <cgltf.h>
 #include <meshoptimizer.h>
 #include <time.h>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 size_t appendMeshlets(Geometry& result, const std::vector<vec3>& vertices, const std::vector<uint32_t>& indices, uint32_t baseVertex, bool fast = false)
 {
@@ -476,12 +479,8 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 		cgltf_image* image = texture->image;
 		assert(image->uri);
 
-		std::string ipath = path;
-		std::string::size_type pos = ipath.find_last_of('/\\');
-		if (pos == std::string::npos)
-			ipath = "";
-		else
-			ipath = ipath.substr(0, pos + 1);
+		fs::path scenePath = fs::path(path);
+		fs::path basePath = scenePath.parent_path();
 
 		std::string uri = image->uri;
 
@@ -494,7 +493,10 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 		else
 		{
 			uri.resize(cgltf_decode_uri(&uri[0]));
-			texturePaths.emplace_back(ipath + uri);
+			fs::path fullPath = basePath / uri;
+			std::string texturePath = fullPath.string();
+			std::replace(texturePath.begin(), texturePath.end(), '\\', '/');
+			texturePaths.emplace_back(texturePath);
 		}
 	}
 

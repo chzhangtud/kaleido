@@ -564,7 +564,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 	}
 
 	float xoffset = lastX - xpos;
-	float yoffset = ypos - lastY;
+	float yoffset = lastY - ypos;
 	lastX = xpos;
 	lastY = ypos;
 
@@ -573,9 +573,6 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 
 	yaw += xoffset;
 	pitch += yoffset;
-
-	// if (pitch > 89.0f) pitch = 89.0f;
-	// if (pitch < -89.0f) pitch = -89.0f;
 
 	glm::mat3 matPitch = {
 		glm::vec3(1.0f, 0.0f, 0.0f),
@@ -862,7 +859,7 @@ int main(int argc, const char** argv)
 		const char* ext = strrchr(argv[1], '.');
 		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
 		{
-			glm::vec3 euler;
+			glm::vec3 euler(0.f);
 			if (!loadScene(geometry, draws, texturePaths, camera, sunDirection, argv[1], meshShadingSupported, euler, fastMode))
 			{
 				printf(LOGE("Error: scene %s failed to load\n"), argv[1]);
@@ -1061,7 +1058,11 @@ int main(int argc, const char** argv)
 	{
 		buildBLAS(device, geometry.meshes, vb, ib, blas, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
 		tlas = buildTLAS(device, tlasBuffer, draws, blas, commandPool, commandBuffer, queue, memoryProperties);
+		printf(LOGI("Ray Tracing is supported!"));
 	}
+	else
+		printf(LOGW("Ray Tracing is not supported, this may cause artifacts!"));
+
 
 	Image gbufferTargets[gbufferCount] = {};
 	Image depthTarget = {};
