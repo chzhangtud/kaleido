@@ -4,8 +4,6 @@
 
 #include "math.h"
 
-#define RAYTRACE 1
-
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 struct ShadeData
@@ -28,10 +26,7 @@ layout(binding = 1) uniform sampler2D gbufferImage0;
 layout(binding = 2) uniform sampler2D gbufferImage1;
 layout(binding = 3) uniform sampler2D depthImage;
 
-#if RAYTRACE
-#extension GL_EXT_ray_query: require
-layout(binding = 4) uniform accelerationStructureEXT tlas;
-#endif
+layout(binding = 4) uniform sampler2D shadowImage;
 
 void main()
 {
@@ -60,17 +55,7 @@ void main()
 	// TODO: this is not the BRDF we want
 	float specular = pow(ndoth, mix(1, 64, gloss)) * gloss;
 
-	float shadow = 1.0;
-
-#if RAYTRACE
-	uint rayflags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsCullNoOpaqueEXT;
-
-	rayQueryEXT rq;
-	rayQueryInitializeEXT(rq, tlas, rayflags, 0xff, wpos, 1e-2, shadeData.sunDirection, 1e3);
-	rayQueryProceedEXT(rq);
-
-	shadow *= (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT) ? 1.0 : 0.0;
-#endif
+	float shadow = texture(shadowImage, uv).r;
 
 	vec3 outputColor = albedo.rgb * (ndotl * shadow + 0.05) + vec3(specular * shadow) + emissive;
 
