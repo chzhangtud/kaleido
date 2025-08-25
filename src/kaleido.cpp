@@ -1109,6 +1109,7 @@ int main(int argc, const char** argv)
 
 	float drawDistance = 2000.f;
 	uint32_t meshletVisibilityCount = 0;
+	uint32_t meshPostPasses = 0;
 
 	for (size_t i = 0; i < draws.size(); ++i)
 	{
@@ -1122,6 +1123,7 @@ int main(int argc, const char** argv)
 			meshletCount = std::max(meshletCount, mesh.lods[i].meshletCount);
 
 		meshletVisibilityCount += meshletCount;
+		meshPostPasses |= 1 << draw.postPass;
 	}
 
 	uint32_t meshletVisibilityBytes = (meshletVisibilityCount + 31) / 32 * sizeof(uint32_t);
@@ -1780,11 +1782,15 @@ int main(int argc, const char** argv)
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
 		render(/* late= */ true, clearColors, depthClear, 1, 10, "late render");
 
-		// post cull: frustum + occlusion cull & fill extra objects
-		cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "post cull", /* late= */ true, /* postPass= */ 1);
+		// we can skip post passes if no draw call needs them
+		if (meshPostPasses >> 1)
+		{
+			// post cull: frustum + occlusion cull & fill extra objects
+			cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "post cull", /* late= */ true, /* postPass= */ 1);
 
-		// late render: render objects that are visible this frame but weren't drawn in the early pass
-		render(/* late= */ true, clearColors, depthClear, 2, 14, "post render", /* postPass= */ 1);
+			// post render: render extra objects
+			render(/* late= */ true, clearColors, depthClear, 2, 14, "post render", /* postPass= */ 1);
+		}
 
 		VkImageMemoryBarrier2 blitBarriers[2 + gbufferCount] = {
 			imageBarrier(swapchain.images[imageIndex],
@@ -1828,25 +1834,20 @@ int main(int argc, const char** argv)
 				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
 			}
 
-			for (int pass = 0; pass < 2; ++pass)
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+
+			for (int pass = 0; pass < (shadowblurEnabled ? 2 : 0); ++pass)
 			{
 				const Image& blurFrom = pass == 0 ? shadowTarget : shadowblurTarget;
 				const Image& blurTo = pass == 0 ? shadowblurTarget : shadowTarget;
-
-				VkImageMemoryBarrier2 blurToBarrier =
-					pass == 0
-						? imageBarrier(blurTo.image,
-								0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-								VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
-						: imageBarrier(blurTo.image,
-								VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-								VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
 				VkImageMemoryBarrier2 blurBarriers[] = {
 					imageBarrier(blurFrom.image,
 						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL),
-					blurToBarrier
+					imageBarrier(blurTo.image,
+					    pass == 0 ? 0 : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, pass == 0 ? 0 : VK_ACCESS_SHADER_READ_BIT, pass == 0 ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+					    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
 				};
 
 				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blurBarriers), blurBarriers);
@@ -1867,9 +1868,8 @@ int main(int argc, const char** argv)
 
 			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &postblurBarrier);
 			
-			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
 			{
-				vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadePipeline);
 
 				DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, gbufferTargets[1].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL } };
@@ -1913,6 +1913,7 @@ int main(int argc, const char** argv)
 		static double renderlateGPUTime = 0.0;
 		static double renderpostGPUTime = 0.0;
 		static double shadowsGPUTime = 0.0;
+		static double shadowblurGPUTime = 0.0;
 		static double finalGPUTime = 0.0;
 
 		if (debugGuiMode % 3)
@@ -1955,14 +1956,17 @@ int main(int argc, const char** argv)
 			double frameGpuBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 			double frameGpuEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
 
-			double cullGpuTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
-			double renderGpuTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
-			double pyramidGpuTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
-			double culllateGpuTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
-			double renderlateGpuTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
-			double cullpostGpuTime = double(timestampResults[13] - timestampResults[12]) * props.limits.timestampPeriod * 1e-6;
-			double finalGpuTime = double(timestampResults[19] - timestampResults[18]) * props.limits.timestampPeriod * 1e-6;
-
+			cullGPUTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
+			renderGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
+			pyramidGPUTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
+			culllateGPUTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
+			renderlateGPUTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
+			cullpostGPUTime = double(timestampResults[13] - timestampResults[12]) * props.limits.timestampPeriod * 1e-6;
+			renderpostGPUTime = double(timestampResults[15] - timestampResults[14]) * props.limits.timestampPeriod * 1e-6;
+			shadowsGPUTime = double(timestampResults[17] - timestampResults[16]) * props.limits.timestampPeriod * 1e-6;
+			shadowblurGPUTime = double(timestampResults[18] - timestampResults[17]) * props.limits.timestampPeriod * 1e-6;
+			finalGPUTime = double(timestampResults[19] - timestampResults[18]) * props.limits.timestampPeriod * 1e-6;
+			
 			double trianglesPerSec = double(triangleCount) / double(frameGPUAvg * 1e-3);
 			double drawsPerSec = double(draws.size()) / double(frameGPUAvg * 1e-3);
 
@@ -1970,12 +1974,13 @@ int main(int argc, const char** argv)
 
 			if (debugGuiMode % 3 == 2)
 			{
-				debugtext(2, "cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, shadows: %.2f ms, final: %.2f ms",
-				    cullGpuTime + culllateGpuTime + cullpostGpuTime,
-				    pyramidGpuTime,
-				    renderGpuTime + renderlateGpuTime + renderpostGPUTime,
+				debugtext(2, "cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms, final: %.2f ms",
+				    cullGPUTime + culllateGPUTime + cullpostGPUTime,
+				    pyramidGPUTime,
+				    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
 				    shadowsGPUTime,
-				    finalGpuTime);
+					shadowblurGPUTime,
+				    finalGPUTime);
 				debugtext(3, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
 				    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, drawsPerSec * 1e-6);
 				debugtext(5, "frustum culling %s, occlusion culling %s, level-of-detail %s",
@@ -2171,6 +2176,7 @@ int main(int argc, const char** argv)
 				ImGui::SameLine();
 				DisplayProfilingData("Depth Pyramid GPU Time(ms): ", pyramidGPUTime, 1.0, 2.0);
 			}
+			// @TODO: add more profiling curves
 			ImGui::End();
 		}
 
