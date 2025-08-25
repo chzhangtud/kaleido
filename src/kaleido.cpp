@@ -27,6 +27,7 @@ bool occlusionEnabled = true;
 bool clusterOcclusionEnabled = true;
 bool taskShadingEnabled = false;
 bool shadingEnabled = true;
+bool shadowblurEnabled = true;
 
 int debugLodStep = 0;
 bool reloadShaders = false;
@@ -122,6 +123,15 @@ struct alignas(16) Globals
 	mat4 projection;
 	CullData cullData;
 	float screenWidth, screenHeight;
+};
+
+struct alignas(16) ShadowData
+{
+	vec3 sunDirection;
+	float sunJitter;
+
+	mat4 inverseViewProjection;
+	vec2 imageSize;
 };
 
 struct alignas(16) ShadeData
@@ -458,6 +468,10 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 			shadingEnabled = !shadingEnabled;
 			return;
 		}
+		if (key == GLFW_KEY_B)
+		{
+			shadowblurEnabled = !shadowblurEnabled;
+		}
 		if (key >= GLFW_KEY_0 && key <= GLFW_KEY_9)
 		{
 			debugLodStep = key - GLFW_KEY_0;
@@ -761,7 +775,7 @@ int main(int argc, const char** argv)
 
 	Program blitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["blit.comp"] }, sizeof(vec4));
 	Program shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shade.comp"] }, sizeof(ShadeData));
-	Program shadowProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shadow.comp"] }, sizeof(ShadeData));
+	Program shadowProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shadow.comp"] }, sizeof(ShadowData));
 	Program shadowblurProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shadowblur.comp"] }, sizeof(vec4));
 
 	VkPipeline drawcullPipeline = 0;
@@ -1666,99 +1680,106 @@ int main(int argc, const char** argv)
 
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blitBarriers), blitBarriers);
 
+		if (raytracingSupported && shadingEnabled)
 		{
 			uint32_t timestamp = 16;
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
-			if (raytracingSupported && shadingEnabled)
+			VkImageMemoryBarrier2 preshadowBarrier =
+				imageBarrier(shadowTarget.image,
+					0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &preshadowBarrier);
+
 			{
-				VkImageMemoryBarrier2 preshadowBarrier =
-				    imageBarrier(shadowTarget.image,
-				        0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-				        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowPipeline);
+				DescriptorInfo descriptors[] = { { shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas };
+				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadowProgram.updateTemplate, shadowProgram.layout, 0, descriptors);
 
-				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &preshadowBarrier);
-
-				{
-					vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowPipeline);
-					DescriptorInfo descriptors[] = { { shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas };
-					vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadowProgram.updateTemplate, shadowProgram.layout, 0, descriptors);
-
-					ShadeData shadeData = {};
-					shadeData.cameraPosition = camera.position;
-					shadeData.sunDirection = sunDirection;
-					shadeData.inverseViewProjection = inverse(projection * view);
-					shadeData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
-					vkCmdPushConstants(commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
-					vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
-				}
-
-				for (int pass = 0; pass < 2; ++pass)
-				{
-					const Image& blurFrom = pass == 0 ? shadowTarget : shadowblurTarget;
-					const Image& blurTo = pass == 0 ? shadowblurTarget : shadowTarget;
-
-					VkImageMemoryBarrier2 blurToBarrier =
-					    pass == 0
-					        ? imageBarrier(blurTo.image,
-					              0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-					              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
-					        : imageBarrier(blurTo.image,
-					              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-					              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
-
-					VkImageMemoryBarrier2 blurBarriers[] = {
-						imageBarrier(blurFrom.image,
-						    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-						    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL),
-						blurToBarrier
-					};
-
-					pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blurBarriers), blurBarriers);
-					vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowblurPipeline);
-					DescriptorInfo descriptors[] = { { blurTo.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, blurFrom.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
-
-					vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadowblurProgram.updateTemplate, shadowblurProgram.layout, 0, descriptors);
-					vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, 0);
-
-					vkCmdPushConstants(commandBuffer, shadowblurProgram.layout, shadowblurProgram.pushConstantStages, 0, sizeof(blurData), &blurData);
-					vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowblurProgram.localSizeX), getGroupCount(swapchain.height, shadowblurProgram.localSizeY), 1);
-				}
-
-				VkImageMemoryBarrier2 shadowblurYBarrier =
-				    imageBarrier(shadowTarget.image,
-				        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-				        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
-
-				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &shadowblurYBarrier);
-
-				{
-					vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadePipeline);
-
-					DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, gbufferTargets[1].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL } };
-					vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadeProgram.updateTemplate, shadeProgram.layout, 0, descriptors);
-
-					ShadeData shadeData = {};
-					shadeData.cameraPosition = camera.position;
-					shadeData.sunDirection = sunDirection;
-					shadeData.inverseViewProjection = inverse(projection * view);
-					shadeData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
-
-					vkCmdPushConstants(commandBuffer, shadeProgram.layout, shadeProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
-					vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadeProgram.localSizeX), getGroupCount(swapchain.height, shadeProgram.localSizeY), 1);
-				}
+				ShadowData shadowData = {};
+				shadowData.sunDirection = sunDirection;
+				shadowData.sunJitter = shadowblurEnabled ? 1e-2f : 0;
+				shadowData.inverseViewProjection = inverse(projection * view);
+				shadowData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
+				vkCmdPushConstants(commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(shadowData), &shadowData);
+				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
 			}
-			else
+
+			for (int pass = 0; pass < 2; ++pass)
 			{
-				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, blitPipeline);
+				const Image& blurFrom = pass == 0 ? shadowTarget : shadowblurTarget;
+				const Image& blurTo = pass == 0 ? shadowblurTarget : shadowTarget;
 
-				DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, blitProgram.updateTemplate, blitProgram.layout, 0, descriptors);
+				VkImageMemoryBarrier2 blurToBarrier =
+					pass == 0
+						? imageBarrier(blurTo.image,
+								0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+								VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
+						: imageBarrier(blurTo.image,
+								VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+								VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
-				vec4 blitData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
-				vkCmdPushConstants(commandBuffer, blitProgram.layout, blitProgram.pushConstantStages, 0, sizeof(blitData), &blitData);
-				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, blitProgram.localSizeX), getGroupCount(swapchain.height, blitProgram.localSizeY), 1);
+				VkImageMemoryBarrier2 blurBarriers[] = {
+					imageBarrier(blurFrom.image,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL),
+					blurToBarrier
+				};
+
+				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blurBarriers), blurBarriers);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowblurPipeline);
+				DescriptorInfo descriptors[] = { { blurTo.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, blurFrom.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+
+				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadowblurProgram.updateTemplate, shadowblurProgram.layout, 0, descriptors);
+				vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, 0);
+
+				vkCmdPushConstants(commandBuffer, shadowblurProgram.layout, shadowblurProgram.pushConstantStages, 0, sizeof(blurData), &blurData);
+				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowblurProgram.localSizeX), getGroupCount(swapchain.height, shadowblurProgram.localSizeY), 1);
 			}
+
+			VkImageMemoryBarrier2 postblurBarrier =
+			    imageBarrier(shadowTarget.image,
+			        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+			        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &postblurBarrier);
+			
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+			{
+				vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadePipeline);
+
+				DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, gbufferTargets[1].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL } };
+				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadeProgram.updateTemplate, shadeProgram.layout, 0, descriptors);
+
+				ShadeData shadeData = {};
+				shadeData.cameraPosition = camera.position;
+				shadeData.sunDirection = sunDirection;
+				shadeData.inverseViewProjection = inverse(projection * view);
+				shadeData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
+
+				vkCmdPushConstants(commandBuffer, shadeProgram.layout, shadeProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
+				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadeProgram.localSizeX), getGroupCount(swapchain.height, shadeProgram.localSizeY), 1);
+			}
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 3);
+		}
+		else
+		{
+			uint32_t timestamp = 16;
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
+
+			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, blitPipeline);
+
+			DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, blitProgram.updateTemplate, blitProgram.layout, 0, descriptors);
+
+			vec4 blitData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
+			vkCmdPushConstants(commandBuffer, blitProgram.layout, blitProgram.pushConstantStages, 0, sizeof(blitData), &blitData);
+			vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, blitProgram.localSizeX), getGroupCount(swapchain.height, blitProgram.localSizeY), 1);
+
+			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 3);
 		}
 
 		VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
@@ -1788,6 +1809,8 @@ int main(int argc, const char** argv)
 			ImGui::Checkbox("Enable Culing", &cullingEnabled);
 			ImGui::Checkbox("Enable Occlusion Culling", &occlusionEnabled);
 			ImGui::Checkbox("Enable Cluster Occlusion Culling", &clusterOcclusionEnabled);
+			ImGui::Checkbox("Enable Deferred Shading", &shadingEnabled);
+			ImGui::Checkbox("Enable Shadow Blurring", &shadowblurEnabled);
 			ImGui::Checkbox("Enable LoD", &lodEnabled);
 			if (lodEnabled)
 			{
@@ -1806,6 +1829,7 @@ int main(int argc, const char** argv)
 		static double renderGPUTime = 0.0;
 		static double renderlateGPUTime = 0.0;
 		static double renderpostGPUTime = 0.0;
+		static double shadowsGPUTime = 0.0;
 		static double finalGPUTime = 0.0;
 
 		if (bDisplayProfiling)
@@ -2018,7 +2042,9 @@ int main(int argc, const char** argv)
 		VK_CHECK(vkWaitForFences(device, 1, &frameFence, VK_TRUE, ~0ull));
 		VK_CHECK(vkResetFences(device, 1, &frameFence));
 
-		uint64_t timestampResults[18] = {};
+		uint64_t timestampResults[20] = {};
+		auto res = vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT);
+		
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
 
 		uint64_t pipelineResults[3] = {};
@@ -2035,7 +2061,8 @@ int main(int argc, const char** argv)
 		renderlateGPUTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
 		cullpostGPUTime = double(timestampResults[13] - timestampResults[12]) * props.limits.timestampPeriod * 1e-6;
 		renderpostGPUTime = double(timestampResults[15] - timestampResults[14]) * props.limits.timestampPeriod * 1e-6;
-		finalGPUTime = double(timestampResults[17] - timestampResults[16]) * props.limits.timestampPeriod * 1e-6;
+		shadowsGPUTime = double(timestampResults[17] - timestampResults[16]) * props.limits.timestampPeriod * 1e-6;
+		finalGPUTime = double(timestampResults[19] - timestampResults[18]) * props.limits.timestampPeriod * 1e-6;
 		double frameCPUEnd = glfwGetTime() * 1000.0;
 
 		frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
@@ -2045,7 +2072,7 @@ int main(int argc, const char** argv)
 		double modelsPerSec = double(draws.size()) / double(frameGPUAvg * 1e-3);
 
 		char title[512];
-		snprintf(title, sizeof(title), "mesh shading %s; task shading %s; frustum culling: %s; occlusion culling: %s; lod: %s, cluster OC: %s; %scpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, final: %.2f ms); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
+		snprintf(title, sizeof(title), "mesh shading %s; task shading %s; frustum culling: %s; occlusion culling: %s; lod: %s, cluster OC: %s; %scpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, shadows: %.2f ms, final: %.2f ms); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
 		    taskSubmit ? "ON" : "OFF",
 		    taskSubmit && taskShadingEnabled ? "ON" : "OFF",
 		    cullingEnabled ? "ON" : "OFF",
@@ -2057,6 +2084,7 @@ int main(int argc, const char** argv)
 		    cullGPUTime + culllateGPUTime + cullpostGPUTime,
 		    pyramidGPUTime,
 		    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
+			shadowsGPUTime,
 		    finalGPUTime,
 		    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
 		glfwSetWindowTitle(window, title);

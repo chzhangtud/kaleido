@@ -13,7 +13,9 @@
 
 // Validation is enabled by default in Debug
 #ifndef NDEBUG
-#define KHR_VALIDATION CONFIG_SYNCVAL
+#define KHR_VALIDATION 1
+#else
+#define KHR_VALIDATION CONFIG_RELVAL
 #endif
 
 // Synchronization validation is disabled by default in Debug since it's rather slow
