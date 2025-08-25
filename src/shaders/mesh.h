@@ -71,6 +71,18 @@ struct Mesh
 	MeshLod lods[8];
 };
 
+struct Material
+{
+	uint albedoTexture;
+	uint normalTexture;
+	uint specularTexture;
+	uint emissiveTexture;
+
+	vec4 diffuseFactor;
+	vec4 specularFactor;
+	vec3 emissiveFactor;
+};
+
 struct MeshDraw
 {
 	vec3 position;
@@ -82,10 +94,7 @@ struct MeshDraw
 	uint postPass;
 	uint flags;
 
-	int albedoTexture;
-	int normalTexture;
-	int specularTexture;
-	int emissiveTexture;
+	uint materialIndex;
 };
 
 struct MeshDrawCommand

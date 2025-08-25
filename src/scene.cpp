@@ -335,7 +335,7 @@ static void loadVertices(std::vector<Vertex>& vertices, const cgltf_primitive& p
 	}
 }
 
-bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast)
+bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast)
 {
 	clock_t timer = clock();
 
@@ -390,6 +390,9 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 
 	assert(primitiveMaterials.size() + firstMeshOffset == geometry.meshes.size());
 
+	size_t materialOffset = materials.size();
+	assert(materialOffset > 0); // index 0 = dummy materials
+
 	for (size_t i = 0; i < data->nodes_count; ++i)
 	{
 		const cgltf_node* node = &data->nodes[i];
@@ -418,24 +421,7 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 
 				cgltf_material* material = primitiveMaterials[range.first + j - firstMeshOffset];
 
-				draw.albedoTexture =
-				    material && material->pbr_metallic_roughness.base_color_texture.texture
-				        ? 1 + int(cgltf_texture_index(data, material->pbr_metallic_roughness.base_color_texture.texture))
-				    : material && material->pbr_specular_glossiness.diffuse_texture.texture
-				        ? 1 + int(cgltf_texture_index(data, material->pbr_specular_glossiness.diffuse_texture.texture))
-				        : 0;
-				draw.normalTexture =
-				    material && material->normal_texture.texture
-				        ? 1 + int(cgltf_texture_index(data, material->normal_texture.texture))
-				        : 0;
-				draw.specularTexture =
-				    material && material->pbr_specular_glossiness.specular_glossiness_texture.texture
-				        ? 1 + int(cgltf_texture_index(data, material->pbr_specular_glossiness.specular_glossiness_texture.texture))
-				        : 0;
-				draw.emissiveTexture =
-				    material && material->emissive_texture.texture
-				        ? 1 + int(cgltf_texture_index(data, material->emissive_texture.texture))
-				        : 0;
+				draw.materialIndex = material ? materialOffset + int(cgltf_material_index(data, material)) : 0;
 
 				if (material && material->alpha_mode != cgltf_alpha_mode_opaque)
 					draw.postPass = 1;
@@ -468,6 +454,44 @@ bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std
 			cgltf_node_transform_world(node, matrix);
 			sunDirection = vec3(matrix[8], matrix[9], matrix[10]);
 		}
+	}
+
+	for (size_t i = 0; i < data->materials_count; ++i)
+	{
+		cgltf_material* material = &data->materials[i];
+		Material mat = {};
+
+		mat.diffuseFactor = vec4(1);
+
+		if (material->has_pbr_metallic_roughness)
+		{
+			if (material->pbr_metallic_roughness.base_color_texture.texture)
+				mat.albedoTexture = 1 + int(cgltf_texture_index(data, material->pbr_metallic_roughness.base_color_texture.texture));
+
+			mat.diffuseFactor = vec4(material->pbr_metallic_roughness.base_color_factor[0], material->pbr_metallic_roughness.base_color_factor[1], material->pbr_metallic_roughness.base_color_factor[2], material->pbr_metallic_roughness.base_color_factor[3]);
+		}
+		else if (material->has_pbr_specular_glossiness)
+		{
+			if (material->pbr_specular_glossiness.diffuse_texture.texture)
+				mat.albedoTexture = 1 + int(cgltf_texture_index(data, material->pbr_specular_glossiness.diffuse_texture.texture));
+
+			mat.diffuseFactor = vec4(material->pbr_specular_glossiness.diffuse_factor[0], material->pbr_specular_glossiness.diffuse_factor[1], material->pbr_specular_glossiness.diffuse_factor[2], material->pbr_specular_glossiness.diffuse_factor[3]);
+
+			if (material->pbr_specular_glossiness.specular_glossiness_texture.texture)
+				mat.specularTexture = 1 + int(cgltf_texture_index(data, material->pbr_specular_glossiness.specular_glossiness_texture.texture));
+
+			mat.specularFactor = vec4(material->pbr_specular_glossiness.specular_factor[0], material->pbr_specular_glossiness.specular_factor[1], material->pbr_specular_glossiness.specular_factor[2], material->pbr_specular_glossiness.glossiness_factor);
+		}
+
+		if (material->normal_texture.texture)
+			mat.normalTexture = 1 + int(cgltf_texture_index(data, material->normal_texture.texture));
+
+		if (material->emissive_texture.texture)
+			mat.emissiveTexture = 1 + int(cgltf_texture_index(data, material->emissive_texture.texture));
+
+		mat.emissiveFactor = vec3(material->emissive_factor[0], material->emissive_factor[1], material->emissive_factor[2]);
+
+		materials.push_back(mat);
 	}
 
 	for (size_t i = 0; i < data->textures_count; ++i)

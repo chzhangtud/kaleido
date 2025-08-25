@@ -19,6 +19,18 @@ struct alignas(16) Meshlet
 	uint8_t triangleCount;
 };
 
+struct alignas(16) Material
+{
+	int albedoTexture;
+	int normalTexture;
+	int specularTexture;
+	int emissiveTexture;
+
+	vec4 diffuseFactor;
+	vec4 specularFactor;
+	vec3 emissiveFactor;
+};
+
 struct alignas(16) MeshDraw
 {
 	vec3 position;
@@ -30,10 +42,7 @@ struct alignas(16) MeshDraw
 	uint32_t postPass;
 	uint32_t flags;
 
-	int albedoTexture;
-	int normalTexture;
-	int specularTexture;
-	int emissiveTexture;
+	uint32_t materialIndex;
 };
 
 struct Vertex
@@ -85,4 +94,4 @@ struct Camera
 };
 
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false);
-bool loadScene(Geometry& geometry, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false);
+bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false);

@@ -843,8 +843,13 @@ int main(int argc, const char** argv)
 	createBuffer(scratch, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	Geometry geometry;
+	std::vector<Material> materials;
 	std::vector<MeshDraw> draws;
 	std::vector<std::string> texturePaths;
+
+	// material index 0 is always dummy
+	materials.resize(1);
+	materials[0].diffuseFactor = vec4(1);
 
 	camera.position = { 0.f, 0.f, 0.f };
 	camera.orientation = { 0.f, 0.f, 0.f, 1.f };
@@ -860,7 +865,7 @@ int main(int argc, const char** argv)
 		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
 		{
 			glm::vec3 euler(0.f);
-			if (!loadScene(geometry, draws, texturePaths, camera, sunDirection, argv[1], meshShadingSupported, euler, fastMode))
+			if (!loadScene(geometry, materials, draws, texturePaths, camera, sunDirection, argv[1], meshShadingSupported, euler, fastMode))
 			{
 				printf(LOGE("Error: scene %s failed to load\n"), argv[1]);
 				return 1;
@@ -990,8 +995,11 @@ int main(int argc, const char** argv)
 	        : 0;
 
 	Buffer mb = {};
-	createBuffer(mb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	createBuffer(mb, device, memoryProperties, 4 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
+	Buffer mtb = {};
+	createBuffer(mtb, device, memoryProperties, 4 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	
 	Buffer vb = {};
 	createBuffer(vb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	Buffer ib = {};
@@ -1008,6 +1016,7 @@ int main(int argc, const char** argv)
 	}
 
 	uploadBuffer(device, commandPool, commandBuffer, queue, mb, scratch, geometry.meshes.data(), geometry.meshes.size() * sizeof(Mesh));
+	uploadBuffer(device, commandPool, commandBuffer, queue, mtb, scratch, materials.data(), materials.size() * sizeof(Material));
 	uploadBuffer(device, commandPool, commandBuffer, queue, vb, scratch, geometry.vertices.data(), geometry.vertices.size() * sizeof(Vertex));
 	uploadBuffer(device, commandPool, commandBuffer, queue, ib, scratch, geometry.indices.data(), geometry.indices.size() * sizeof(uint32_t));
 
@@ -1383,8 +1392,9 @@ int main(int argc, const char** argv)
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 		};
 
-		auto render = [&](bool late, const VkClearColorValue& colorClear, const VkClearDepthStencilValue& depthClear, uint32_t query, uint32_t timestamp, const char* phase, unsigned int postPass = 0)
+		auto render = [&](bool late, const std::vector<VkClearColorValue>& clearColors, const VkClearDepthStencilValue& depthClear, uint32_t query, uint32_t timestamp, const char* phase, unsigned int postPass = 0)
 		{
+			assert(clearColors.size() == gbufferCount);
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
 
 			vkCmdBeginQuery(commandBuffer, queryPoolPipeline, query, 0);
@@ -1453,7 +1463,7 @@ int main(int argc, const char** argv)
 				gbufferAttachments[i].imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
 				gbufferAttachments[i].loadOp = late ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
 				gbufferAttachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-				gbufferAttachments[i].clearValue.color = colorClear;
+				gbufferAttachments[i].clearValue.color = clearColors[i];
 			}
 
 			VkRenderingAttachmentInfo depthAttachment = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
@@ -1489,7 +1499,7 @@ int main(int argc, const char** argv)
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass >= 1 ? clusterpostPipeline : clusterPipeline);
 
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler };
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, clusterProgram.updateTemplate, clusterProgram.layout, 0, descriptors);
 
 				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, clusterProgram.layout, 1, 1, &textureSet.second, 0, nullptr);
@@ -1503,7 +1513,7 @@ int main(int argc, const char** argv)
 				                                                                                                              : meshtaskPipeline);
 
 				DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler };
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
 
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshtaskProgram.updateTemplate, meshtaskProgram.layout, 0, descriptors);
 
@@ -1517,7 +1527,7 @@ int main(int argc, const char** argv)
 			{
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass >= 1 ? meshpostPipeline : meshPipeline);
 
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), textureSampler };
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), textureSampler, mtb.buffer };
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
 
 				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshProgram.layout, 1, 1, &textureSet.second, 0, nullptr);
@@ -1600,27 +1610,28 @@ int main(int argc, const char** argv)
 
 		vkCmdResetQueryPool(commandBuffer, queryPoolPipeline, 0, 4);
 
-		// VkClearColorValue colorClear = { 48.f / 255.f, 10.f / 255.f, 36.f / 255.f, 1 };
-		VkClearColorValue colorClear = { 135.f / 255.f, 206.f / 255.f, 235.f / 255.f, 1 };
+		std::vector<VkClearColorValue> clearColors(gbufferCount);
+		clearColors[0] = { 135.f / 255.f, 206.f / 255.f, 235.f / 255.f, 0.f }; 
+		clearColors[1] = { 0.f, 0.f, 0.f, 0.f };
 		VkClearDepthStencilValue depthClear = { 0.f, 0 };
 
 		// early cull: frustum cull & fill objects that *were* visible last frame
 		cull(taskSubmit ? taskcullPipeline : drawcullPipeline, 2, "early cull", /* late= */ false);
 		// early render: render objects that were visible last frame
-		render(/* late= */ false, colorClear, depthClear, 0, 4, "early render");
+		render(/* late= */ false, clearColors, depthClear, 0, 4, "early render");
 		// depth pyramid generation
 		pyramid(6);
 		// late cull: frustum + occlusion cull & fill objects that were *not* visible last frame
 		cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 8, "late cull", /* late= */ true);
 
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
-		render(/* late= */ true, colorClear, depthClear, 1, 10, "late render");
+		render(/* late= */ true, clearColors, depthClear, 1, 10, "late render");
 
 		// post cull: frustum + occlusion cull & fill extra objects
 		cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "post cull", /* late= */ true, /* postPass= */ 1);
 
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
-		render(/* late= */ true, colorClear, depthClear, 2, 14, "post render", /* postPass= */ 1);
+		render(/* late= */ true, clearColors, depthClear, 2, 14, "post render", /* postPass= */ 1);
 
 		VkImageMemoryBarrier2 blitBarriers[2 + gbufferCount] = {
 			imageBarrier(swapchain.images[imageIndex],
@@ -2007,6 +2018,7 @@ int main(int argc, const char** argv)
 	destroyBuffer(db, device);
 
 	destroyBuffer(mb, device);
+	destroyBuffer(mtb, device);
 	{
 		destroyBuffer(mlb, device);
 		destroyBuffer(mvdb, device);
