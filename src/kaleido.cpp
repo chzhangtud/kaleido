@@ -1,6 +1,7 @@
 ﻿#include <iostream>
 #include <stdio.h>
 #include <algorithm>
+#include <stdarg.h>
 
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
@@ -29,6 +30,7 @@ bool taskShadingEnabled = false;
 bool shadingEnabled = true;
 bool shadowblurEnabled = true;
 
+int debugGuiMode = 1;
 int debugLodStep = 0;
 bool reloadShaders = false;
 double reloadShadersTimer = 0;
@@ -198,6 +200,15 @@ float halfToFloat(uint16_t v)
 	result.u = (s << 31) | (e << 23) | f;
 	return result.f;
 }
+
+struct alignas(16) TextData
+{
+	int offsetX, offsetY;
+	int scale;
+	unsigned int color;
+
+	char data[112];
+};
 
 void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& vb, const Buffer& ib, std::vector<VkAccelerationStructureKHR>& blas, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
 {
@@ -482,6 +493,10 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 			reloadShaders = !reloadShaders;
 			reloadShadersTimer = 0;
 		}
+		if (key == GLFW_KEY_G)
+		{
+			debugGuiMode++;
+		}
 	}
 }
 
@@ -752,6 +767,8 @@ int main(int argc, const char** argv)
 
 	VkPipelineCache pipelineCache = 0;
 
+	Program debugtextProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["debugtext.comp"] }, sizeof(TextData));
+
 	Program drawcullProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["drawcull.comp"] }, sizeof(CullData));
 
 	Program tasksubmitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["tasksubmit.comp"] }, 0);
@@ -774,10 +791,17 @@ int main(int argc, const char** argv)
 	}
 
 	Program blitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["blit.comp"] }, sizeof(vec4));
-	Program shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shade.comp"] }, sizeof(ShadeData));
-	Program shadowProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shadow.comp"] }, sizeof(ShadowData));
-	Program shadowblurProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shadowblur.comp"] }, sizeof(vec4));
+	Program shadeProgram = {};
+	Program shadowProgram = {};
+	Program shadowblurProgram = {};
+	if (raytracingSupported)
+	{
+		shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shade.comp"] }, sizeof(ShadeData));
+		shadowProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shadow.comp"] }, sizeof(ShadowData));
+		shadowblurProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders["shadowblur.comp"] }, sizeof(vec4));
+	}
 
+	VkPipeline debugtextPipeline = 0;
 	VkPipeline drawcullPipeline = 0;
 	VkPipeline drawculllatePipeline = 0;
 	VkPipeline taskcullPipeline = 0;
@@ -809,6 +833,7 @@ int main(int argc, const char** argv)
 			pipeline = newPipeline;
 		};
 
+		replace(debugtextPipeline, createComputePipeline(device, pipelineCache, debugtextProgram));
 		replace(drawcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE));
 		replace(drawculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE));
 		replace(taskcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE));
@@ -832,9 +857,12 @@ int main(int argc, const char** argv)
 		}
 
 		replace(blitPipeline, createComputePipeline(device, pipelineCache, blitProgram));
-		replace(shadePipeline, createComputePipeline(device, pipelineCache, shadeProgram));
-		replace(shadowPipeline, createComputePipeline(device, pipelineCache, shadowProgram));
-		replace(shadowblurPipeline, createComputePipeline(device, pipelineCache, shadowblurProgram));
+		if (raytracingSupported)
+		{
+			replace(shadePipeline, createComputePipeline(device, pipelineCache, shadeProgram));
+			replace(shadowPipeline, createComputePipeline(device, pipelineCache, shadowProgram));
+			replace(shadowblurPipeline, createComputePipeline(device, pipelineCache, shadowblurProgram));
+		}
 	};
 
 	pipelines();
@@ -1110,6 +1138,9 @@ int main(int argc, const char** argv)
 	double frameGPUAvg = 0.0;
 
 	uint64_t frameIndex = 0;
+
+	uint64_t timestampResults[20] = {};
+	uint64_t pipelineResults[3] = {};
 
 	glfwSetMouseButtonCallback(window, mouse_button_callback);
 	glfwSetCursorPosCallback(window, mouse_callback);
@@ -1782,6 +1813,91 @@ int main(int argc, const char** argv)
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 3);
 		}
 
+		static double cullGPUTime = 0.0;
+		static double pyramidGPUTime = 0.0;
+		static double culllateGPUTime = 0.0;
+		static double cullpostGPUTime = 0.0;
+		static double renderGPUTime = 0.0;
+		static double renderlateGPUTime = 0.0;
+		static double renderpostGPUTime = 0.0;
+		static double shadowsGPUTime = 0.0;
+		static double finalGPUTime = 0.0;
+
+		if (debugGuiMode % 3)
+		{
+			auto debugtext = [&](int line, const char* format, ...)
+#ifdef __GNUC__
+			                     __attribute__((format(printf, 3, 4)))
+#endif
+			{
+				TextData textData = {};
+				textData.offsetX = 1;
+				textData.offsetY = line + 2;
+				textData.scale = 2;
+				textData.color = 0xffffffff;
+
+				va_list args;
+				va_start(args, format);
+				vsnprintf(textData.data, sizeof(textData.data), format, args);
+				va_end(args);
+
+				vkCmdPushConstants(commandBuffer, debugtextProgram.layout, debugtextProgram.pushConstantStages, 0, sizeof(textData), &textData);
+				vkCmdDispatch(commandBuffer, strlen(textData.data), 1, 1);
+			};
+
+			VkImageMemoryBarrier2 textBarrier =
+			    imageBarrier(swapchain.images[imageIndex],
+			        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+			        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &textBarrier);
+
+			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, debugtextPipeline);
+
+			DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL } };
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, debugtextProgram.updateTemplate, debugtextProgram.layout, 0, descriptors);
+
+			// debug text goes here!
+			uint64_t triangleCount = pipelineResults[0] + pipelineResults[1] + pipelineResults[2];
+
+			double frameGpuBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
+			double frameGpuEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
+
+			double cullGpuTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
+			double renderGpuTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
+			double pyramidGpuTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
+			double culllateGpuTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
+			double renderlateGpuTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
+			double cullpostGpuTime = double(timestampResults[13] - timestampResults[12]) * props.limits.timestampPeriod * 1e-6;
+			double finalGpuTime = double(timestampResults[19] - timestampResults[18]) * props.limits.timestampPeriod * 1e-6;
+
+			double trianglesPerSec = double(triangleCount) / double(frameGPUAvg * 1e-3);
+			double drawsPerSec = double(draws.size()) / double(frameGPUAvg * 1e-3);
+
+			debugtext(0, "%scpu: %.2f ms; gpu: %.2f ms", reloadShaders ? "R* " : "", frameCPUAvg, frameGPUAvg);
+
+			if (debugGuiMode % 3 == 2)
+			{
+				debugtext(2, "cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, shadows: %.2f ms, final: %.2f ms",
+				    cullGpuTime + culllateGpuTime + cullpostGpuTime,
+				    pyramidGpuTime,
+				    renderGpuTime + renderlateGpuTime + renderpostGPUTime,
+				    shadowsGPUTime,
+				    finalGpuTime);
+				debugtext(3, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
+				    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, drawsPerSec * 1e-6);
+				debugtext(5, "frustum culling %s, occlusion culling %s, level-of-detail %s",
+				    cullingEnabled ? "ON" : "OFF", occlusionEnabled ? "ON" : "OFF", lodEnabled ? "ON" : "OFF");
+				debugtext(6, "mesh shading %s, task shading %s, cluster occlusion culling %s",
+				    taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
+				    clusterOcclusionEnabled ? "ON" : "OFF");
+
+				debugtext(8, "RT shading %s, shadow blur %s",
+				    raytracingSupported && shadingEnabled ? "ON" : "OFF",
+				    raytracingSupported && shadingEnabled && shadowblurEnabled ? "ON" : "OFF");
+			}
+		}
+
 		VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 		    0, 0, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -1821,16 +1937,6 @@ int main(int argc, const char** argv)
 
 			ImGui::End();
 		}
-
-		static double cullGPUTime = 0.0;
-		static double pyramidGPUTime = 0.0;
-		static double culllateGPUTime = 0.0;
-		static double cullpostGPUTime = 0.0;
-		static double renderGPUTime = 0.0;
-		static double renderlateGPUTime = 0.0;
-		static double renderpostGPUTime = 0.0;
-		static double shadowsGPUTime = 0.0;
-		static double finalGPUTime = 0.0;
 
 		if (bDisplayProfiling)
 		{
@@ -2042,52 +2148,18 @@ int main(int argc, const char** argv)
 		VK_CHECK(vkWaitForFences(device, 1, &frameFence, VK_TRUE, ~0ull));
 		VK_CHECK(vkResetFences(device, 1, &frameFence));
 
-		uint64_t timestampResults[20] = {};
 		auto res = vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT);
 		
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
 
-		uint64_t pipelineResults[3] = {};
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT));
-
-		uint64_t triangleCount = pipelineResults[0] + pipelineResults[1] + pipelineResults[2];
 
 		double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 		double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
-		cullGPUTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
-		renderGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
-		pyramidGPUTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
-		culllateGPUTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
-		renderlateGPUTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
-		cullpostGPUTime = double(timestampResults[13] - timestampResults[12]) * props.limits.timestampPeriod * 1e-6;
-		renderpostGPUTime = double(timestampResults[15] - timestampResults[14]) * props.limits.timestampPeriod * 1e-6;
-		shadowsGPUTime = double(timestampResults[17] - timestampResults[16]) * props.limits.timestampPeriod * 1e-6;
-		finalGPUTime = double(timestampResults[19] - timestampResults[18]) * props.limits.timestampPeriod * 1e-6;
 		double frameCPUEnd = glfwGetTime() * 1000.0;
 
 		frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
 		frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
-
-		double trianglesPerSec = double(triangleCount) / double(frameGPUAvg * 1e-3);
-		double modelsPerSec = double(draws.size()) / double(frameGPUAvg * 1e-3);
-
-		char title[512];
-		snprintf(title, sizeof(title), "mesh shading %s; task shading %s; frustum culling: %s; occlusion culling: %s; lod: %s, cluster OC: %s; %scpu: %.2f ms; gpu %.2f ms (cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, shadows: %.2f ms, final: %.2f ms); triangles %.2fM; %.1fB tri/sec,%.1fM models/sec",
-		    taskSubmit ? "ON" : "OFF",
-		    taskSubmit && taskShadingEnabled ? "ON" : "OFF",
-		    cullingEnabled ? "ON" : "OFF",
-		    occlusionEnabled ? "ON" : "OFF",
-		    lodEnabled ? "ON" : "OFF",
-		    clusterOcclusionEnabled ? "ON" : "OFF",
-			reloadShaders ? "R* " : "",
-		    frameCPUAvg, frameGPUAvg,
-		    cullGPUTime + culllateGPUTime + cullpostGPUTime,
-		    pyramidGPUTime,
-		    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
-			shadowsGPUTime,
-		    finalGPUTime,
-		    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, modelsPerSec * 1e-6);
-		glfwSetWindowTitle(window, title);
 
 		frameIndex++;
 	}
@@ -2171,6 +2243,10 @@ int main(int argc, const char** argv)
 		destroyProgram(device, meshtaskProgram);
 	}
 	{
+		vkDestroyPipeline(device, debugtextPipeline, 0);
+		destroyProgram(device, debugtextProgram);
+	}
+	{
 		vkDestroyPipeline(device, drawcullPipeline, 0);
 		vkDestroyPipeline(device, drawculllatePipeline, 0);
 		vkDestroyPipeline(device, taskcullPipeline, 0);
@@ -2201,14 +2277,17 @@ int main(int argc, const char** argv)
 	vkDestroyPipeline(device, blitPipeline, 0);
 	destroyProgram(device, blitProgram);
 
-	vkDestroyPipeline(device, shadePipeline, 0);
-	destroyProgram(device, shadeProgram);
-	
-	vkDestroyPipeline(device, shadowPipeline, 0);
-	destroyProgram(device, shadowProgram);
+	if (raytracingSupported)
+	{
+		vkDestroyPipeline(device, shadePipeline, 0);
+		destroyProgram(device, shadeProgram);
+		
+		vkDestroyPipeline(device, shadowPipeline, 0);
+		destroyProgram(device, shadowProgram);
 
-	vkDestroyPipeline(device, shadowblurPipeline, 0);
-	destroyProgram(device, shadowblurProgram);
+		vkDestroyPipeline(device, shadowblurPipeline, 0);
+		destroyProgram(device, shadowblurProgram);
+	}
 
 	vkDestroyDescriptorSetLayout(device, textureSetLayout, 0);
 
