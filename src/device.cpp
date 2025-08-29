@@ -1,5 +1,7 @@
+#if defined(WIN32)
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
+#endif
 #include <string>
 #include <stdlib.h>
 
@@ -56,12 +58,12 @@ VkInstance createInstance()
 	{
 		createInfo.ppEnabledLayerNames = debugLayers;
 		createInfo.enabledLayerCount = sizeof(debugLayers) / sizeof(debugLayers[0]);
-		printf(LOGI("Enabled Vulkan validation layers (sync validation %s)\n", SYNC_VALIDATION ? "enabled" : "disabled"));
+		LOGI("Enabled Vulkan validation layers (sync validation %s)", SYNC_VALIDATION ? "enabled" : "disabled");
 	}
 
 	else
 	{
-		printf("Warning: Vulkan debug layers are not available\n");
+		LOGW("Vulkan debug layers are not available.");
 	}
 
 #if SYNC_VALIDATION
@@ -80,9 +82,11 @@ VkInstance createInstance()
 
 	const char* extensions[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
-#ifdef VK_USE_PLATFORM_WIN32_KHR
+	#if defined(VK_USE_PLATFORM_WIN32_KHR)
 		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-#endif
+	#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+		VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
+	#endif
 #ifndef NDEBUG
 		VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
 #endif
@@ -112,7 +116,7 @@ static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 	char message[4096];
 	snprintf(message, COUNTOF(message), "%s: %s\n", type, pMessage);
 
-	printf("%s", message);
+	LOGI("%s", message);
 
 #ifdef _WIN32
 	OutputDebugStringA(message);
@@ -165,7 +169,7 @@ static bool supportsPresentation(VkPhysicalDevice physicalDevice, uint32_t famil
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
 	return !!vkGetPhysicalDeviceWin32PresentationSupportKHR(physicalDevice, familyIndex);
 #else
-	return true;
+	return true; // @TODO
 #endif
 }
 
@@ -184,19 +188,19 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 		if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU)
 			continue;
 
-		printf(LOGI("GPU%d: %s\n"), i, props.deviceName);
+		LOGI("GPU%d: %s", i, props.deviceName);
 
 		uint32_t familyIndex = getGraphicsFamilyIndex(physicalDevices[i]);
 
 		if (familyIndex == VK_QUEUE_FAMILY_IGNORED)
 		{
-			printf(LOGI("GPU%d skipped: no graphics queue\n"), i);
+			LOGI("GPU%d skipped: no graphics queue", i);
 			continue;
 		}
 
 		if (!supportsPresentation(physicalDevices[i], familyIndex))
 		{
-			printf(LOGI("GPU%d skipped: doesn't support presentation\n"), i);
+			LOGI("GPU%d skipped: doesn't support presentation", i);
 			continue;
 		}
 
@@ -210,7 +214,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 			uint32_t requiredMinor = VK_VERSION_MINOR(CURRENT_VK_VERSION);
 			uint32_t requiredPatch = VK_VERSION_PATCH(CURRENT_VK_VERSION);
 
-			printf(LOGI("GPU%d skipped: Vulkan API version too low: %u.%u.%u, required: %u.%u.%u \n"),
+			LOGI("GPU%d skipped: Vulkan API version too low: %u.%u.%u, required: %u.%u.%u",
 			    i, major, minor, patch, requiredMajor, requiredMinor, requiredPatch);
 			continue;
 		}
@@ -237,11 +241,11 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	{
 		VkPhysicalDeviceProperties props;
 		vkGetPhysicalDeviceProperties(result, &props);
-		printf(LOGI("Selected GPU %s.\n"), props.deviceName);
+		LOGI("Selected GPU %s.", props.deviceName);
 	}
 	else
 	{
-		printf(LOGE("No GPUs found!\n"));
+		LOGE("No GPUs found!");
 	}
 
 	return result;

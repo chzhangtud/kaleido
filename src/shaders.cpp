@@ -3,11 +3,7 @@
 #include <stdio.h>
 #include <filesystem>
 
-#if VK_HEADER_VERSION >= 135
-#include <spirv-headers/spirv.h>
-#else
-#include <vulkan/spirv.h>
-#endif
+#include <spirv.h>
 
 namespace fs = std::filesystem;
 
@@ -284,7 +280,7 @@ bool loadShader(Shader& shader, VkDevice device, const char* path)
 	FILE* file = fopen(path, "rb");
 	if (!file)
 	{
-		fprintf(stdout, LOGE("Failed to open file: %s\n"), path);
+		LOGE("Failed to open file: %s", path);
 		return false;
 	}
 
@@ -353,7 +349,7 @@ bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const ch
 				Shader shader = {};
 				if (!loadShader(shader, device, fpath.c_str()))
 				{
-					fprintf(stderr, "Warning: %s is not a valid SPIRV module\n", filename.c_str());
+					LOGW("%s is not a valid SPIRV module", filename.c_str());
 					continue;
 				}
 
@@ -364,11 +360,11 @@ bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const ch
 	}
 	catch (const std::filesystem::filesystem_error& e)
 	{
-		printf(LOGE("Error reading directory: %s"), e.what());
+		LOGE("Error reading directory: %s", e.what());
 		return false;
 	}
 
-	printf(LOGI("Loaded %d shaders from %s\n"), int(shaders.shaders.size()), spath.c_str());
+	LOGI("Loaded %d shaders from %s", int(shaders.shaders.size()), spath.c_str());
 	return true;
 }
 
@@ -378,7 +374,7 @@ const Shader& ShaderSet::operator[](const char* name) const
 		if (shader.name == name)
 			return shader;
 
-	printf(LOGE("Error: shader %s could not be loaded\n"), name);
+	LOGE("Error: shader %s could not be loaded", name);
 	abort();
 }
 

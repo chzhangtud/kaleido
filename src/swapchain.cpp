@@ -1,5 +1,10 @@
-#include <GLFW/glfw3.h>
-#include <GLFW/glfw3native.h>
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+    #include <GLFW/glfw3.h>
+    #include <GLFW/glfw3native.h>
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+    #include <android/native_window.h>
+    #include <android/native_window_jni.h>
+#endif
 
 #include "common.h"
 #include "swapchain.h"
@@ -7,7 +12,13 @@
 
 #define VSYNC CONFIG_VSYNC
 
-VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow* window)
+VkSurfaceKHR createSurface(VkInstance instance, 
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+    GLFWwindow* window
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+    ANativeWindow* window
+#endif
+)
 {
 	// Note: GLFW has a helper glfwCreateWindowSurface but we're going to do this the hard way to reduce our reliance on GLFW Vulkan specifics
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
@@ -18,8 +29,15 @@ VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow* window)
 	VkSurfaceKHR surface = 0;
 	VK_CHECK(vkCreateWin32SurfaceKHR(instance, &createInfo, 0, &surface));
 	return surface;
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+    VkAndroidSurfaceCreateInfoKHR createInfo = { VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR };
+    createInfo.window = window;
+
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    VK_CHECK(vkCreateAndroidSurfaceKHR(instance, &createInfo, 0, &surface));
+    return surface;
 #else
-#error Unsupported platform
+    #error Unsupported platform
 #endif
 }
 
@@ -91,13 +109,24 @@ static VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, VkS
 	return swapchain;
 }
 
-void createSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, GLFWwindow* window, VkFormat format, VkSwapchainKHR oldSwapchain)
+void createSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex,
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+    GLFWwindow* window,
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+    ANativeWindow* window,
+#endif
+	VkFormat format, VkSwapchainKHR oldSwapchain)
 {
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
 
 	int width = 0, height = 0;
-	glfwGetFramebufferSize(window, &width, &height);
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+    glfwGetFramebufferSize(window, &width, &height);
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+    width  = ANativeWindow_getWidth(window);
+    height = ANativeWindow_getHeight(window);
+#endif
 
 	uint32_t presentModeCount = 0;
 	vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
@@ -124,10 +153,21 @@ void destroySwapchain(VkDevice device, Swapchain& swapchain)
 	vkDestroySwapchainKHR(device, swapchain.swapchain, 0);
 }
 
-SwapchainStatus updateSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, GLFWwindow* window, VkFormat format)
+SwapchainStatus updateSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex,
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+    GLFWwindow* window,
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+    ANativeWindow* window,
+#endif
+	VkFormat format)
 {
 	int newWidth = 0, newHeight = 0;
-	glfwGetFramebufferSize(window, &newWidth, &newHeight);
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+    glfwGetFramebufferSize(window, &newWidth, &newHeight);
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+    newWidth  = ANativeWindow_getWidth(window);
+    newHeight = ANativeWindow_getHeight(window);
+#endif
 
 	if (newWidth == 0 || newHeight == 0)
 		return Swapchain_NotReady;

@@ -1,10 +1,13 @@
+if (WIN32)
+# glfw settings
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-
-# glfw settings
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(glfw)
+endif()
 
 # KTX settings
 set(KTX_FEATURE_TOOLS OFF CACHE BOOL "" FORCE)
@@ -14,13 +17,43 @@ set(KTX_FEATURE_LOADTEST OFF CACHE BOOL "" FORCE)
 set(KTX_FEATURE_GL_UPLOAD OFF CACHE BOOL "" FORCE)
 set(KTX_FEATURE_ETC_UNPACK OFF CACHE BOOL "" FORCE)
 
-add_subdirectory(glfw)
 add_subdirectory(volk)
 add_subdirectory(meshoptimizer)
 add_subdirectory(zeux_objparser)
 add_subdirectory(glm)
 add_subdirectory(fast_obj)
 add_subdirectory(ktx_software)
+
+if (ANDROID)
+# spriv-cross settings
+set(SPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_SHARED OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_STATIC ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+
+set(SPIRV_CROSS_ENABLE_GLSL ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_MSL OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_REFLECT ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_C_API ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_UTIL OFF CACHE BOOL "" FORCE)
+
+set(SPIRV_CROSS_SANITIZE_ADDRESS OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_SANITIZE_MEMORY OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_SANITIZE_THREADS OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_SANITIZE_UNDEFINED OFF CACHE BOOL "" FORCE)
+
+set(SPIRV_CROSS_NAMESPACE_OVERRIDE "" CACHE STRING "" FORCE)
+set(SPIRV_CROSS_FORCE_STL_TYPES OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_SKIP_INSTALL OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_WERROR OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_MISC_WARNINGS OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_FORCE_PIC OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(spirv_cross)
+endif()
 
 add_library(cgltf INTERFACE)
 target_include_directories(cgltf INTERFACE ${CMAKE_CURRENT_LIST_DIR}/cgltf)
@@ -44,6 +77,8 @@ source_group("Header Files\\stb" FILES
 
 # ImGui - standalone external project
 add_library(imgui STATIC)
+
+if (WIN32)
 target_sources(imgui PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui.cpp
     ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_draw.cpp
@@ -52,11 +87,26 @@ target_sources(imgui PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_glfw.cpp
     ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_vulkan.cpp
 )
+elseif(ANDROID)
+target_sources(imgui PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_draw.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_tables.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_widgets.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_android.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_vulkan.cpp
+)    
+endif()
+
 target_include_directories(imgui PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/imgui
     ${CMAKE_CURRENT_LIST_DIR}/imgui/backends
 )
+
+if (WIN32)
 target_link_libraries(imgui PUBLIC glfw volk)
+endif()
+
 source_group("imgui" FILES
     ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui.cpp
     ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_draw.cpp
@@ -65,7 +115,9 @@ source_group("imgui" FILES
     ${CMAKE_CURRENT_LIST_DIR}/imgui/imgui_demo.cpp
 )
 source_group("imgui\\backends" FILES
+if (WIN32)
     ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_glfw.cpp
+endif()
     ${CMAKE_CURRENT_LIST_DIR}/imgui/backends/imgui_impl_vulkan.cpp
 )
 target_compile_definitions(imgui PRIVATE VK_NO_PROTOTYPES) # for avoid conflict when using volk

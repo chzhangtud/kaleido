@@ -268,7 +268,7 @@ uint32_t get_memory_type(uint32_t bits, const VkPhysicalDeviceMemoryProperties& 
 	}
 	else
 	{
-		printf(LOGE("Could not find a matching memory type"));
+		LOGE("Could not find a matching memory type");
 		assert(false);
 	}
 }
@@ -282,7 +282,7 @@ bool loadKtxImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice
 
 	if (ktxTexture == nullptr)
 	{
-		printf(LOGE("Error: KTX image %s failed to load: %s\n"), path, ktxErrorString(result));
+		LOGE("Error: KTX image %s failed to load: %s", path, ktxErrorString(result));
 		return false;
 	}
 
@@ -611,14 +611,14 @@ bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, V
 		std::string base64;
 		if (!ExtractBase64Data(path, base64))
 		{
-			printf(LOGE("Unsupported or invalid data URI format\n"));
+			LOGE("Unsupported or invalid data URI format");
 			return false;
 		}
 
 		std::vector<uint8_t> decoded = Base64Decode(base64);
 		if (decoded.empty())
 		{
-			printf(LOGE("Base64 decode failed\n"));
+			LOGE("Base64 decode failed");
 			return false;
 		}
 
@@ -627,14 +627,14 @@ bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, V
 
 		if (!pixels)
 		{
-			printf(LOGE("Failed to load image from memory: %s\n", stbi_failure_reason()));
+			LOGE("Failed to load image from memory: %s", stbi_failure_reason());
 			return false;
 		}
 
 		size_t imageSize = texWidth * texHeight * 4;
 		if (scratch.size < imageSize)
 		{
-			printf(LOGE("Scratch buffer too small\n"));
+			LOGE("Scratch buffer too small");
 			stbi_image_free(pixels);
 			return false;
 		}
@@ -674,7 +674,7 @@ bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, V
 	}
 	else
 	{
-		printf(LOGE("Unsupported image format: %s\n"), path);
+		LOGE("Unsupported image format: %s", path);
 		return false;
 	}
 }

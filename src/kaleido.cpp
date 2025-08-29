@@ -1,10 +1,12 @@
-﻿#include <iostream>
+﻿#if defined(_WIN32)
+#include <iostream>
 #include <stdio.h>
 #include <algorithm>
 #include <stdarg.h>
 
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
+#endif
 
 #define VK_NO_PROTOTYPES
 #define VOLK_IMPLEMENTATION
@@ -276,7 +278,7 @@ void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& v
 
 	Buffer scratchBuffer;
 	createBuffer(scratchBuffer, device, memoryProperties, std::max(kDefaultScratch, maxScratchSize), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	printf(LOGI("BLAS accelerationStructureSize: %.2f MB, scratchSize: %.2f MB (max %.2f MB), %.3fM triangles\n", double(totalAccelerationSize) / 1e6, double(scratchBuffer.size) / 1e6, double(maxScratchSize) / 1e6, double(totalPrimitiveCount) / 1e6));
+	LOGI("BLAS accelerationStructureSize: %.2f MB, scratchSize: %.2f MB (max %.2f MB), %.3fM triangles", double(totalAccelerationSize) / 1e6, double(scratchBuffer.size) / 1e6, double(maxScratchSize) / 1e6, double(totalPrimitiveCount) / 1e6);
 	VkDeviceAddress scratchAddress = getBufferAddress(scratchBuffer, device);
 
 	blas.resize(meshes.size());
@@ -372,7 +374,7 @@ void compactBLAS(VkDevice device, std::vector<VkAccelerationStructureKHR>& blas,
 		totalCompactedSize = (totalCompactedSize + compactedSizes[i] + kAlignment - 1) & ~(kAlignment - 1);
 	}
 
-	printf(LOGI("BLAS compacted accelerationStructureSize: %.2f MB\n"), double(totalCompactedSize) / 1e6);
+	LOGI("BLAS compacted accelerationStructureSize: %.2f MB", double(totalCompactedSize) / 1e6);
 
 	Buffer compactedBuffer;
 	createBuffer(compactedBuffer, device, memoryProperties, totalCompactedSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -479,7 +481,7 @@ VkAccelerationStructureKHR buildTLAS(VkDevice device, Buffer& tlasBuffer, const 
 	VkAccelerationStructureBuildSizesInfoKHR sizeInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
 	vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, &primitiveCount, &sizeInfo);
 
-	printf(LOGI("TLAS accelerationStructureSize: %.2f MB, scratchSize: %.2f MB\n", double(sizeInfo.accelerationStructureSize) / 1e6, double(sizeInfo.buildScratchSize) / 1e6));
+	LOGI("TLAS accelerationStructureSize: %.2f MB, scratchSize: %.2f MB", double(sizeInfo.accelerationStructureSize) / 1e6, double(sizeInfo.buildScratchSize) / 1e6);
 
 	createBuffer(tlasBuffer, device, memoryProperties, sizeInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
@@ -525,6 +527,7 @@ VkAccelerationStructureKHR buildTLAS(VkDevice device, Buffer& tlasBuffer, const 
 	return tlas;
 }
 
+#if defined(_WIN32)
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
 	if (action == GLFW_PRESS)
@@ -583,6 +586,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		}
 	}
 }
+#endif
 
 mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
 {
@@ -659,6 +663,7 @@ uint32_t rand32()
 	return pcg32_random_r(&rngstate);
 }
 
+#if defined(_WIN32)
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
 	if (ImGui::GetIO().WantCaptureMouse)
@@ -729,19 +734,21 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 		}
 	}
 }
+#endif
 
+#if defined(_WIN32)
 int main(int argc, const char** argv)
 {
 	if (argc < 2)
 	{
-		printf(LOGE("Usage: %s [mesh list]\n"), argv[0]);
+		LOGE("Usage: %s [mesh list]", argv[0]);
 		return 1;
 	}
 
-#if defined(VK_USE_PLATFORM_XLIB_KHR)
-	// TODO: We could support both X11 and Wayland, but that requires some tweaks in swapchain handling
-	glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
-#endif
+// #if defined(VK_USE_PLATFORM_XLIB_KHR)
+// 	// TODO: We could support both X11 and Wayland, but that requires some tweaks in swapchain handling
+// 	glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+// #endif
 
 	int rc = glfwInit();
 	assert(rc);
@@ -999,7 +1006,7 @@ int main(int argc, const char** argv)
 			glm::vec3 euler(0.f);
 			if (!loadScene(geometry, materials, draws, texturePaths, camera, sunDirection, argv[1], meshShadingSupported, euler, fastMode))
 			{
-				printf(LOGE("Error: scene %s failed to load\n"), argv[1]);
+				LOGE("Error: scene %s failed to load", argv[1]);
 				return 1;
 			}
 
@@ -1020,7 +1027,7 @@ int main(int argc, const char** argv)
 		Image image;
 		if (!loadImage(image, device, physicalDevice, commandPool, commandBuffer, queue, memoryProperties, scratch, texturePaths[i].c_str()))
 		{
-			printf(LOGE("Error: image %s failed to load\n"), texturePaths[i].c_str());
+			LOGE("Error: image %s failed to load", texturePaths[i].c_str());
 			return 1;
 		}
 
@@ -1031,7 +1038,7 @@ int main(int argc, const char** argv)
 		images.push_back(image);
 	}
 
-	printf(LOGI("Loaded %d textures (%.2f MB) in %.2f sec\n"), double(imageMemory) / 1e6, int(images.size()), glfwGetTime() - imageTimer);
+	LOGI("Loaded %d textures (%.2f MB) in %.2f sec", double(imageMemory) / 1e6, int(images.size()), glfwGetTime() - imageTimer);
 
 	uint32_t descriptorCount = uint32_t(texturePaths.size() + 1);
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet = createDescriptorArray(device, textureSetLayout, descriptorCount);
@@ -1059,7 +1066,7 @@ int main(int argc, const char** argv)
 		{
 			if (!loadMesh(geometry, argv[i], meshShadingSupported, fastMode))
 			{
-				printf(LOGE("Error: mesh %s failed to load\n"), argv[i]);
+				LOGE("Error: mesh %s failed to load", argv[i]);
 				return 1;
 			}
 		}
@@ -1067,11 +1074,11 @@ int main(int argc, const char** argv)
 
 	if (geometry.meshes.empty())
 	{
-		printf(LOGE("Error: no meshes loaded!\n"));
+		LOGE("Error: no meshes loaded!");
 		return 1;
 	}
 
-	printf(LOGI("Geometry: VB %.2f MB, IB %.2f MB, meshlets %.2f MB\n"),
+	LOGI("Geometry: VB %.2f MB, IB %.2f MB, meshlets %.2f MB",
 	    double(geometry.vertices.size() * sizeof(Vertex)) / 1e6,
 	    double(geometry.indices.size() * sizeof(uint32_t)) / 1e6,
 	    double(geometry.meshlets.size() * sizeof(Meshlet) + geometry.meshletVertexData.size() * sizeof(unsigned int)) / 1e6 + geometry.meshletIndexData.size() * sizeof(unsigned char) / 1e6);
@@ -1209,10 +1216,10 @@ int main(int argc, const char** argv)
 		compactBLAS(device, blas, compactedSizes, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
 
 		tlas = buildTLAS(device, tlasBuffer, draws, blas, commandPool, commandBuffer, queue, memoryProperties);
-		printf(LOGI("Ray Tracing is supported!"));
+		LOGI("Ray Tracing is supported!");
 	}
 	else
-		printf(LOGW("Ray Tracing is not supported, this may cause artifacts!"));
+		LOGW("Ray Tracing is not supported, this may cause artifacts!");
 
 
 	Image gbufferTargets[gbufferCount] = {};
@@ -1927,7 +1934,7 @@ int main(int argc, const char** argv)
 				textData.offsetX = 1;
 				textData.offsetY = line + 2;
 				textData.scale = 2;
-				textData.color = 0xffffffff;
+				textData.color = 0xffffffff; 
 
 				va_list args;
 				va_start(args, format);
@@ -2411,3 +2418,45 @@ int main(int argc, const char** argv)
 
 	volkFinalize();
 }
+
+#elif defined(__ANDROID__)
+#include <jni.h>
+#include <android/native_window_jni.h> // ANativeWindow_fromSurface
+#include <vulkan/vulkan.h>
+#include <memory>
+
+#include "renderer.h"
+
+static ANativeWindow* g_window = nullptr;
+static std::unique_ptr<Renderer> g_renderer;
+
+extern "C" {
+
+JNIEXPORT void JNICALL
+Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobject surface) {
+
+//	VkInstance instance = createInstance();
+//	assert(instance);
+//	volkLoadInstanceOnly(instance);
+
+    g_window = ANativeWindow_fromSurface(env, surface);
+    g_renderer = std::make_unique<Renderer>();
+    g_renderer->InitVulkan(g_window);
+}
+
+JNIEXPORT void JNICALL
+Java_com_chzhang_kaleido_MainActivity_nativeRender(JNIEnv* env, jobject thiz) {
+    if (g_renderer) g_renderer->DrawFrame();
+}
+
+JNIEXPORT void JNICALL
+Java_com_chzhang_kaleido_MainActivity_nativeDestroy(JNIEnv* env, jobject thiz) {
+    g_renderer.reset();
+    if (g_window) {
+        ANativeWindow_release(g_window);
+        g_window = nullptr;
+    }
+}
+
+}
+#endif

@@ -527,7 +527,7 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 		}
 	}
 
-	printf(LOGI("Loaded %s: %d meshes, %d draws, %d vertices in %.2f sec\n"),
+	LOGI("Loaded %s: %d meshes, %d draws, %d vertices in %.2f sec",
 	    path, int(geometry.meshes.size()), int(draws.size()), int(geometry.vertices.size()),
 	    double(clock() - timer) / CLOCKS_PER_SEC);
 
@@ -541,7 +541,7 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 			meshletTris += meshlet.triangleCount;
 		}
 
-		printf(LOGI("Meshlets: %d meshlets, %d triangles, %d vertex refs\n"), int(geometry.meshlets.size()), int(meshletTris), int(meshletVtxs));
+		LOGI("Meshlets: %d meshlets, %d triangles, %d vertex refs", int(geometry.meshlets.size()), int(meshletTris), int(meshletVtxs));
 	}
 
 	return true;

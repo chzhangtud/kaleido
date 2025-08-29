@@ -1,5 +1,11 @@
 ﻿#include "GuiRenderer.h"
-#include <GLFW/glfw3.h>
+#if defined(_WIN32)
+    #include <GLFW/glfw3.h>
+#elif defined(__ANDROID__)
+    #include <android/native_window.h>
+    #include <android/log.h>
+    #include <imgui_impl_android.h>
+#endif
 #include "common.h"
 
 std::shared_ptr<GuiRenderer> GuiRenderer::gInstance = nullptr;
@@ -11,7 +17,12 @@ const std::shared_ptr<GuiRenderer>& GuiRenderer::GetInstance()
 	return gInstance;
 }
 
-void GuiRenderer::Initialize(GLFWwindow* window,
+void GuiRenderer::Initialize(
+#if defined(_WIN32)
+    GLFWwindow* window,
+#elif defined(__ANDROID__)
+    ANativeWindow* window,
+#endif
     uint32_t apiVersion,
     VkInstance instance,
     VkPhysicalDevice physicalDevice,
@@ -31,7 +42,7 @@ void GuiRenderer::Initialize(GLFWwindow* window,
 	    },
 	    instance);
 
-	mWindow = window;
+    mWindow = window;
 	mInstance = instance;
 	mDevice = device;
 
@@ -46,7 +57,11 @@ void GuiRenderer::Initialize(GLFWwindow* window,
 
 	ImGui::StyleColorsDark();
 
-	ImGui_ImplGlfw_InitForVulkan(window, true);
+#if defined(_WIN32)
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+#elif defined(__ANDROID__)
+    ImGui_ImplAndroid_Init(window);
+#endif
 
 	ImGui_ImplVulkan_InitInfo initInfo = {};
 	initInfo.Instance = instance;
@@ -71,7 +86,11 @@ void GuiRenderer::Initialize(GLFWwindow* window,
 void GuiRenderer::BeginFrame()
 {
 	ImGui_ImplVulkan_NewFrame();
-	ImGui_ImplGlfw_NewFrame();
+#if defined(_WIN32)
+    ImGui_ImplGlfw_NewFrame();
+#elif defined(__ANDROID__)
+    ImGui_ImplAndroid_NewFrame();
+#endif
 	ImGui::NewFrame();
 }
 
@@ -109,7 +128,11 @@ void GuiRenderer::RenderDrawData(VkCommandBuffer cmdBuf, VkImageView targetView,
 void GuiRenderer::Shutdown(VkDevice device)
 {
 	ImGui_ImplVulkan_Shutdown();
-	ImGui_ImplGlfw_Shutdown();
+#if defined(_WIN32)
+    ImGui_ImplGlfw_Shutdown();
+#elif defined(__ANDROID__)
+    ImGui_ImplAndroid_Shutdown();
+#endif
 	ImGui::DestroyContext();
 	vkDestroyDescriptorPool(device, mDescriptorPool, nullptr);
 }
@@ -139,7 +162,7 @@ void GuiRenderer::CreateImGuiDescriptorPool(VkDevice device)
 
 	if (vkCreateDescriptorPool(device, &pool_info, nullptr, &mDescriptorPool) != VK_SUCCESS)
 	{
-		printf(LOGE("Failed to create ImGui descriptor pool"));
+		LOGE("Failed to create ImGui descriptor pool");
 		assert(false);
 	}
 }
