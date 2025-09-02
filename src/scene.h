@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <vector>
 #include <string>
+#include "common.h"
+#include "resources.h"
 
 struct alignas(16) Meshlet
 {
@@ -91,6 +93,25 @@ struct Camera
 	vec3 position;
 	quat orientation;
 	float fovY;
+};
+
+struct Scene
+{
+	Scene(const char* _path);
+	Geometry geometry;
+	std::vector<Material> materials;
+	std::vector<MeshDraw> draws;
+	std::vector<std::string> texturePaths;
+	vec3 sunDirection{ 1.0f };
+	uint32_t meshletVisibilityCount{ 0u };
+	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet{};
+	std::vector<Image> images;
+
+	std::string path;
+	float drawDistance{ 1000.f };
+	uint32_t meshPostPasses = 0;
+
+	Camera camera;
 };
 
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false);

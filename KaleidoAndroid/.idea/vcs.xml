@@ -10,6 +10,7 @@
     <mapping directory="$PROJECT_DIR$/../external/imgui" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/../external/ktx_software" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/../external/meshoptimizer" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../external/spirv_cross" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/../external/stb" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/../external/volk" vcs="Git" />
   </component>

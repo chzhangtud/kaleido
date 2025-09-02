@@ -546,3 +546,8 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 
 	return true;
 }
+
+Scene::Scene(const char* _path)
+    : path(_path)
+{
+}
