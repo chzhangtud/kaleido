@@ -35,6 +35,7 @@ struct Program
 	VkDescriptorSetLayout descriptorSetLayout;
 	VkDescriptorUpdateTemplate updateTemplate;
 	VkShaderStageFlags pushConstantStages;
+	VkDescriptorSet descriptorSet{ VK_NULL_HANDLE }; // fallback when "push descriptor" is not supported
 
 	uint32_t localSizeX;
 	uint32_t localSizeY;
@@ -51,15 +52,15 @@ void destroyShader(Shader& shader, VkDevice device);
 
 using Shaders = std::initializer_list<const Shader*>;
 
-VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders);
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders, bool pushDescriptorSupported);
 VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkShaderStageFlags pushConstantStages, size_t pushConstantSize);
 VkDescriptorSetLayout createDescriptorArrayLayout(VkDevice device);
 std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice device, VkDescriptorSetLayout layout, uint32_t descriptorCount);
 VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, bool useSpecializationConstants = false, VkBool32 LATE = VK_FALSE, VkBool32 TASK = VK_FALSE, VkBool32 = VK_FALSE);
 VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Program& program, bool useSpecializationConstants = false, VkBool32 LATE = VK_FALSE, VkBool32 TASK = VK_FALSE);
 
-Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize, VkDescriptorSetLayout arrayLayout = nullptr);
-void destroyProgram(VkDevice device, Program& program);
+Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize, bool pushDescriptorSupported, VkDescriptorPool descriptorPool = VK_NULL_HANDLE, VkDescriptorSetLayout arrayLayout = VK_NULL_HANDLE);
+void destroyProgram(VkDevice device, Program& program, VkDescriptorPool descriptorPool);
 
 inline uint32_t getGroupCount(uint32_t threadCount, uint32_t localSize)
 {

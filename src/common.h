@@ -11,6 +11,13 @@
 #include <volk.h>
 #include <imgui.h>
 
+#if defined(__ANDROID__)
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
+
+extern AAssetManager* g_assetManager;
+#endif
+
 #define VK_CHECK(call) \
 	do \
 	{ \

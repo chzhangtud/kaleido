@@ -116,7 +116,7 @@ static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 	char message[4096];
 	snprintf(message, COUNTOF(message), "%s: %s\n", type, pMessage);
 
-	LOGI("%s", message);
+	LOGE("%s", message);
 
 #ifdef _WIN32
 	OutputDebugStringA(message);
@@ -251,7 +251,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	return result;
 }
 
-VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool meshShadingEnabled, bool raytracingSupported)
+VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool pushDescriptorSupported, bool meshShadingEnabled, bool raytracingSupported)
 {
 	float queuePriorities[] = { 1.0f };
 
@@ -262,8 +262,16 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 
 	std::vector<const char*> extensions = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 	};
+
+	if (pushDescriptorSupported)
+	{
+		extensions.emplace_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+	}
+	else
+	{
+		extensions.emplace_back(VK_KHR_DESCRIPTOR_UPDATE_TEMPLATE_EXTENSION_NAME);
+	}
 
 	if (meshShadingEnabled)
 	{
@@ -283,7 +291,6 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features.features.pipelineStatisticsQuery = VK_TRUE;
 	features.features.shaderInt16 = VK_TRUE;
 	features.features.shaderInt64 = VK_TRUE;
-	features.features.pipelineStatisticsQuery = VK_TRUE;
 	features.features.samplerAnisotropy = VK_TRUE;
 
 	VkPhysicalDeviceVulkan11Features features11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
@@ -316,6 +323,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features13.dynamicRendering = VK_TRUE;
 	features13.synchronization2 = VK_TRUE;
 	features13.maintenance4 = VK_TRUE;
+	features13.shaderDemoteToHelperInvocation = VK_TRUE;
 
 	// This will only be used if meshShadingEnabled = true (see below)
 	VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };

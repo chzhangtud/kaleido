@@ -34,7 +34,6 @@ public:
 	    uint32_t graphicsQueueFamily,
 	    VkQueue graphicsQueue,
 	    const VkPipelineRenderingCreateInfo& renderingInfo,
-	    VkDescriptorPool descriptorPool,
 	    VkFormat swapchainFormat,
 	    uint32_t imageCount);
 

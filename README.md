@@ -17,3 +17,5 @@ $(VULKAN_SDK)\Bin\glslangValidator --target-env vulkan1.3 %(FullPath) -V -o %(Ro
 
 TODO:
 1. import imgui to add checkboxes for switching different options and display performance profiling
+
+Cmake: 3.22.1

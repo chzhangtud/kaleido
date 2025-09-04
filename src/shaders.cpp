@@ -277,6 +277,9 @@ static uint32_t gatherResources(Shaders shaders, VkDescriptorType (&resourceType
 
 bool loadShader(Shader& shader, VkDevice device, const char* path)
 {
+	std::vector<char> spirv;
+
+#if defined(WIN32)
 	FILE* file = fopen(path, "rb");
 	if (!file)
 	{
@@ -289,11 +292,36 @@ bool loadShader(Shader& shader, VkDevice device, const char* path)
 	assert(length >= 0);
 	fseek(file, 0, SEEK_SET);
 
-	std::vector<char> spirv(length);
-
+	spirv.resize(length);
 	size_t rc = fread(spirv.data(), 1, length, file);
 	assert(rc == size_t(length));
 	fclose(file);
+#elif defined(__ANDROID__)
+	if (!g_assetManager)
+	{
+		LOGE("AAssetManager not initialized!");
+		return false;
+	}
+
+	AAsset* asset = AAssetManager_open(g_assetManager, path, AASSET_MODE_STREAMING);
+	if (!asset)
+	{
+		LOGE("Failed to open asset: %s", path);
+		return false;
+	}
+
+	off_t length = AAsset_getLength(asset);
+	spirv.resize(length);
+
+	int64_t readBytes = AAsset_read(asset, spirv.data(), length);
+	AAsset_close(asset);
+
+	if (readBytes != length)
+	{
+		LOGE("Failed to read complete shader asset: %s", path);
+		return false;
+	}
+#endif
 
 	VkShaderModuleCreateInfo createInfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
 	createInfo.codeSize = length; // note: this needs to be in bytes.
@@ -334,6 +362,7 @@ bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const ch
 		spath = spath.substr(0, pos + 1);
 	spath += path;
 
+#if defined(WIN32)
 	try
 	{
 		for (const auto& entry : fs::directory_iterator(spath))
@@ -363,6 +392,38 @@ bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const ch
 		LOGE("Error reading directory: %s", e.what());
 		return false;
 	}
+#elif defined(__ANDROID__)
+    if (!g_assetManager) {
+        LOGE("AAssetManager is not initialized");
+        return false;
+    }
+
+    AAssetDir* dir = AAssetManager_openDir(g_assetManager, spath.c_str());
+    if (!dir) {
+        LOGE("Failed to open asset dir: %s", spath.c_str());
+        return false;
+    }
+
+    const char* filename = nullptr;
+    while ((filename = AAssetDir_getNextFileName(dir)) != nullptr) {
+        std::string file = filename;
+        if (file.size() < 4 || file.substr(file.size() - 4) != ".spv")
+            continue;
+
+        std::string assetPath = spath + file;
+
+        Shader shader = {};
+        if (!loadShader(shader, device, assetPath.c_str())) {
+            LOGW("%s is not a valid SPIRV module", file.c_str());
+            continue;
+        }
+
+        shader.name = file.substr(0, file.size() - 4);
+        shaders.shaders.push_back(std::move(shader));
+    }
+
+    AAssetDir_close(dir);
+#endif
 
 	LOGI("Loaded %d shaders from %s", int(shaders.shaders.size()), spath.c_str());
 	return true;
@@ -383,7 +444,7 @@ void destroyShader(Shader& shader, VkDevice device)
 	vkDestroyShaderModule(device, shader.module, 0);
 }
 
-VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders)
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders, bool pushDescriptorSupported)
 {
 	std::vector<VkDescriptorSetLayoutBinding> setBindings;
 
@@ -409,7 +470,7 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders
 	}
 
 	VkDescriptorSetLayoutCreateInfo setCreateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-	setCreateInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+	setCreateInfo.flags = pushDescriptorSupported ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0;
 
 	setCreateInfo.bindingCount = uint32_t(setBindings.size());
 	setCreateInfo.pBindings = setBindings.data();
@@ -445,7 +506,7 @@ static VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLay
 	return layout;
 }
 
-static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, Shaders shaders)
+static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, Shaders shaders, bool pushDescriptorSupported, VkDescriptorSetLayout setLayout)
 {
 	std::vector<VkDescriptorUpdateTemplateEntry> entries;
 
@@ -473,7 +534,8 @@ static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipeli
 	createInfo.descriptorUpdateEntryCount = uint32_t(entries.size());
 	createInfo.pDescriptorUpdateEntries = entries.data();
 
-	createInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
+	createInfo.templateType = pushDescriptorSupported ? VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR : VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET;
+	createInfo.descriptorSetLayout = pushDescriptorSupported ? VK_NULL_HANDLE : setLayout;
 	createInfo.pipelineBindPoint = bindPoint;
 	createInfo.pipelineLayout = layout;
 
@@ -667,7 +729,7 @@ VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache,
 	return pipeline;
 }
 
-Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize, VkDescriptorSetLayout arrayLayout)
+Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize, bool pushDescriptorSupported, VkDescriptorPool descriptorPool, VkDescriptorSetLayout arrayLayout)
 {
 	Program program = {};
 	for (const auto& shader : shaders)
@@ -687,13 +749,13 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 	assert(!usesDescriptorArray || arrayLayout);
 
 	program.bindPoint = bindPoint;
-	program.descriptorSetLayout = createDescriptorSetLayout(device, shaders);
+	program.descriptorSetLayout = createDescriptorSetLayout(device, shaders, pushDescriptorSupported);
 	assert(program.descriptorSetLayout);
 
 	program.layout = createPipelineLayout(device, program.descriptorSetLayout, arrayLayout, program.pushConstantStages, pushConstantSize);
 	assert(program.layout);
 
-	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders);
+	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders, pushDescriptorSupported, program.descriptorSetLayout);
 	assert(program.updateTemplate);
 
 	const Shader* shader = shaders.size() == 1 ? *shaders.begin() : nullptr;
@@ -711,10 +773,20 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 	for (const Shader* shader : shaders)
 		program.shaders[program.shaderCount++] = shader;
 
+	if (!pushDescriptorSupported)
+	{
+		VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+		allocInfo.descriptorPool = descriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &program.descriptorSetLayout;
+
+		vkAllocateDescriptorSets(device, &allocInfo, &program.descriptorSet);
+	}
+
 	return program;
 }
 
-void destroyProgram(VkDevice device, Program& program)
+void destroyProgram(VkDevice device, Program& program, VkDescriptorPool descriptorPool)
 {
 	vkDestroyDescriptorUpdateTemplate(device, program.updateTemplate, 0);
 	vkDestroyPipelineLayout(device, program.layout, 0);

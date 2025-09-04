@@ -189,7 +189,7 @@ public:
 #if defined(WIN32)
 	void InitVulkan();
 #elif defined(__ANDROID__)
-	void InitVulkan(ANativeWindow* window);
+	void InitVulkan(ANativeWindow* _window);
 #endif
 
 	void SetScene(const std::shared_ptr<Scene>& _scene);
@@ -205,6 +205,8 @@ private:
 public:
 #if defined(WIN32)
 	GLFWwindow* window{ nullptr };
+#elif defined(__ANDROID__)
+	ANativeWindow* window{ nullptr };
 #endif
 
 	VkInstance instance{ VK_NULL_HANDLE };
@@ -220,6 +222,7 @@ public:
 	VkSurfaceKHR surface{ VK_NULL_HANDLE };
 	uint32_t graphicsFamily{ 0u };
 	VkFormat swapchainFormat;
+	VkDescriptorPool descriptorPool{ VK_NULL_HANDLE };
 
 	VkPipelineRenderingCreateInfo gbufferInfo;
 	Image gbufferTargets[gbufferCount] = {};
@@ -232,6 +235,7 @@ public:
 	uint32_t depthPyramidWidth = 0;
 	uint32_t depthPyramidHeight = 0;
 	uint32_t depthPyramidLevels = 0;
+	std::vector<VkDescriptorSet> depthreduceSets;
 
 	VkFormat gbufferFormats[gbufferCount] = {};
 	VkFormat depthFormat{ VK_FORMAT_D32_SFLOAT };
@@ -282,16 +286,31 @@ public:
 	Program shadowProgram{};
 	Program shadowblurProgram{};
 
+	// TODO: The following descriptor sets can be just temporary.
+	// for cull
+	std::vector<VkDescriptorSet> drawcullSets{ VK_NULL_HANDLE };
+	std::vector<VkDescriptorSet> tasksubmitSets{ VK_NULL_HANDLE };
+
+	// for render
+	std::vector<VkDescriptorSet> clustercullSets{ VK_NULL_HANDLE };
+	std::vector<VkDescriptorSet> clustersubmitSets{ VK_NULL_HANDLE };
+	std::vector<VkDescriptorSet> clusterSets{ VK_NULL_HANDLE };
+	std::vector<VkDescriptorSet> meshtaskSets{ VK_NULL_HANDLE };
+	std::vector<VkDescriptorSet> meshSets{ VK_NULL_HANDLE };
+	std::vector<VkDescriptorSet> shadowblurSets{ VK_NULL_HANDLE };
+
 	// synchronization
 	VkFence frameFence{ VK_NULL_HANDLE };
 	VkSemaphore acquireSemaphore{ VK_NULL_HANDLE };
-	VkSemaphore releaseSemaphore{ VK_NULL_HANDLE };
+	std::vector<VkSemaphore> releaseSemaphores{ VK_NULL_HANDLE };
 
 	//
 	VkQueryPool queryPoolTimestamp{ VK_NULL_HANDLE };
-	VkQueryPool queryPoolPipeline{ VK_NULL_HANDLE };
 	uint64_t timestampResults[20];
+#if defined(WIN32)
+	VkQueryPool queryPoolPipeline{ VK_NULL_HANDLE };
 	uint64_t pipelineResults[3];
+#endif
 
 	// Buffer
 	Buffer mb{};
@@ -323,6 +342,7 @@ public:
 	// Flags
 	bool meshShadingSupported{ false };
 	bool raytracingSupported{ false };
+	bool pushDescriptorSupported{ false };
 	bool dvbCleared{ false };
 	bool mvbCleared{ false };
 

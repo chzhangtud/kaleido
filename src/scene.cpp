@@ -341,6 +341,7 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 
 	cgltf_options options = {};
 	cgltf_data* data = NULL;
+#if defined(WIN32)
 	cgltf_result res = cgltf_parse_file(&options, path, &data);
 	if (res != cgltf_result_success)
 		return false;
@@ -348,10 +349,21 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 	std::unique_ptr<cgltf_data, void (*)(cgltf_data*)> dataPtr(data, &cgltf_free);
 
 	res = cgltf_load_buffers(&options, data, path);
-	if (res != cgltf_result_success)
-	{
-		return false;
-	}
+#elif defined(__ANDROID__)
+    AAsset* model = AAssetManager_open(g_assetManager, path, AASSET_MODE_BUFFER);
+    off_t size = AAsset_getLength(model);
+    std::vector<uint8_t> buffer(size);
+    AAsset_read(model, buffer.data(), size);
+    AAsset_close(model);
+
+    cgltf_result res = cgltf_parse(&options, buffer.data(), buffer.size(), &data);
+#endif
+
+    if (res != cgltf_result_success)
+    {
+        LOGE("Failed to load scene file: %s.", path);
+        return false;
+    }
 
 	res = cgltf_validate(data);
 	if (res != cgltf_result_success)
