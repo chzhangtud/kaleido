@@ -1,10 +1,10 @@
 ﻿#include "GuiRenderer.h"
 #if defined(_WIN32)
-    #include <GLFW/glfw3.h>
+#include <GLFW/glfw3.h>
 #elif defined(__ANDROID__)
-    #include <android/native_window.h>
-    #include <android/log.h>
-    #include <imgui_impl_android.h>
+#include <android/native_window.h>
+#include <android/log.h>
+#include <imgui_impl_android.h>
 #endif
 #include "common.h"
 
@@ -41,7 +41,7 @@ void GuiRenderer::Initialize(
 	    },
 	    instance);
 
-    mWindow = window;
+	mWindow = window;
 	mInstance = instance;
 	mDevice = device;
 
@@ -50,16 +50,16 @@ void GuiRenderer::Initialize(
 
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO();
-	float scale = 1.5f;
+	float scale = 1.0f;
 	io.FontGlobalScale = scale;
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
 	ImGui::StyleColorsDark();
 
 #if defined(_WIN32)
-    ImGui_ImplGlfw_InitForVulkan(window, true);
+	ImGui_ImplGlfw_InitForVulkan(window, true);
 #elif defined(__ANDROID__)
-    ImGui_ImplAndroid_Init(window);
+	ImGui_ImplAndroid_Init(window);
 #endif
 
 	ImGui_ImplVulkan_InitInfo initInfo = {};
@@ -86,9 +86,9 @@ void GuiRenderer::BeginFrame()
 {
 	ImGui_ImplVulkan_NewFrame();
 #if defined(_WIN32)
-    ImGui_ImplGlfw_NewFrame();
+	ImGui_ImplGlfw_NewFrame();
 #elif defined(__ANDROID__)
-    ImGui_ImplAndroid_NewFrame();
+	ImGui_ImplAndroid_NewFrame();
 #endif
 	ImGui::NewFrame();
 }
@@ -128,12 +128,13 @@ void GuiRenderer::Shutdown(VkDevice device)
 {
 	ImGui_ImplVulkan_Shutdown();
 #if defined(_WIN32)
-    ImGui_ImplGlfw_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
 #elif defined(__ANDROID__)
-    ImGui_ImplAndroid_Shutdown();
+	ImGui_ImplAndroid_Shutdown();
 #endif
 	ImGui::DestroyContext();
 	vkDestroyDescriptorPool(device, mDescriptorPool, nullptr);
+	mDescriptorPool = nullptr;
 }
 
 void GuiRenderer::CreateImGuiDescriptorPool(VkDevice device)

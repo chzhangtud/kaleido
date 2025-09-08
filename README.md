@@ -1,7 +1,58 @@
 # kaleido
+This repo is a personal learning record of Niagara's streaming vulkan tutorials from Zeux
+https://github.com/zeux/niagara
 
-clang formatting:
+Besides the content from Niagara, some additional features are continuely added, such as building on Android, more rendering demos etc.
+
+This readme is still working in progress.
+
+# Prerequisites
+- CMake >=3.22.1
+- Vulkan >=1.3
+
+For Windows
+- Visual Studio
+
+For Android
+- Android Studio
+
+
+# Clone
+```bash
+git clone https://github.com/chzhangtud/kaleido.git --recursive
+# Or
+git clone https://github.com/chzhangtud/kaleido.git
+git submodule update --init --recursive
 ```
+
+# Build
+## Windows
+```bash
+mkdir build && cd build
+# Debug:
+cmake -DCMAKE_BUILD_TYPE=Debug ..
+# Release:
+cmake -DCMAKE_BUILD_TYPE=Release ..
+```
+
+## Android
+Open KaleidoAndroid using Android Studio
+Currently users need to copy shaders and model assets into assets folder.
+- Copy "shaders" including spv files to KaleidoAndroid/app/src/main/assets
+- Copy model assets into KaleidoAndroid/app/src/main/assets
+
+# Run
+## Windows
+``` bash
+kaleido.exe -h
+kaleido.exe xxx.gltf
+```
+## Android
+Launch app.
+
+# Others
+clang formatting:
+``` bash
 # install with powershell
 winget install LLVM.LLVM
 
@@ -14,8 +65,3 @@ clang-format -i src/*.cpp src/*.h
 
 For Windows, custom build command for glsl shaders using glslangValidator in visual studio:
 $(VULKAN_SDK)\Bin\glslangValidator --target-env vulkan1.3 %(FullPath) -V -o %(RootDir)%(Directory)\%(Filename).spv
-
-TODO:
-1. import imgui to add checkboxes for switching different options and display performance profiling
-
-Cmake: 3.22.1

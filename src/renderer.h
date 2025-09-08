@@ -242,7 +242,7 @@ public:
 	std::vector<VkImageView> swapchainImageViews;
 
 	VkDebugReportCallbackEXT debugCallback;
-	
+
 	VkDescriptorSetLayout textureSetLayout;
 
 	ShaderSet shaderSet;
@@ -338,7 +338,7 @@ public:
 	VkSampler textureSampler{ VK_NULL_HANDLE };
 	VkSampler readSampler{ VK_NULL_HANDLE };
 	VkSampler depthSampler{ VK_NULL_HANDLE };
-	
+
 	// Flags
 	bool meshShadingSupported{ false };
 	bool raytracingSupported{ false };
@@ -359,7 +359,7 @@ public:
 	Renderer();
 	~Renderer();
 
-    bool DrawFrame();
+	bool DrawFrame();
 
 private:
 	float lastFrame{ 0.0f };

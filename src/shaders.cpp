@@ -393,36 +393,40 @@ bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const ch
 		return false;
 	}
 #elif defined(__ANDROID__)
-    if (!g_assetManager) {
-        LOGE("AAssetManager is not initialized");
-        return false;
-    }
+	if (!g_assetManager)
+	{
+		LOGE("AAssetManager is not initialized");
+		return false;
+	}
 
-    AAssetDir* dir = AAssetManager_openDir(g_assetManager, spath.c_str());
-    if (!dir) {
-        LOGE("Failed to open asset dir: %s", spath.c_str());
-        return false;
-    }
+	AAssetDir* dir = AAssetManager_openDir(g_assetManager, spath.c_str());
+	if (!dir)
+	{
+		LOGE("Failed to open asset dir: %s", spath.c_str());
+		return false;
+	}
 
-    const char* filename = nullptr;
-    while ((filename = AAssetDir_getNextFileName(dir)) != nullptr) {
-        std::string file = filename;
-        if (file.size() < 4 || file.substr(file.size() - 4) != ".spv")
-            continue;
+	const char* filename = nullptr;
+	while ((filename = AAssetDir_getNextFileName(dir)) != nullptr)
+	{
+		std::string file = filename;
+		if (file.size() < 4 || file.substr(file.size() - 4) != ".spv")
+			continue;
 
-        std::string assetPath = spath + file;
+		std::string assetPath = spath + file;
 
-        Shader shader = {};
-        if (!loadShader(shader, device, assetPath.c_str())) {
-            LOGW("%s is not a valid SPIRV module", file.c_str());
-            continue;
-        }
+		Shader shader = {};
+		if (!loadShader(shader, device, assetPath.c_str()))
+		{
+			LOGW("%s is not a valid SPIRV module", file.c_str());
+			continue;
+		}
 
-        shader.name = file.substr(0, file.size() - 4);
-        shaders.shaders.push_back(std::move(shader));
-    }
+		shader.name = file.substr(0, file.size() - 4);
+		shaders.shaders.push_back(std::move(shader));
+	}
 
-    AAssetDir_close(dir);
+	AAssetDir_close(dir);
 #endif
 
 	LOGI("Loaded %d shaders from %s", int(shaders.shaders.size()), spath.c_str());

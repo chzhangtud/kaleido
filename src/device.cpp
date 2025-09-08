@@ -82,11 +82,11 @@ VkInstance createInstance()
 
 	const char* extensions[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
-	#if defined(VK_USE_PLATFORM_WIN32_KHR)
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
 		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-	#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
 		VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
-	#endif
+#endif
 #ifndef NDEBUG
 		VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
 #endif

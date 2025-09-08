@@ -142,22 +142,59 @@ static size_t getImageSizeBC(unsigned int width, unsigned int height, unsigned i
 
 bool loadDDSImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const Buffer& scratch, const char* path)
 {
+#if defined(WIN32)
 	FILE* file = fopen(path, "rb");
 	if (!file)
 		return false;
-
 	std::unique_ptr<FILE, int (*)(FILE*)> filePtr(file, fclose);
 
+	auto readData = [&](void* dst, size_t size) -> bool
+	{
+		return fread(dst, 1, size, file) == size;
+	};
+#elif defined(__ANDROID__)
+	AAsset* asset = AAssetManager_open(g_assetManager, path, AASSET_MODE_BUFFER);
+	if (!asset)
+	{
+		LOGE("Failed to open DDS asset: %s", path);
+		return false;
+	}
+
+	// Get size and read asset into memory
+	off_t assetLength = AAsset_getLength(asset);
+	std::vector<uint8_t> fileData(assetLength);
+	int64_t bytesRead = AAsset_read(asset, fileData.data(), assetLength);
+	AAsset_close(asset);
+
+	if (bytesRead != assetLength)
+	{
+		LOGE("Failed to read full DDS asset: %s", path);
+		return false;
+	}
+
+	const uint8_t* dataPtr = fileData.data();
+	size_t dataOffset = 0;
+
+	auto readData = [&](void* dst, size_t size) -> bool
+	{
+		if (dataOffset + size > fileData.size())
+			return false;
+		memcpy(dst, dataPtr + dataOffset, size);
+		dataOffset += size;
+		return true;
+	};
+#endif
+
 	unsigned int magic = 0;
-	if (fread(&magic, sizeof(magic), 1, file) != 1 || magic != fourCC("DDS "))
+	if (!readData(&magic, sizeof(magic)) || magic != fourCC("DDS "))
 		return false;
 
 	DDS_HEADER header = {};
-	if (fread(&header, sizeof(header), 1, file) != 1)
+	if (!readData(&header, sizeof(header)))
 		return false;
 
 	DDS_HEADER_DXT10 header10 = {};
-	if (header.ddspf.dwFourCC == fourCC("DX10") && fread(&header10, sizeof(header10), 1, file) != 1)
+	if (header.ddspf.dwFourCC == fourCC("DX10") && !readData(&header10, sizeof(header10)))
 		return false;
 
 	if (header.dwSize != sizeof(header) || header.ddspf.dwSize != sizeof(header.ddspf))
@@ -182,6 +219,7 @@ bool loadDDSImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCo
 	VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 	createImage(image, device, memoryProperties, header.dwWidth, header.dwHeight, header.dwMipMapCount, format, usage);
 
+#if defined(WIN32)
 	size_t readSize = fread(scratch.data, 1, imageSize, file);
 	if (readSize != imageSize)
 		return false;
@@ -191,6 +229,10 @@ bool loadDDSImage(Image& image, VkDevice device, VkCommandPool commandPool, VkCo
 
 	filePtr.reset();
 	file = nullptr;
+#elif defined(__ANDROID__)
+	if (!readData(scratch.data, imageSize))
+		return false;
+#endif
 
 	VK_CHECK(vkResetCommandPool(device, commandPool, 0));
 
@@ -276,9 +318,33 @@ uint32_t get_memory_type(uint32_t bits, const VkPhysicalDeviceMemoryProperties& 
 bool loadKtxImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const char* path)
 {
 	VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
-
 	ktxTexture* ktxTexture = nullptr;
-	KTX_error_code result = ktxTexture_CreateFromNamedFile(path, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTexture);
+	KTX_error_code result;
+
+#if defined(WIN32)
+	result = ktxTexture_CreateFromNamedFile(path, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTexture);
+#elif defined(__ANDROID__)
+	AAsset* asset = AAssetManager_open(g_assetManager, path, AASSET_MODE_BUFFER);
+	if (!asset)
+	{
+		LOGE("Error: Cannot open asset %s", path);
+		return false;
+	}
+
+	size_t size = AAsset_getLength(asset);
+	std::vector<uint8_t> buffer(size);
+	int64_t bytesRead = AAsset_read(asset, buffer.data(), size);
+	AAsset_close(asset);
+
+	if (bytesRead != size)
+	{
+		LOGE("Error: Failed to read asset %s", path);
+		return false;
+	}
+
+	result = ktxTexture_CreateFromMemory(buffer.data(), buffer.size(),
+	    KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTexture);
+#endif
 
 	if (ktxTexture == nullptr)
 	{
@@ -647,7 +713,34 @@ bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, V
 	else if (strstr(path, ".png") || strstr(path, ".PNG") || strstr(path, ".jpg") || strstr(path, ".JPG"))
 	{
 		int texWidth, texHeight, texChannels;
-		stbi_uc* pixels = stbi_load(path, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha); // force RGBA8
+		stbi_uc* pixels = nullptr;
+#if defined(WIN32)
+		pixels = stbi_load(path, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha); // force RGBA8
+#elif defined(__ANDROID__)
+		// On Android, use AAssetManager to load image files from assets
+		AAsset* asset = AAssetManager_open(g_assetManager, path, AASSET_MODE_BUFFER);
+		if (!asset)
+		{
+			LOGE("Failed to open asset: %s", path);
+			return false;
+		}
+
+		// Get asset length and read into buffer
+		off_t assetLength = AAsset_getLength(asset);
+		std::vector<unsigned char> assetBuffer(assetLength);
+		int64_t bytesRead = AAsset_read(asset, assetBuffer.data(), assetLength);
+		AAsset_close(asset);
+
+		if (bytesRead != assetLength)
+		{
+			LOGE("Failed to read asset fully: %s", path);
+			return false;
+		}
+
+		// Load image from memory buffer
+		pixels = stbi_load_from_memory(assetBuffer.data(), static_cast<int>(assetLength),
+		    &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+#endif
 		if (!pixels)
 			return false;
 

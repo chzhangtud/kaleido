@@ -339,35 +339,98 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 {
 	clock_t timer = clock();
 
+#if defined(__ANDROID__)
+	// define Android callback
+	auto androidRead = [](const cgltf_memory_options*,
+	                       const cgltf_file_options*,
+	                       const char* filePath,
+	                       cgltf_size* size,
+	                       void** data) -> cgltf_result
+	{
+		AAsset* asset = AAssetManager_open(g_assetManager, filePath, AASSET_MODE_BUFFER);
+		if (!asset)
+		{
+			LOGE("Failed to open asset: %s", filePath);
+			return cgltf_result_file_not_found;
+		}
+
+		off_t assetSize = AAsset_getLength(asset);
+		void* buffer = malloc(assetSize);
+		if (!buffer)
+		{
+			AAsset_close(asset);
+			return cgltf_result_out_of_memory;
+		}
+
+		int64_t bytesRead = AAsset_read(asset, buffer, assetSize);
+		AAsset_close(asset);
+
+		if (bytesRead != assetSize)
+		{
+			free(buffer);
+			return cgltf_result_io_error;
+		}
+
+		*size = assetSize;
+		*data = buffer;
+		return cgltf_result_success;
+	};
+
+	auto androidRelease = [](const cgltf_memory_options*,
+	                          const cgltf_file_options*,
+	                          void* data)
+	{
+		free(data);
+	};
+#endif
+
 	cgltf_options options = {};
-	cgltf_data* data = NULL;
+#if defined(__ANDROID__)
+	options.file.read = androidRead;
+	options.file.release = androidRelease;
+#endif
+
+	cgltf_data* data = nullptr;
+	cgltf_result res;
+
 #if defined(WIN32)
-	cgltf_result res = cgltf_parse_file(&options, path, &data);
-	if (res != cgltf_result_success)
+	res = cgltf_parse_file(&options, path, &data);
+#elif defined(__ANDROID__)
+	// read gltf main file
+	AAsset* model = AAssetManager_open(g_assetManager, path, AASSET_MODE_BUFFER);
+	if (!model)
+	{
+		LOGE("Failed to open gltf file: %s", path);
 		return false;
+	}
+	off_t size = AAsset_getLength(model);
+	std::vector<uint8_t> buffer(size);
+	AAsset_read(model, buffer.data(), size);
+	AAsset_close(model);
+
+	res = cgltf_parse(&options, buffer.data(), buffer.size(), &data);
+#endif
+
+	if (res != cgltf_result_success)
+	{
+		LOGE("Failed to load scene file: %s.", path);
+		return false;
+	}
 
 	std::unique_ptr<cgltf_data, void (*)(cgltf_data*)> dataPtr(data, &cgltf_free);
 
+	// === use customized callback to load buffer===
 	res = cgltf_load_buffers(&options, data, path);
-#elif defined(__ANDROID__)
-    AAsset* model = AAssetManager_open(g_assetManager, path, AASSET_MODE_BUFFER);
-    off_t size = AAsset_getLength(model);
-    std::vector<uint8_t> buffer(size);
-    AAsset_read(model, buffer.data(), size);
-    AAsset_close(model);
-
-    cgltf_result res = cgltf_parse(&options, buffer.data(), buffer.size(), &data);
-#endif
-
-    if (res != cgltf_result_success)
-    {
-        LOGE("Failed to load scene file: %s.", path);
-        return false;
-    }
+	if (res != cgltf_result_success)
+	{
+		LOGE("Failed to load buffers for scene file: %s.", path);
+		return false;
+	}
 
 	res = cgltf_validate(data);
 	if (res != cgltf_result_success)
 	{
+		LOGE("Failed to validate data for scene file: %s.", path);
 		return false;
 	}
 

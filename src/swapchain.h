@@ -8,7 +8,7 @@ struct Swapchain
 	uint32_t imageCount;
 };
 
-VkSurfaceKHR createSurface(VkInstance instance, 
+VkSurfaceKHR createSurface(VkInstance instance,
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
     GLFWwindow* window
 #elif defined(VK_USE_PLATFORM_ANDROID_KHR)
@@ -23,7 +23,7 @@ void createSwapchain(Swapchain& result, VkPhysicalDevice physicalDevice, VkDevic
 #elif defined(VK_USE_PLATFORM_ANDROID_KHR)
     ANativeWindow* window,
 #endif
-	VkFormat format, VkSwapchainKHR oldSwapchain = 0);
+    VkFormat format, VkSwapchainKHR oldSwapchain = 0);
 void destroySwapchain(VkDevice device, Swapchain& swapchain);
 
 enum SwapchainStatus
@@ -39,4 +39,4 @@ SwapchainStatus updateSwapchain(Swapchain& result, VkPhysicalDevice physicalDevi
 #elif defined(VK_USE_PLATFORM_ANDROID_KHR)
     ANativeWindow* window,
 #endif
-	VkFormat format);
+    VkFormat format);

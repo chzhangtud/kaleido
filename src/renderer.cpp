@@ -649,7 +649,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	{
 		meshShadingSupported = meshShadingSupported || strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0;
 		raytracingSupported = raytracingSupported || strcmp(ext.extensionName, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) == 0;
-		//pushDescriptorSupported = pushDescriptorSupported || strcmp(ext.extensionName, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) == 0;
+		// pushDescriptorSupported = pushDescriptorSupported || strcmp(ext.extensionName, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) == 0; // TODO
 	}
 
 	meshShadingEnabled = meshShadingSupported;
@@ -954,7 +954,7 @@ void VulkanContext::InitResources()
 			allocInfo.descriptorSetCount = uint32_t(drawcullSets.size());
 			allocInfo.pSetLayouts = layouts.data();
 
-            auto ret = vkAllocateDescriptorSets(device, &allocInfo, drawcullSets.data());
+			auto ret = vkAllocateDescriptorSets(device, &allocInfo, drawcullSets.data());
 			VK_CHECK(ret);
 		}
 		{
@@ -968,8 +968,7 @@ void VulkanContext::InitResources()
 			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, tasksubmitSets.data()));
 		}
 
-
-		// render descriptor sets 
+		// render descriptor sets
 		{
 			clustercullSets.resize(3);
 			std::vector<VkDescriptorSetLayout> layouts(clustercullSets.size(), clustercullProgram.descriptorSetLayout);
@@ -1015,7 +1014,7 @@ void VulkanContext::InitResources()
 				VK_CHECK(ret);
 			}
 		}
-		
+
 		{
 			meshSets.resize(3);
 			std::vector<VkDescriptorSetLayout> layouts(meshSets.size(), meshProgram.descriptorSetLayout);
@@ -1063,7 +1062,7 @@ bool VulkanContext::DrawFrame()
 	float deltaTime = currentFrame - lastFrame;
 	lastFrame = currentFrame;
 #elif defined(__ANDROID__)
-    float deltaTime = 1.0f; // TODO: This is temporary for building.
+	float deltaTime = 1.0f; // TODO: This is temporary for building.
 #endif
 
 	glm::vec3 front = scene->camera.orientation * glm::vec3(0.0f, 0.0f, -1.0f);
@@ -1089,7 +1088,7 @@ bool VulkanContext::DrawFrame()
 
 	glfwPollEvents();
 #elif defined(__ANDROID__)
-    double frameCPUBegin = 1.0;
+	double frameCPUBegin = 1.0;
 #endif
 
 #if defined(WIN32)
@@ -1152,7 +1151,6 @@ bool VulkanContext::DrawFrame()
 				replace(shadowblurPipeline, createComputePipeline(device, pipelineCache, shadowblurProgram));
 			}
 		};
-
 
 		if (changed)
 		{
@@ -1220,7 +1218,7 @@ bool VulkanContext::DrawFrame()
 		{
 			if (!depthreduceSets.empty())
 				vkFreeDescriptorSets(device, descriptorPool, uint32_t(depthreduceSets.size()), depthreduceSets.data());
-			
+
 			depthreduceSets.resize(depthPyramidLevels);
 			std::vector<VkDescriptorSetLayout> layouts(depthPyramidLevels, depthreduceProgram.descriptorSetLayout);
 			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
@@ -1265,8 +1263,8 @@ bool VulkanContext::DrawFrame()
 		vkCmdFillBuffer(commandBuffer, mvb.buffer, 0, meshletVisibilityBytes, 0);
 
 		VkBufferMemoryBarrier2 fillBarrier = bufferBarrier(mvb.buffer,
-			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+		    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+		    VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 		pipelineBarrier(commandBuffer, 0, 1, &fillBarrier, 0, nullptr);
 
 		mvbCleared = true;
@@ -1335,17 +1333,17 @@ bool VulkanContext::DrawFrame()
 
 	auto cull = [&](VkPipeline pipeline, uint32_t timestamp, const char* phase, bool late, unsigned int postPass = 0)
 	{
-		size_t descriptorSetIndex = late ? (postPass > 0 ? 2 : 1) : 0; 
+		size_t descriptorSetIndex = late ? (postPass > 0 ? 2 : 1) : 0;
 		uint32_t rasterizationStage =
-			taskSubmit
-			    ? VK_PIPELINE_STAGE_TASK_SHADER_BIT_NV | VK_PIPELINE_STAGE_MESH_SHADER_BIT_NV
-			    : VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+		    taskSubmit
+		        ? VK_PIPELINE_STAGE_TASK_SHADER_BIT_NV | VK_PIPELINE_STAGE_MESH_SHADER_BIT_NV
+		        : VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
 
 		VkBufferMemoryBarrier2 prefillBarrier = bufferBarrier(dccb.buffer,
-			VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
-			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+		    VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+		    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 		pipelineBarrier(commandBuffer, 0, 1, &prefillBarrier, 0, nullptr);
 
 		vkCmdFillBuffer(commandBuffer, dccb.buffer, 0, 4, 0);
@@ -1355,16 +1353,16 @@ bool VulkanContext::DrawFrame()
 		// the second cull (late=1) does read pyramid data that was written in the pyramid stage
 		// as such, second cull needs to transition GENERAL->GENERAL with a COMPUTE->COMPUTE barrier, but the first cull needs to have a dummy transition because pyramid starts in UNDEFINED state on first frame
 		VkImageMemoryBarrier2 pyramidBarrier = imageBarrier(depthPyramid.image,
-			late ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0, late ? VK_ACCESS_SHADER_WRITE_BIT : 0, late ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
+		    late ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0, late ? VK_ACCESS_SHADER_WRITE_BIT : 0, late ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
+		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
 		VkBufferMemoryBarrier2 fillBarriers[] = {
 			bufferBarrier(dcb.buffer,
-				VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | rasterizationStage, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT),
+			    VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | rasterizationStage, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT),
 			bufferBarrier(dccb.buffer,
-				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT),
+			    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT),
 		};
 
 		pipelineBarrier(commandBuffer, 0, COUNTOF(fillBarriers), fillBarriers, 1, &pyramidBarrier);
@@ -1395,8 +1393,8 @@ bool VulkanContext::DrawFrame()
 		if (taskSubmit)
 		{
 			VkBufferMemoryBarrier2 syncBarrier = bufferBarrier(dccb.buffer,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
 			pipelineBarrier(commandBuffer, 0, 1, &syncBarrier, 0, nullptr);
 
@@ -1417,11 +1415,11 @@ bool VulkanContext::DrawFrame()
 
 		VkBufferMemoryBarrier2 cullBarriers[] = {
 			bufferBarrier(dcb.buffer,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-				VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | rasterizationStage, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT),
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+			    VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | rasterizationStage, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT),
 			bufferBarrier(dccb.buffer,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-				VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+			    VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
 		};
 
 		pipelineBarrier(commandBuffer, 0, COUNTOF(cullBarriers), cullBarriers, 0, nullptr);
@@ -1431,30 +1429,30 @@ bool VulkanContext::DrawFrame()
 
 	auto render = [&](bool late, const std::vector<VkClearColorValue>& clearColors, const VkClearDepthStencilValue& depthClear, uint32_t query, uint32_t timestamp, const char* phase, unsigned int postPass = 0)
 	{
-		size_t descriptorSetIndex = late ? (postPass > 0 ? 2 : 1) : 0; 
+		size_t descriptorSetIndex = late ? (postPass > 0 ? 2 : 1) : 0;
 		assert(clearColors.size() == gbufferCount);
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
 
-	#if defined(WIN32)
+#if defined(WIN32)
 		vkCmdBeginQuery(commandBuffer, queryPoolPipeline, query, 0);
-	#endif
+#endif
 
 		if (clusterSubmit)
 		{
 			VkBufferMemoryBarrier2 prefillBarrier = bufferBarrier(ccb.buffer,
-				VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
-				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+			    VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+			    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 			pipelineBarrier(commandBuffer, 0, 1, &prefillBarrier, 0, nullptr);
 
 			vkCmdFillBuffer(commandBuffer, ccb.buffer, 0, 4, 0);
 
 			VkBufferMemoryBarrier2 fillBarriers[] = {
 				bufferBarrier(cib.buffer,
-					VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_READ_BIT,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT),
+				    VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_READ_BIT,
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT),
 				bufferBarrier(ccb.buffer,
-					VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT),
+				    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT),
 			};
 			pipelineBarrier(commandBuffer, 0, COUNTOF(fillBarriers), fillBarriers, 0, nullptr);
 
@@ -1480,8 +1478,8 @@ bool VulkanContext::DrawFrame()
 			vkCmdDispatchIndirect(commandBuffer, dccb.buffer, 4);
 
 			VkBufferMemoryBarrier2 syncBarrier = bufferBarrier(ccb.buffer,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
 			pipelineBarrier(commandBuffer, 0, 1, &syncBarrier, 0, nullptr);
 
@@ -1503,11 +1501,11 @@ bool VulkanContext::DrawFrame()
 
 			VkBufferMemoryBarrier2 cullBarriers[] = {
 				bufferBarrier(cib.buffer,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-					VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_READ_BIT),
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+				    VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_READ_BIT),
 				bufferBarrier(ccb.buffer,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-					VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+				    VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
 			};
 
 			pipelineBarrier(commandBuffer, 0, COUNTOF(cullBarriers), cullBarriers, 0, nullptr);
@@ -1563,7 +1561,6 @@ bool VulkanContext::DrawFrame()
 			{
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, clusterProgram.updateTemplate, clusterProgram.layout, 0, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, clusterProgram.bindPoint, clusterProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
-
 			}
 			else
 			{
@@ -1578,11 +1575,10 @@ bool VulkanContext::DrawFrame()
 		else if (taskSubmit)
 		{
 			vkCmdBindPipeline(commandBuffer, meshtaskProgram.bindPoint, postPass >= 1 ? meshtaskpostPipeline : late ? meshtasklatePipeline
-				                                                                                                            : meshtaskPipeline);
+			                                                                                                        : meshtaskPipeline);
 
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
-
 
 			if (pushDescriptorSupported)
 			{
@@ -1618,7 +1614,6 @@ bool VulkanContext::DrawFrame()
 				vkUpdateDescriptorSetWithTemplateKHR(device, meshSets[descriptorSetIndex], meshProgram.updateTemplate, descriptors);
 			}
 
-
 			vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
 			vkCmdPushConstants(commandBuffer, meshProgram.layout, meshProgram.pushConstantStages, 0, sizeof(globals), &passGlobals);
@@ -1626,9 +1621,9 @@ bool VulkanContext::DrawFrame()
 		}
 
 		vkCmdEndRendering(commandBuffer);
-	#if defined(WIN32)
+#if defined(WIN32)
 		vkCmdEndQuery(commandBuffer, queryPoolPipeline, query);
-	#endif
+#endif
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 	};
@@ -1639,12 +1634,12 @@ bool VulkanContext::DrawFrame()
 
 		VkImageMemoryBarrier2 depthBarriers[] = {
 			imageBarrier(depthTarget.image,
-				VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
-				VK_IMAGE_ASPECT_DEPTH_BIT),
+			    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+			    VK_IMAGE_ASPECT_DEPTH_BIT),
 			imageBarrier(depthPyramid.image,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
 		};
 
 		pipelineBarrier(commandBuffer, 0, 0, nullptr, COUNTOF(depthBarriers), depthBarriers);
@@ -1653,8 +1648,8 @@ bool VulkanContext::DrawFrame()
 		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
 		{
 			DescriptorInfo sourceDepth = (i == 0)
-				                                ? DescriptorInfo(depthSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL)
-				                                : DescriptorInfo(depthSampler, depthPyramidMips[i - 1], VK_IMAGE_LAYOUT_GENERAL);
+			                                 ? DescriptorInfo(depthSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL)
+			                                 : DescriptorInfo(depthSampler, depthPyramidMips[i - 1], VK_IMAGE_LAYOUT_GENERAL);
 
 			DescriptorInfo descriptors[] = { { depthPyramidMips[i], VK_IMAGE_LAYOUT_GENERAL }, sourceDepth };
 
@@ -1675,16 +1670,16 @@ bool VulkanContext::DrawFrame()
 			vkCmdPushConstants(commandBuffer, depthreduceProgram.layout, depthreduceProgram.pushConstantStages, 0, sizeof(reduceData), &reduceData);
 			vkCmdDispatch(commandBuffer, getGroupCount(levelWidth, depthreduceProgram.localSizeX), getGroupCount(levelHeight, depthreduceProgram.localSizeY), 1);
 			VkImageMemoryBarrier2 reduceBarrier = imageBarrier(depthPyramid.image,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-				VK_IMAGE_ASPECT_COLOR_BIT, i, 1);
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+			    VK_IMAGE_ASPECT_COLOR_BIT, i, 1);
 			pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &reduceBarrier);
 		}
 
 		VkImageMemoryBarrier2 depthWriteBarrier = imageBarrier(depthTarget.image,
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
-			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-			VK_IMAGE_ASPECT_DEPTH_BIT);
+		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+		    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+		    VK_IMAGE_ASPECT_DEPTH_BIT);
 		pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &depthWriteBarrier);
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
@@ -1692,15 +1687,15 @@ bool VulkanContext::DrawFrame()
 
 	VkImageMemoryBarrier2 renderBeginBarriers[gbufferCount + 1] = {
 		imageBarrier(depthTarget.image,
-			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-			VK_IMAGE_ASPECT_DEPTH_BIT),
+		    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+		    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+		    VK_IMAGE_ASPECT_DEPTH_BIT),
 	};
 
 	for (uint32_t i = 0; i < gbufferCount; ++i)
 		renderBeginBarriers[i + 1] = imageBarrier(gbufferTargets[i].image,
-			VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
+		    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
 
 	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(renderBeginBarriers), renderBeginBarriers);
 
@@ -1737,18 +1732,18 @@ bool VulkanContext::DrawFrame()
 
 	VkImageMemoryBarrier2 blitBarriers[2 + gbufferCount] = {
 		imageBarrier(swapchain.images[imageIndex],
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
+		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
 		imageBarrier(depthTarget.image,
-			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-			VK_IMAGE_ASPECT_DEPTH_BIT)
+		    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		    VK_IMAGE_ASPECT_DEPTH_BIT)
 	};
 
 	for (uint32_t i = 0; i < gbufferCount; ++i)
 		blitBarriers[i + 2] = imageBarrier(gbufferTargets[i].image,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blitBarriers), blitBarriers);
 
@@ -1757,9 +1752,9 @@ bool VulkanContext::DrawFrame()
 		uint32_t timestamp = 16;
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 		VkImageMemoryBarrier2 preshadowBarrier =
-			imageBarrier(shadowTarget.image,
-			    0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+		    imageBarrier(shadowTarget.image,
+		        0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &preshadowBarrier);
 
@@ -1795,11 +1790,11 @@ bool VulkanContext::DrawFrame()
 
 			VkImageMemoryBarrier2 blurBarriers[] = {
 				imageBarrier(blurFrom.image,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL),
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL),
 				imageBarrier(blurTo.image,
-					pass == 0 ? 0 : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, pass == 0 ? 0 : VK_ACCESS_SHADER_READ_BIT, pass == 0 ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
+				    pass == 0 ? 0 : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, pass == 0 ? 0 : VK_ACCESS_SHADER_READ_BIT, pass == 0 ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
 			};
 
 			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blurBarriers), blurBarriers);
@@ -1823,9 +1818,9 @@ bool VulkanContext::DrawFrame()
 		}
 
 		VkImageMemoryBarrier2 postblurBarrier =
-			imageBarrier(shadowTarget.image,
-			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
+		    imageBarrier(shadowTarget.image,
+		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &postblurBarrier);
 
@@ -1918,9 +1913,9 @@ bool VulkanContext::DrawFrame()
 		};
 
 		VkImageMemoryBarrier2 textBarrier =
-			imageBarrier(swapchain.images[imageIndex],
-			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+		    imageBarrier(swapchain.images[imageIndex],
+		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &textBarrier);
 
@@ -1939,11 +1934,11 @@ bool VulkanContext::DrawFrame()
 		}
 
 		// debug text goes here!
-	#if defined(WIN32)
+#if defined(WIN32)
 		uint64_t triangleCount = pipelineResults[0] + pipelineResults[1] + pipelineResults[2];
-	#elif defined(__ANDROID__)
+#elif defined(__ANDROID__)
 		uint64_t triangleCount = 0;
-	#endif
+#endif
 
 		double frameGpuBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 		double frameGpuEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
@@ -1967,37 +1962,37 @@ bool VulkanContext::DrawFrame()
 		if (debugGuiMode % 3 == 2)
 		{
 			debugtext(2, "cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms, final: %.2f ms",
-				cullGPUTime + culllateGPUTime + cullpostGPUTime,
-				pyramidGPUTime,
-				renderGPUTime + renderlateGPUTime + renderpostGPUTime,
-				shadowsGPUTime,
-				shadowblurGPUTime,
-				finalGPUTime);
+			    cullGPUTime + culllateGPUTime + cullpostGPUTime,
+			    pyramidGPUTime,
+			    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
+			    shadowsGPUTime,
+			    shadowblurGPUTime,
+			    finalGPUTime);
 			debugtext(3, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
-				double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, drawsPerSec * 1e-6);
+			    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, drawsPerSec * 1e-6);
 			debugtext(5, "frustum culling %s, occlusion culling %s, level-of-detail %s",
-				cullingEnabled ? "ON" : "OFF", occlusionEnabled ? "ON" : "OFF", lodEnabled ? "ON" : "OFF");
+			    cullingEnabled ? "ON" : "OFF", occlusionEnabled ? "ON" : "OFF", lodEnabled ? "ON" : "OFF");
 			debugtext(6, "mesh shading %s, task shading %s, cluster occlusion culling %s",
-				taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
-				clusterOcclusionEnabled ? "ON" : "OFF");
+			    taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
+			    clusterOcclusionEnabled ? "ON" : "OFF");
 
 			debugtext(8, "RT shading %s, shadow blur %s",
-				raytracingSupported && shadingEnabled ? "ON" : "OFF",
-				raytracingSupported && shadingEnabled && shadowblurEnabled ? "ON" : "OFF");
+			    raytracingSupported && shadingEnabled ? "ON" : "OFF",
+			    raytracingSupported && shadingEnabled && shadowblurEnabled ? "ON" : "OFF");
 		}
 	}
 
 	VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
-		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-		0, 0, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+	    0, 0, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
 	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &presentBarrier);
 
 	vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 1);
 
-	static bool bDisplaySettings = false;
-	static bool bDisplayProfiling = false;
-	static bool bDisplayScene = false;
+	static bool bDisplaySettings = true;
+	static bool bDisplayProfiling = true;
+	static bool bDisplayScene = true;
 	if (ImGui::BeginMainMenuBar())
 	{
 		ImGui::Checkbox("Settings", &bDisplaySettings);
@@ -2039,12 +2034,12 @@ bool VulkanContext::DrawFrame()
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
 			ImGui::PlotLines("##Avg Frame Rate",
-				frPlot.data(),
-				frPlot.size(),
-				frPlot.currentOffset(),
-				nullptr,
-				0.0f, 40.0f,
-				ImVec2(0, 80));
+			    frPlot.data(),
+			    frPlot.size(),
+			    frPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
 			DisplayProfilingData("Avg Frame Rate: ", framerate, 60.f, 30.f, std::greater<float>());
@@ -2056,12 +2051,12 @@ bool VulkanContext::DrawFrame()
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 1.0f, 1.0f));
 			ImGui::PlotLines("##Avg CPU Time",
-				cpuPlot.data(),
-				cpuPlot.size(),
-				cpuPlot.currentOffset(),
-				nullptr,
-				0.0f, 40.0f,
-				ImVec2(0, 80));
+			    cpuPlot.data(),
+			    cpuPlot.size(),
+			    cpuPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
 			DisplayProfilingData("Avg CPU Time(ms): ", frameCPUAvg, 16.7, 33.4);
@@ -2073,12 +2068,12 @@ bool VulkanContext::DrawFrame()
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
 			ImGui::PlotLines("##Avg GPU Time",
-				gpuPlot.data(),
-				gpuPlot.size(),
-				gpuPlot.currentOffset(),
-				nullptr,
-				0.0f, 40.0f,
-				ImVec2(0, 80));
+			    gpuPlot.data(),
+			    gpuPlot.size(),
+			    gpuPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
 			DisplayProfilingData("Avg GPU Time(ms): ", frameGPUAvg, 16.7, 33.4);
@@ -2090,12 +2085,12 @@ bool VulkanContext::DrawFrame()
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 0.0f, 1.0f, 1.0f));
 			ImGui::PlotLines("##Culling GPU Time",
-				gpuCullPlot.data(),
-				gpuCullPlot.size(),
-				gpuCullPlot.currentOffset(),
-				nullptr,
-				0.0f, 40.0f,
-				ImVec2(0, 80));
+			    gpuCullPlot.data(),
+			    gpuCullPlot.size(),
+			    gpuCullPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
 			DisplayProfilingData("Culling GPU Time(ms): ", cullGPUTime, 1.0, 2.0);
@@ -2107,12 +2102,12 @@ bool VulkanContext::DrawFrame()
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.5f, 1.0f, 0.0f, 1.0f));
 			ImGui::PlotLines("##Culling Late GPU Time",
-				gpuCullLatePlot.data(),
-				gpuCullLatePlot.size(),
-				gpuCullLatePlot.currentOffset(),
-				nullptr,
-				0.0f, 40.0f,
-				ImVec2(0, 80));
+			    gpuCullLatePlot.data(),
+			    gpuCullLatePlot.size(),
+			    gpuCullLatePlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
 			DisplayProfilingData("Culling Late GPU Time(ms): ", culllateGPUTime, 1.0, 2.0);
@@ -2124,12 +2119,12 @@ bool VulkanContext::DrawFrame()
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.5f, 1.0f));
 			ImGui::PlotLines("##Rendering GPU Time",
-				gpuRenderingPlot.data(),
-				gpuRenderingPlot.size(),
-				gpuRenderingPlot.currentOffset(),
-				nullptr,
-				0.0f, 40.0f,
-				ImVec2(0, 80));
+			    gpuRenderingPlot.data(),
+			    gpuRenderingPlot.size(),
+			    gpuRenderingPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
 			DisplayProfilingData("Rendering GPU Time(ms): ", renderGPUTime, 4.0, 8.0);
@@ -2141,12 +2136,12 @@ bool VulkanContext::DrawFrame()
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.3f, 0.5f, 0.3f, 1.0f));
 			ImGui::PlotLines("##Rendering Late GPU Time",
-				gpuRenderingLatePlot.data(),
-				gpuRenderingLatePlot.size(),
-				gpuRenderingLatePlot.currentOffset(),
-				nullptr,
-				0.0f, 40.0f,
-				ImVec2(0, 80));
+			    gpuRenderingLatePlot.data(),
+			    gpuRenderingLatePlot.size(),
+			    gpuRenderingLatePlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
 			DisplayProfilingData("Rendering Late GPU Time(ms): ", renderlateGPUTime, 4.0, 8.0);
@@ -2158,12 +2153,12 @@ bool VulkanContext::DrawFrame()
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.5f, 0.0f, 0.3f, 1.0f));
 			ImGui::PlotLines("##Depth Pyramid GPU Time",
-				depthPyramidPlot.data(),
-				depthPyramidPlot.size(),
-				depthPyramidPlot.currentOffset(),
-				nullptr,
-				0.0f, 40.0f,
-				ImVec2(0, 80));
+			    depthPyramidPlot.data(),
+			    depthPyramidPlot.size(),
+			    depthPyramidPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
 			DisplayProfilingData("Depth Pyramid GPU Time(ms): ", pyramidGPUTime, 1.0, 2.0);
@@ -2238,11 +2233,11 @@ bool VulkanContext::DrawFrame()
 	VK_CHECK(vkWaitForFences(device, 1, &frameFence, VK_TRUE, ~0ull));
 	VK_CHECK(vkResetFences(device, 1, &frameFence));
 
-    auto ret =vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT);
-    assert(ret == VK_SUCCESS || ret == VK_NOT_READY);
+	auto ret = vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT);
+	assert(ret == VK_SUCCESS || ret == VK_NOT_READY);
 
 #if defined(WIN32)
-	ret = vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT); 
+	ret = vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT);
 	assert(ret == VK_SUCCESS || ret == VK_NOT_READY);
 #endif
 
@@ -2251,7 +2246,7 @@ bool VulkanContext::DrawFrame()
 #if defined(WIN32)
 	double frameCPUEnd = glfwGetTime() * 1000.0;
 #elif defined(__ANDROID__)
-    double frameCPUEnd = 1.0f; // TODO: this is for temporary building.
+	double frameCPUEnd = 1.0f; // TODO: this is for temporary building.
 #endif
 
 	frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
@@ -2418,7 +2413,7 @@ void VulkanContext::Release()
 	vkDestroySemaphore(device, acquireSemaphore, 0);
 	for (auto releaseSemaphore : releaseSemaphores)
 		vkDestroySemaphore(device, releaseSemaphore, 0);
-	
+
 	vkDestroySurfaceKHR(instance, surface, 0);
 #if defined(WIN32)
 	glfwDestroyWindow(window);
