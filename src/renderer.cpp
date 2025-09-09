@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "tools.h"
 
 VkSemaphore createSemaphore(VkDevice device)
 {
@@ -938,11 +939,6 @@ void VulkanContext::InitResources()
 	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
 	uint32_t imageCount = std::max(2u, surfaceCaps.minImageCount);
 
-	VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
-	renderingInfo.colorAttachmentCount = 1;
-	renderingInfo.pColorAttachmentFormats = &swapchainFormat;
-	renderingInfo.depthAttachmentFormat = depthFormat;
-
 	if (!pushDescriptorSupported)
 	{
 		// cull descriptor sets
@@ -1039,15 +1035,20 @@ void VulkanContext::InitResources()
 		}
 	}
 
+	VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+	renderingInfo.colorAttachmentCount = 1;
+	renderingInfo.pColorAttachmentFormats = &swapchainFormat;
+	renderingInfo.depthAttachmentFormat = depthFormat;
+
 	guiRenderer->Initialize(window, CURRENT_VK_VERSION, instance, physicalDevice, device, graphicsFamily, queue, renderingInfo, swapchainFormat, imageCount);
 
-#if defined(WIN32)
-	lastFrame = glfwGetTime();
-#endif
+	lastFrame = GetTimeInSeconds();
 }
 
 bool VulkanContext::DrawFrame()
 {
+	double frameCPUBegin = GetTimeInSeconds();
+
 	const auto& guiRenderer = GuiRenderer::GetInstance();
 #if defined(WIN32)
 	glfwPollEvents();
@@ -1057,13 +1058,9 @@ bool VulkanContext::DrawFrame()
 	ImGui::SetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
 
 	// update camera position
-#if defined(WIN32)
-	float currentFrame = glfwGetTime();
+	float currentFrame = GetTimeInSeconds();
 	float deltaTime = currentFrame - lastFrame;
 	lastFrame = currentFrame;
-#elif defined(__ANDROID__)
-	float deltaTime = 1.0f; // TODO: This is temporary for building.
-#endif
 
 	glm::vec3 front = scene->camera.orientation * glm::vec3(0.0f, 0.0f, -1.0f);
 	glm::vec3 right = scene->camera.orientation * glm::vec3(1.0f, 0.0f, 0.0f);
@@ -1084,11 +1081,7 @@ bool VulkanContext::DrawFrame()
 			scene->camera.position += right * velocity;
 	}
 
-	double frameCPUBegin = glfwGetTime() * 1000.0;
-
 	glfwPollEvents();
-#elif defined(__ANDROID__)
-	double frameCPUBegin = 1.0;
 #endif
 
 #if defined(WIN32)
@@ -1982,12 +1975,6 @@ bool VulkanContext::DrawFrame()
 		}
 	}
 
-	VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
-	    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-	    0, 0, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-
-	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &presentBarrier);
-
 	vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 1);
 
 	static bool bDisplaySettings = true;
@@ -1995,6 +1982,7 @@ bool VulkanContext::DrawFrame()
 	static bool bDisplayScene = true;
 	if (ImGui::BeginMainMenuBar())
 	{
+		ImGui::Dummy(ImVec2(50.f, 0.f));
 		ImGui::Checkbox("Settings", &bDisplaySettings);
 		ImGui::Checkbox("Profiling", &bDisplayProfiling);
 		ImGui::Checkbox("Scene", &bDisplayScene);
@@ -2191,7 +2179,18 @@ bool VulkanContext::DrawFrame()
 	}
 
 	guiRenderer->EndFrame();
+	VkImageMemoryBarrier2 uiBarrier = imageBarrier(swapchain.images[imageIndex],
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
+
+	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &uiBarrier);
 	guiRenderer->RenderDrawData(commandBuffer, swapchainImageViews[imageIndex], { swapchain.width, swapchain.height });
+
+	VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
+	    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+	    0, 0, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &presentBarrier);
 
 	VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
@@ -2243,11 +2242,7 @@ bool VulkanContext::DrawFrame()
 
 	double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 	double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
-#if defined(WIN32)
-	double frameCPUEnd = glfwGetTime() * 1000.0;
-#elif defined(__ANDROID__)
-	double frameCPUEnd = 1.0f; // TODO: this is for temporary building.
-#endif
+	double frameCPUEnd = GetTimeInSeconds();
 
 	frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
 	frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;

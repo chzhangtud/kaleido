@@ -50,8 +50,11 @@ void GuiRenderer::Initialize(
 
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO();
-	float scale = 1.0f;
-	io.FontGlobalScale = scale;
+#if defined(WIN32)
+	io.FontGlobalScale = 1.f;
+#elif defined(__ANDROID__)
+	io.FontGlobalScale = 2.f;
+#endif
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
 	ImGui::StyleColorsDark();
@@ -120,6 +123,7 @@ void GuiRenderer::RenderDrawData(VkCommandBuffer cmdBuf, VkImageView targetView,
 	renderingInfo.pColorAttachments = &colorAttachment;
 
 	vkCmdBeginRendering(cmdBuf, &renderingInfo);
+
 	ImGui_ImplVulkan_RenderDrawData(drawData, cmdBuf);
 	vkCmdEndRendering(cmdBuf);
 }
