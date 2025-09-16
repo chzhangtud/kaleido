@@ -29,5 +29,8 @@
 // Should we enable synchronization validation? Worth running with 1 occasionally to check correctness.
 #define CONFIG_SYNCVAL 1
 
+// Maximum number of frames in flight, triple buffering
+#define MAX_FRAMES 3
+
 // Maximum number of texture descriptors in the pool
 #define DESCRIPTOR_LIMIT 65536

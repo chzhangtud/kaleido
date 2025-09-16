@@ -51,9 +51,9 @@ char (*countof_helper(T (&_Array)[Size]))[Size];
 #if defined(WIN32)
 #include <stdio.h>
 #define LOGE(fmt, ...) fprintf(stderr, "\033[31m[ERROR]: \033[0m" fmt "\n", ##__VA_ARGS__)
-#define LOGW(fmt, ...) fprintf(stderr, "\033[33m[WARN ]: \033[0m" fmt "\n", ##__VA_ARGS__)
+#define LOGW(fmt, ...) fprintf(stderr, "\033[33m[WARNING]: \033[0m" fmt "\n", ##__VA_ARGS__)
 #define LOGI(fmt, ...) fprintf(stdout, "\033[34m[INFO]: \033[0m" fmt "\n", ##__VA_ARGS__)
-#define LOGD(fmt, ...) fprintf(stdout, "[DEBUG]: " fmt "\n", ##__VA_ARGS__)
+#define LOGD(fmt, ...) fprintf(stdout, "\033[36m[DEBUG]: \033[0m: " fmt "\n", ##__VA_ARGS__)
 #elif defined(__ANDROID__)
 #include <android/log.h>
 #define LOG_TAG "Kaleido"

@@ -9,6 +9,8 @@
 #include <android/native_window_jni.h> // ANativeWindow_fromSurface
 #include <vulkan/vulkan.h>
 #include <memory>
+#include <unordered_map>
+#include "imgui.h"
 
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
@@ -50,7 +52,12 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 #if defined(WIN32)
 	vContext->InitVulkan();
 #elif defined(__ANDROID__)
-	vContext->InitVulkan(g_window);
+    static bool vulkanInitialized = false;
+    if(!vulkanInitialized)
+    {
+        vContext->InitVulkan(g_window);
+        vulkanInitialized = true;
+    }
 #endif
 
 	// material index 0 is always dummy
@@ -256,6 +263,57 @@ Java_com_chzhang_kaleido_MainActivity_nativeDestroy(JNIEnv* env, jobject thiz)
 	}
 #endif
 }
+
+#if defined(__ANDROID__)
+extern "C" JNIEXPORT void JNICALL
+Java_com_chzhang_kaleido_MainActivity_nativeOnTouchEvent(JNIEnv* env, jobject obj,
+                                                         jint action, jfloat x, jfloat y, jint pointerId)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    switch (action) {
+        case 0: // ACTION_DOWN
+            io.AddMousePosEvent(x, y);
+            io.AddMouseButtonEvent(0, true); // left mouse key down
+            break;
+        case 1: // ACTION_UP
+            io.AddMouseButtonEvent(0, false);
+            break;
+        case 2: // ACTION_MOVE
+            io.AddMousePosEvent(x, y);
+            break;
+    }
+}
+static std::unordered_map<int, ImGuiKey> g_KeyMap = {
+        {29, ImGuiKey_A},{30, ImGuiKey_B}, {31, ImGuiKey_C}, {32, ImGuiKey_D},
+        {33, ImGuiKey_E}, {34, ImGuiKey_F}, {35, ImGuiKey_G}, {36, ImGuiKey_H},
+        {37, ImGuiKey_I}, {38, ImGuiKey_J}, {39, ImGuiKey_K}, {40, ImGuiKey_L},
+        {41, ImGuiKey_M}, {42, ImGuiKey_N}, {43, ImGuiKey_O}, {44, ImGuiKey_P},
+        {45, ImGuiKey_Q}, {46, ImGuiKey_R}, {47, ImGuiKey_S}, {48, ImGuiKey_T},
+        {49, ImGuiKey_U}, {50, ImGuiKey_V}, {51, ImGuiKey_W}, {52, ImGuiKey_X},
+        {53, ImGuiKey_Y}, {54, ImGuiKey_Z},
+
+        {66, ImGuiKey_Enter}, {62, ImGuiKey_Space}, {67, ImGuiKey_Backspace},
+        {61, ImGuiKey_Tab},   {111, ImGuiKey_Escape},
+
+        {59, ImGuiKey_LeftShift}, {60, ImGuiKey_RightShift},
+        {113, ImGuiKey_LeftCtrl}, {114, ImGuiKey_RightCtrl},
+        {57, ImGuiKey_LeftAlt},   {58, ImGuiKey_RightAlt},
+
+        {19, ImGuiKey_UpArrow}, {20, ImGuiKey_DownArrow},
+        {21, ImGuiKey_LeftArrow}, {22, ImGuiKey_RightArrow}
+};
+
+// JNI callback: Java -> Native
+extern "C" JNIEXPORT void JNICALL
+Java_com_chzhang_kaleido_MainActivity_nativeOnKeyEvent(JNIEnv* env, jobject obj, jint keyCode, jboolean down)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    auto it = g_KeyMap.find(keyCode);
+    if (it != g_KeyMap.end()) {
+        io.AddKeyEvent(it->second, down);
+    }
+}
+#endif
 
 #if defined(WIN32)
 int main(int argc, const char** argv)

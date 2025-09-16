@@ -230,7 +230,8 @@ void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& v
 	VK_CHECK(vkDeviceWaitIdle(device));
 
 	compactedSizes.resize(blas.size());
-	VK_CHECK(vkGetQueryPoolResults(device, queryPool, 0, blas.size(), blas.size() * sizeof(VkDeviceSize), compactedSizes.data(), sizeof(VkDeviceSize), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
+	auto res = vkGetQueryPoolResults(device, queryPool, 0, blas.size(), blas.size() * sizeof(VkDeviceSize), compactedSizes.data(), sizeof(VkDeviceSize), VK_QUERY_RESULT_64_BIT); 
+	VK_CHECK(res);
 
 	vkDestroyQueryPool(device, queryPool, 0);
 
@@ -937,7 +938,7 @@ void VulkanContext::InitResources()
 	const auto& guiRenderer = GuiRenderer::GetInstance();
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
-	uint32_t imageCount = std::max(2u, surfaceCaps.minImageCount);
+	uint32_t imageCount = std::max(uint32_t(MAX_FRAMES), surfaceCaps.minImageCount); // using triple buffering
 
 	if (!pushDescriptorSupported)
 	{
@@ -2181,16 +2182,16 @@ bool VulkanContext::DrawFrame()
 	guiRenderer->EndFrame();
 	VkImageMemoryBarrier2 uiBarrier = imageBarrier(swapchain.images[imageIndex],
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
+	    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
 
 	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &uiBarrier);
 	guiRenderer->RenderDrawData(commandBuffer, swapchainImageViews[imageIndex], { swapchain.width, swapchain.height });
 
 	VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
 	    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-	    0, 0, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	    VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
-	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &presentBarrier);
+	pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &presentBarrier);
 
 	VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
@@ -2233,11 +2234,11 @@ bool VulkanContext::DrawFrame()
 	VK_CHECK(vkResetFences(device, 1, &frameFence));
 
 	auto ret = vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT);
-	assert(ret == VK_SUCCESS || ret == VK_NOT_READY);
+	//	assert(ret == VK_SUCCESS);
 
 #if defined(WIN32)
 	ret = vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT);
-	assert(ret == VK_SUCCESS || ret == VK_NOT_READY);
+	//assert(ret == VK_SUCCESS);
 #endif
 
 	double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;

@@ -21,7 +21,7 @@
 #endif
 
 // Synchronization validation is disabled by default in Debug since it's rather slow
-#define SYNC_VALIDATION 0
+#define SYNC_VALIDATION CONFIG_SYNCVAL
 
 static bool isLayerSupported(const char* name)
 {
@@ -109,14 +109,17 @@ static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
     const char* pMessage,
     void* pUserData)
 {
-	const char* type =
-	    (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) ? ERROR_HEADER : (flags & VK_DEBUG_REPORT_WARNING_BIT_EXT) ? WARNING_HEADER
-	                                                                                                       : INFO_HEADER;
-
 	char message[4096];
-	snprintf(message, COUNTOF(message), "%s: %s\n", type, pMessage);
+	snprintf(message, COUNTOF(message), "%s\n", pMessage);
 
-	LOGE("%s", message);
+	if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
+		LOGE("%s", message);
+	else if ((flags & VK_DEBUG_REPORT_WARNING_BIT_EXT) || (flags & VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT))
+		LOGW("%s", message);
+	else if (flags & VK_DEBUG_REPORT_DEBUG_BIT_EXT)
+		LOGD("%s", message);
+	else if (flags & VK_DEBUG_REPORT_INFORMATION_BIT_EXT)
+		LOGI("%s", message);
 
 #ifdef _WIN32
 	OutputDebugStringA(message);
