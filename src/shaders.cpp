@@ -600,24 +600,22 @@ std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice devi
 	return std::make_pair(pool, set);
 }
 
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, bool useSpecializationConstants, VkBool32 LATE, VkBool32 TASK, VkBool32 POST)
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, std::vector<PushConst> pushconstants)
 {
 	VkGraphicsPipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
 
 	// TODO: create a specialization constants module to replace code below
 	std::vector<VkSpecializationMapEntry> specializationEntries;
 	VkSpecializationInfo specializationInfo = {};
-	std::vector<VkBool32> data = { LATE, TASK, POST };
-	if (useSpecializationConstants)
+	if (!pushconstants.empty())
 	{
-		specializationEntries.push_back({ 0, 0, sizeof(VkBool32) });
-		specializationEntries.push_back({ 1, sizeof(VkBool32), sizeof(VkBool32) });
-		specializationEntries.push_back({ 2, 2 * sizeof(VkBool32), sizeof(VkBool32) });
+		for (size_t i = 0; i < pushconstants.size(); ++i)
+			specializationEntries.push_back({ uint32_t(i), uint32_t(i * sizeof(PushConst)), sizeof(PushConst) });
 
 		specializationInfo.mapEntryCount = uint32_t(specializationEntries.size());
 		specializationInfo.pMapEntries = specializationEntries.data();
-		specializationInfo.dataSize = sizeof(LATE) + sizeof(TASK) + sizeof(POST);
-		specializationInfo.pData = data.data();
+		specializationInfo.dataSize = sizeof(PushConst) * pushconstants.size();
+		specializationInfo.pData = pushconstants.data();
 	}
 
 	std::vector<VkPipelineShaderStageCreateInfo> stages = {};
@@ -628,7 +626,10 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 		VkPipelineShaderStageCreateInfo stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
 		stage.stage = shader->stage;
 		stage.module = shader->module;
-		stage.pSpecializationInfo = &specializationInfo;
+		if (!pushconstants.empty())
+		{
+			stage.pSpecializationInfo = &specializationInfo;
+		}
 		stage.pName = "main";
 
 		stages.emplace_back(stage);
@@ -695,7 +696,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	return pipeline;
 }
 
-VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Program& program, bool useSpecializationConstants, VkBool32 LATE, VkBool32 TASK)
+VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Program& program, std::vector<PushConst> pushconstants)
 {
 	assert(program.shaderCount == 1);
 	const Shader& shader = *program.shaders[0];
@@ -703,26 +704,26 @@ VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache,
 	assert(shader.stage == VK_SHADER_STAGE_COMPUTE_BIT);
 	VkComputePipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
 
-	// TODO: create a specialization constants module to replace code below
-	std::vector<VkSpecializationMapEntry> specializationEntries;
-	VkSpecializationInfo specializationInfo = {};
-	std::vector<VkBool32> data = { LATE, TASK };
-	if (useSpecializationConstants)
-	{
-		specializationEntries.push_back({ 0, 0, sizeof(VkBool32) });
-		specializationEntries.push_back({ 1, sizeof(VkBool32), sizeof(VkBool32) });
-
-		specializationInfo.mapEntryCount = uint32_t(specializationEntries.size());
-		specializationInfo.pMapEntries = specializationEntries.data();
-		specializationInfo.dataSize = sizeof(LATE) + sizeof(TASK);
-		specializationInfo.pData = data.data();
-	}
-
 	VkPipelineShaderStageCreateInfo stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
 	stage.stage = shader.stage;
 	stage.module = shader.module;
 	stage.pName = "main";
-	stage.pSpecializationInfo = &specializationInfo;
+
+	std::vector<VkSpecializationMapEntry> specializationEntries;
+
+	if (!pushconstants.empty())
+	{
+		// TODO: create a specialization constants module to replace code below
+		for (size_t i = 0; i < pushconstants.size(); ++i)
+			specializationEntries.push_back({ uint32_t(i), uint32_t(i * sizeof(PushConst)), sizeof(PushConst) });
+
+		VkSpecializationInfo specializationInfo = {};
+		specializationInfo.mapEntryCount = uint32_t(specializationEntries.size());
+		specializationInfo.pMapEntries = specializationEntries.data();
+		specializationInfo.dataSize = sizeof(PushConst) * pushconstants.size();
+		specializationInfo.pData = pushconstants.data();
+		stage.pSpecializationInfo = &specializationInfo;
+	}
 
 	createInfo.stage = stage;
 	createInfo.layout = program.layout;

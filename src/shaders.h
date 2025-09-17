@@ -45,6 +45,12 @@ struct Program
 	size_t shaderCount;
 };
 
+union PushConst
+{
+	VkBool32 b;
+	int32_t i;
+};
+
 bool loadShader(Shader& shader, VkDevice device, const char* path);
 bool loadShader(Shader& shader, VkDevice device, const char* base, const char* path);
 bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const char* path);
@@ -56,8 +62,8 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders
 VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkShaderStageFlags pushConstantStages, size_t pushConstantSize);
 VkDescriptorSetLayout createDescriptorArrayLayout(VkDevice device);
 std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice device, VkDescriptorSetLayout layout, uint32_t descriptorCount);
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, bool useSpecializationConstants = false, VkBool32 LATE = VK_FALSE, VkBool32 TASK = VK_FALSE, VkBool32 = VK_FALSE);
-VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Program& program, bool useSpecializationConstants = false, VkBool32 LATE = VK_FALSE, VkBool32 TASK = VK_FALSE);
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, std::vector<PushConst> pushconstants = {});
+VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Program& program, std::vector<PushConst> pushconstants = {});
 
 Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize, bool pushDescriptorSupported, VkDescriptorPool descriptorPool = VK_NULL_HANDLE, VkDescriptorSetLayout arrayLayout = VK_NULL_HANDLE);
 void destroyProgram(VkDevice device, Program& program, VkDescriptorPool descriptorPool);

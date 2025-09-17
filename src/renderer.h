@@ -248,6 +248,7 @@ public:
 	ShaderSet shaderSet;
 
 	// pipelines
+	std::function<void()> pipelinesReloadedCallback;
 	VkPipelineCache pipelineCache = 0;
 	VkPipeline debugtextPipeline = 0;
 	VkPipeline drawcullPipeline = 0;

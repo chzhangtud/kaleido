@@ -767,7 +767,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		shadowblurProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadowblur.comp"] }, sizeof(vec4), pushDescriptorSupported, descriptorPool);
 	}
 
-	auto pipelines = [&]()
+	pipelinesReloadedCallback = [&]()
 	{
 		auto replace = [&](VkPipeline& pipeline, VkPipeline newPipeline)
 		{
@@ -778,26 +778,26 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		};
 
 		replace(debugtextPipeline, createComputePipeline(device, pipelineCache, debugtextProgram));
-		replace(drawcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE));
-		replace(drawculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE));
-		replace(taskcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE));
-		replace(taskculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE));
+		replace(drawcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE } }));
+		replace(drawculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_TRUE }, { /* TASK= */ VK_FALSE } }));
+		replace(taskcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_TRUE } }));
+		replace(taskculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_TRUE }, {/* TASK= */ VK_TRUE } }));
 
 		replace(tasksubmitPipeline, createComputePipeline(device, pipelineCache, tasksubmitProgram));
 		replace(clustersubmitPipeline, createComputePipeline(device, pipelineCache, clustersubmitProgram));
-		replace(clustercullPipeline, createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_FALSE));
-		replace(clusterculllatePipeline, createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_TRUE));
+		replace(clustercullPipeline, createComputePipeline(device, pipelineCache, clustercullProgram, { { /* LATE= */ VK_FALSE } }));
+		replace(clusterculllatePipeline, createComputePipeline(device, pipelineCache, clustercullProgram, { { /* LATE= */ VK_TRUE } }));
 		replace(depthreducePipeline, createComputePipeline(device, pipelineCache, depthreduceProgram));
 		replace(meshPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram));
-		replace(meshpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE));
+		replace(meshpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }));
 
 		if (meshShadingSupported)
 		{
-			replace(meshtaskPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE));
-			replace(meshtasklatePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_FALSE));
-			replace(meshtaskpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_TRUE));
+			replace(meshtaskPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_TRUE } }));
+			replace(meshtasklatePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, { { /* LATE= */ VK_TRUE }, { /* TASK= */ VK_TRUE }, { /* POST= */ VK_FALSE } }));
+			replace(meshtaskpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, { { /* LATE= */ VK_TRUE }, { /* TASK= */ VK_TRUE }, { /* POST= */ VK_TRUE } }));
 			replace(clusterPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram));
-			replace(clusterpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE));
+			replace(clusterpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }));
 		}
 
 		replace(blitPipeline, createComputePipeline(device, pipelineCache, blitProgram));
@@ -809,7 +809,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		}
 	};
 
-	pipelines();
+	pipelinesReloadedCallback();
 
 	queryPoolTimestamp = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
 	assert(queryPoolTimestamp);
@@ -1104,52 +1104,10 @@ bool VulkanContext::DrawFrame()
 			changed |= oldSpirv != shader.spirv;
 		}
 
-		auto pipelines = [&]()
-		{
-			auto replace = [&](VkPipeline& pipeline, VkPipeline newPipeline)
-			{
-				if (pipeline)
-					vkDestroyPipeline(device, pipeline, 0);
-				assert(newPipeline);
-				pipeline = newPipeline;
-			};
-
-			replace(debugtextPipeline, createComputePipeline(device, pipelineCache, debugtextProgram));
-			replace(drawcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE));
-			replace(drawculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_FALSE));
-			replace(taskcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE));
-			replace(taskculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE));
-
-			replace(tasksubmitPipeline, createComputePipeline(device, pipelineCache, tasksubmitProgram));
-			replace(clustersubmitPipeline, createComputePipeline(device, pipelineCache, clustersubmitProgram));
-			replace(clustercullPipeline, createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_FALSE));
-			replace(clusterculllatePipeline, createComputePipeline(device, pipelineCache, clustercullProgram, true, /* LATE= */ VK_TRUE));
-			replace(depthreducePipeline, createComputePipeline(device, pipelineCache, depthreduceProgram));
-			replace(meshPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram));
-			replace(meshpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE));
-
-			if (meshShadingSupported)
-			{
-				replace(meshtaskPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_FALSE, /* TASK= */ VK_TRUE));
-				replace(meshtasklatePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_FALSE));
-				replace(meshtaskpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, /* useSpecializationConstants = */ true, /* LATE= */ VK_TRUE, /* TASK= */ VK_TRUE, /* POST= */ VK_TRUE));
-				replace(clusterPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram));
-				replace(clusterpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, true, /* LATE= */ VK_FALSE, /* TASK= */ VK_FALSE, /* POST= */ VK_TRUE));
-			}
-
-			replace(blitPipeline, createComputePipeline(device, pipelineCache, blitProgram));
-			if (raytracingSupported)
-			{
-				replace(shadePipeline, createComputePipeline(device, pipelineCache, shadeProgram));
-				replace(shadowPipeline, createComputePipeline(device, pipelineCache, shadowProgram));
-				replace(shadowblurPipeline, createComputePipeline(device, pipelineCache, shadowblurProgram));
-			}
-		};
-
 		if (changed)
 		{
 			VK_CHECK(vkDeviceWaitIdle(device));
-			pipelines();
+			pipelinesReloadedCallback();
 		}
 
 		reloadShadersTimer = glfwGetTime() + 1;
