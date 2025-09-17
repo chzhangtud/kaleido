@@ -20,33 +20,36 @@ layout(binding = 2) uniform sampler2D depthImage;
 void main()
 {
 	uvec2 pos = gl_GlobalInvocationID.xy;
-	vec2 uv = (vec2(pos) + 0.5) / imageSize;
 
 #if BLUR
-	float shadow = 0;
-	float accumw = 0;
+	float shadow = texelFetch(shadowImage, ivec2(pos), 0).r;
+	float accumw = 1;
 
 	float znear = 1;
-	float depth = znear / texture(depthImage, uv).r;
+	float depth = znear / texelFetch(depthImage, ivec2(pos), 0).r;
 
-	vec2 offsetScale = vec2(direction, 1 - direction) / imageSize;
+	ivec2 offsetMask = -ivec2(direction, 1 - direction);
 	const int KERNEL = 10;
+
 	for (int i = -KERNEL; i <= KERNEL; ++i)
 	{
-		vec2 uvoff = uv + vec2(i) * offsetScale;
+		if (i == 0)
+			continue;
 
-		// TODO: a lot more tuning required here
+        ivec2 uvoff = ivec2(pos) + (ivec2(i) & offsetMask);
+
 		float gw = exp2(-abs(i) / 10);
-		float dv = znear / texture(depthImage, uvoff).r;
+		float dv = znear / texelFetch(depthImage, uvoff, 0).r;
 		float dw = exp2(-abs(depth - dv) * 20);
+		float fw = gw * dw;
 
-		shadow += texture(shadowImage, uvoff).r * (dw * gw);
-		accumw += dw * gw;
+		shadow += texelFetch(shadowImage, uvoff, 0).r * fw;
+		accumw += fw;
 	}
 
 	shadow /= accumw;
 #else
-	float shadow = texture(shadowImage, uv).r;
+	float shadow = texelFetch(shadowImage, ivec2(pos), 0).r;
 #endif
 
 	imageStore(outImage, ivec2(pos), vec4(shadow, 0, 0, 0));
