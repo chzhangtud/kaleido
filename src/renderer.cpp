@@ -449,6 +449,10 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		{
 			shadowblurEnabled = !shadowblurEnabled;
 		}
+		if (key == GLFW_KEY_Q)
+		{
+			shadowQuality = 1 - shadowQuality;
+		}
 		if (key >= GLFW_KEY_0 && key <= GLFW_KEY_9)
 		{
 			debugLodStep = key - GLFW_KEY_0;
@@ -763,7 +767,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	if (raytracingSupported)
 	{
 		shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shade.comp"] }, sizeof(ShadeData), pushDescriptorSupported, descriptorPool);
-		shadowProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadow.comp"] }, sizeof(ShadowData), pushDescriptorSupported, descriptorPool);
+		shadowProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadow.comp"] }, sizeof(ShadowData), pushDescriptorSupported, descriptorPool, textureSetLayout);
 		shadowblurProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadowblur.comp"] }, sizeof(vec4), pushDescriptorSupported, descriptorPool);
 	}
 
@@ -804,7 +808,8 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		if (raytracingSupported)
 		{
 			replace(shadePipeline, createComputePipeline(device, pipelineCache, shadeProgram));
-			replace(shadowPipeline, createComputePipeline(device, pipelineCache, shadowProgram));
+			replace(shadowlqPipeline, createComputePipeline(device, pipelineCache, shadowProgram, { { /* QUALITY= */ int32_t(0) } }));
+			replace(shadowhqPipeline, createComputePipeline(device, pipelineCache, shadowProgram, { { /* QUALITY= */ int32_t(1) } }));
 			replace(shadowblurPipeline, createComputePipeline(device, pipelineCache, shadowblurProgram));
 		}
 	};
@@ -858,7 +863,7 @@ void VulkanContext::InitResources()
 	createBuffer(mtb, device, memoryProperties, scene->materials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	createBuffer(vb, device, memoryProperties, scene->geometry.vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	createBuffer(ib, device, memoryProperties, scene->geometry.indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	createBuffer(ib, device, memoryProperties, scene->geometry.indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT  | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	if (meshShadingEnabled)
 	{
@@ -1656,7 +1661,7 @@ bool VulkanContext::DrawFrame()
 #endif
 
 	std::vector<VkClearColorValue> clearColors(gbufferCount);
-	clearColors[0] = { 135.f / 255.f, 206.f / 255.f, 235.f / 255.f, 0.f };
+	clearColors[0] = { 135.f / 255.f, 206.f / 255.f, 250.f / 255.f, 15.f / 255.f };
 	clearColors[1] = { 0.f, 0.f, 0.f, 0.f };
 	VkClearDepthStencilValue depthClear = { 0.f, 0 };
 
@@ -1711,17 +1716,19 @@ bool VulkanContext::DrawFrame()
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &preshadowBarrier);
 
 		{
-			vkCmdBindPipeline(commandBuffer, shadowProgram.bindPoint, shadowPipeline);
-			DescriptorInfo descriptors[] = { { shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas };
+			vkCmdBindPipeline(commandBuffer, shadowProgram.bindPoint, shadowQuality == 0 ? shadowlqPipeline : shadowhqPipeline);
+			DescriptorInfo descriptors[] = { { shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas, db.buffer, mb.buffer, mtb.buffer, vb.buffer, ib.buffer, textureSampler };
 
 			if (pushDescriptorSupported)
 			{
 				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadowProgram.updateTemplate, shadowProgram.layout, 0, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 			}
 			else
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, shadowProgram.descriptorSet, shadowProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 0, 1, &shadowProgram.descriptorSet, 0, nullptr);
+				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 			}
 
 			ShadowData shadowData = {};
@@ -1928,9 +1935,10 @@ bool VulkanContext::DrawFrame()
 			    taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
 			    clusterOcclusionEnabled ? "ON" : "OFF");
 
-			debugtext(8, "RT shading %s, shadow blur %s",
+			debugtext(8, "RT shading %s, shadow blur %s, shadow quality %d",
 			    raytracingSupported && shadingEnabled ? "ON" : "OFF",
-			    raytracingSupported && shadingEnabled && shadowblurEnabled ? "ON" : "OFF");
+			    raytracingSupported && shadingEnabled && shadowblurEnabled ? "ON" : "OFF",
+			    shadowQuality);
 		}
 	}
 
@@ -1957,6 +1965,8 @@ bool VulkanContext::DrawFrame()
 		ImGui::Checkbox("Enable Occlusion Culling", &occlusionEnabled);
 		ImGui::Checkbox("Enable Cluster Occlusion Culling", &clusterOcclusionEnabled);
 		ImGui::Checkbox("Enable Deferred Shading", &shadingEnabled);
+		ImGui::SetNextItemWidth(200.f);
+		ImGui::SliderInt("Shadow Quality (0=low, 1=high)", &shadowQuality, 0, 1);
 		ImGui::Checkbox("Enable Shadow Blurring", &shadowblurEnabled);
 		ImGui::Checkbox("Enable LoD", &lodEnabled);
 		if (lodEnabled)
@@ -1965,6 +1975,8 @@ bool VulkanContext::DrawFrame()
 			ImGui::DragInt("Level Index(LoD)", &debugLodStep, 1, 0, 9);
 		}
 		ImGui::Checkbox("Enable Reload Shaders", &reloadShaders);
+		ImGui::SetNextItemWidth(200.f);
+		ImGui::SliderInt("Debug Info Mode (0=off, 1=on, 2=verbose)", &debugGuiMode, 0, 2);
 
 		ImGui::End();
 	}
@@ -2343,7 +2355,8 @@ void VulkanContext::Release()
 		vkDestroyPipeline(device, shadePipeline, 0);
 		destroyProgram(device, shadeProgram, descriptorPool);
 
-		vkDestroyPipeline(device, shadowPipeline, 0);
+		vkDestroyPipeline(device, shadowlqPipeline, 0);
+		vkDestroyPipeline(device, shadowhqPipeline, 0);
 		destroyProgram(device, shadowProgram, descriptorPool);
 
 		vkDestroyPipeline(device, shadowblurPipeline, 0);

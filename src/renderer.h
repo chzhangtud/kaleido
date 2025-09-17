@@ -31,6 +31,7 @@ static bool clusterOcclusionEnabled = true;
 static bool taskShadingEnabled = false;
 static bool shadingEnabled = true;
 static bool shadowblurEnabled = true;
+static int shadowQuality = 1;
 
 static int debugGuiMode = 1;
 static int debugLodStep = 0;
@@ -269,7 +270,8 @@ public:
 	VkPipeline clusterpostPipeline = 0;
 	VkPipeline blitPipeline = 0;
 	VkPipeline shadePipeline = 0;
-	VkPipeline shadowPipeline = 0;
+	VkPipeline shadowlqPipeline = 0;
+	VkPipeline shadowhqPipeline = 0;
 	VkPipeline shadowblurPipeline = 0;
 
 	// Program

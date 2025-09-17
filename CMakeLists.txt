@@ -99,7 +99,11 @@ target_compile_definitions(kaleido PRIVATE
 )
 
 set(SHADERS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/shaders")
-set(SHADERS_DEST_DIR "${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/shaders")
+if(WIN32)
+    set(SHADERS_DEST_DIR "${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/shaders")
+elseif(ANDROID)
+    set(SHADERS_DEST_DIR "${CMAKE_SOURCE_DIR}/KaleidoAndroid/app/src/main/assets/shaders")
+endif()
 
 set(SPV_FILES)
 if(WIN32)
