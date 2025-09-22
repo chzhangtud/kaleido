@@ -1118,6 +1118,11 @@ bool VulkanContext::DrawFrame()
 		{
 			VK_CHECK(vkDeviceWaitIdle(device));
 			pipelinesReloadedCallback();
+			reloadShadersColor = 0x00ff00;
+		}
+		else
+		{
+			reloadShadersColor = 0xffffff;
 		}
 
 		reloadShadersTimer = glfwGetTime() + 1;
@@ -1884,13 +1889,13 @@ bool VulkanContext::DrawFrame()
 
 	if (debugGuiMode % 3)
 	{
-		auto debugtext = [&](int line, const char* format, ...)
+		auto debugtext = [&](int line, uint32_t color, const char* format, ...)
 		{
 			TextData textData = {};
 			textData.offsetX = 1;
 			textData.offsetY = line + 2;
 			textData.scale = 2;
-			textData.color = 0xffffffff;
+			textData.color = color;
 
 			va_list args;
 			va_start(args, format);
@@ -1946,26 +1951,28 @@ bool VulkanContext::DrawFrame()
 		double trianglesPerSec = double(triangleCount) / double(frameGPUAvg * 1e-3);
 		double drawsPerSec = double(scene->draws.size()) / double(frameGPUAvg * 1e-3);
 
-		debugtext(0, "%scpu: %.2f ms; gpu: %.2f ms", reloadShaders ? "R* " : "", frameCPUAvg, frameGPUAvg);
+		debugtext(0, ~0u, "%scpu: %.2f ms; gpu: %.2f ms", reloadShaders ? "   " : "", frameCPUAvg, frameGPUAvg);
+		if (reloadShaders)
+				debugtext(0, reloadShadersColor, "R*");
 
 		if (debugGuiMode % 3 == 2)
 		{
-			debugtext(2, "cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms, final: %.2f ms",
+			debugtext(2, ~0u, "cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms, final: %.2f ms",
 			    cullGPUTime + culllateGPUTime + cullpostGPUTime,
 			    pyramidGPUTime,
 			    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
 			    shadowsGPUTime,
 			    shadowblurGPUTime,
 			    finalGPUTime);
-			debugtext(3, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
+			debugtext(3, ~0u, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
 			    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, drawsPerSec * 1e-6);
-			debugtext(5, "frustum culling %s, occlusion culling %s, level-of-detail %s",
+			debugtext(5, ~0u, "frustum culling %s, occlusion culling %s, level-of-detail %s",
 			    cullingEnabled ? "ON" : "OFF", occlusionEnabled ? "ON" : "OFF", lodEnabled ? "ON" : "OFF");
-			debugtext(6, "mesh shading %s, task shading %s, cluster occlusion culling %s",
+			debugtext(6, ~0u, "mesh shading %s, task shading %s, cluster occlusion culling %s",
 			    taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
 			    clusterOcclusionEnabled ? "ON" : "OFF");
 
-			debugtext(8, "RT shading %s, shadow blur %s, shadow quality %d, shadow checkerboard %s",
+			debugtext(8, ~0u, "RT shading %s, shadow blur %s, shadow quality %d, shadow checkerboard %s",
 			    raytracingSupported && shadingEnabled ? "ON" : "OFF",
 			    raytracingSupported && shadingEnabled && shadowblurEnabled ? "ON" : "OFF",
 			    shadowQuality, shadowCheckerboard ? "ON" : "OFF");

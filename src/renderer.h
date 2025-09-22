@@ -37,6 +37,7 @@ static int shadowQuality = 1;
 static int debugGuiMode = 1;
 static int debugLodStep = 0;
 static bool reloadShaders = false;
+static uint32_t reloadShadersColor = 0xffffffff;
 static double reloadShadersTimer = 0;
 
 static std::shared_ptr<Scene> scene = nullptr;
