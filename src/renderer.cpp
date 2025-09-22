@@ -448,6 +448,10 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		{
 			shadowblurEnabled = !shadowblurEnabled;
 		}
+		if (key == GLFW_KEY_X)
+		{
+			shadowCheckerboard = !shadowCheckerboard;
+		}
 		if (key == GLFW_KEY_Q)
 		{
 			shadowQuality = 1 - shadowQuality;
@@ -767,6 +771,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	{
 		shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shade.comp"] }, sizeof(ShadeData), pushDescriptorSupported, descriptorPool);
 		shadowProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadow.comp"] }, sizeof(ShadowData), pushDescriptorSupported, descriptorPool, textureSetLayout);
+		shadowfillProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadowfill.comp"] }, sizeof(vec4), pushDescriptorSupported, descriptorPool);
 		shadowblurProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadowblur.comp"] }, sizeof(vec4), pushDescriptorSupported, descriptorPool);
 	}
 
@@ -809,6 +814,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 			replace(shadePipeline, createComputePipeline(device, pipelineCache, shadeProgram));
 			replace(shadowlqPipeline, createComputePipeline(device, pipelineCache, shadowProgram, { { /* QUALITY= */ int32_t(0) } }));
 			replace(shadowhqPipeline, createComputePipeline(device, pipelineCache, shadowProgram, { { /* QUALITY= */ int32_t(1) } }));
+			replace(shadowfillPipeline, createComputePipeline(device, pipelineCache, shadowfillProgram));
 			replace(shadowblurPipeline, createComputePipeline(device, pipelineCache, shadowblurProgram));
 		}
 	};
@@ -1502,6 +1508,7 @@ bool VulkanContext::DrawFrame()
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
 		vkCmdSetCullMode(commandBuffer, postPass == 0 ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+		vkCmdSetDepthBias(commandBuffer, postPass == 0 ? 0 : 16, 0, postPass == 0 ? 0 : 1);
 
 		Globals passGlobals = globals;
 		passGlobals.cullData.postPass = postPass;
@@ -1706,6 +1713,10 @@ bool VulkanContext::DrawFrame()
 	if (raytracingSupported && shadingEnabled)
 	{
 		uint32_t timestamp = 16;
+
+		// checkerboard rendering: we dispatch half as many columns and xform them to fill the screen
+		int shadowWidthCB = shadowCheckerboard ? (swapchain.width + 1) / 2 : swapchain.width;
+
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 		VkImageMemoryBarrier2 preshadowBarrier =
 		    imageBarrier(shadowTarget.image,
@@ -1735,11 +1746,31 @@ bool VulkanContext::DrawFrame()
 			shadowData.sunJitter = shadowblurEnabled ? 1e-2f : 0;
 			shadowData.inverseViewProjection = inverse(projection * view);
 			shadowData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
+			shadowData.checkerboard = shadowCheckerboard;
 			vkCmdPushConstants(commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(shadowData), &shadowData);
-			vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
+			vkCmdDispatch(commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
 		}
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+
+		if (shadowCheckerboard)
+		{
+			VkImageMemoryBarrier2 fillBarrier = imageBarrier(shadowTarget.image,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &fillBarrier);
+
+			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowfillPipeline);
+
+			DescriptorInfo descriptors[] = { { shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadowfillProgram.updateTemplate, shadowfillProgram.layout, 0, descriptors);
+
+			vec4 fillData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
+
+			vkCmdPushConstants(commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(fillData), &fillData);
+			vkCmdDispatch(commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
+		}
 
 		for (int pass = 0; pass < (shadowblurEnabled ? 2 : 0); ++pass)
 		{
@@ -1934,10 +1965,10 @@ bool VulkanContext::DrawFrame()
 			    taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
 			    clusterOcclusionEnabled ? "ON" : "OFF");
 
-			debugtext(8, "RT shading %s, shadow blur %s, shadow quality %d",
+			debugtext(8, "RT shading %s, shadow blur %s, shadow quality %d, shadow checkerboard %s",
 			    raytracingSupported && shadingEnabled ? "ON" : "OFF",
 			    raytracingSupported && shadingEnabled && shadowblurEnabled ? "ON" : "OFF",
-			    shadowQuality);
+			    shadowQuality, shadowCheckerboard ? "ON" : "OFF");
 		}
 	}
 
@@ -2356,7 +2387,9 @@ void VulkanContext::Release()
 
 		vkDestroyPipeline(device, shadowlqPipeline, 0);
 		vkDestroyPipeline(device, shadowhqPipeline, 0);
+		vkDestroyPipeline(device, shadowfillPipeline, 0);
 		destroyProgram(device, shadowProgram, descriptorPool);
+		destroyProgram(device, shadowfillProgram, descriptorPool);
 
 		vkDestroyPipeline(device, shadowblurPipeline, 0);
 		destroyProgram(device, shadowblurProgram, descriptorPool);

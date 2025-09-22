@@ -31,6 +31,7 @@ static bool clusterOcclusionEnabled = true;
 static bool taskShadingEnabled = false;
 static bool shadingEnabled = true;
 static bool shadowblurEnabled = true;
+static bool shadowCheckerboard = false;
 static int shadowQuality = 1;
 
 static int debugGuiMode = 1;
@@ -98,6 +99,7 @@ struct alignas(16) ShadowData
 
 	mat4 inverseViewProjection;
 	vec2 imageSize;
+	unsigned int checkerboard;
 };
 
 struct alignas(16) ShadeData
@@ -272,6 +274,7 @@ public:
 	VkPipeline shadePipeline = 0;
 	VkPipeline shadowlqPipeline = 0;
 	VkPipeline shadowhqPipeline = 0;
+	VkPipeline shadowfillPipeline = 0;
 	VkPipeline shadowblurPipeline = 0;
 
 	// Program
@@ -287,6 +290,7 @@ public:
 	Program blitProgram{};
 	Program shadeProgram{};
 	Program shadowProgram{};
+	Program shadowfillProgram{};
 	Program shadowblurProgram{};
 
 	// TODO: The following descriptor sets can be just temporary.
