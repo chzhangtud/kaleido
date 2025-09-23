@@ -472,7 +472,10 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 				vkDestroyPipeline(device, pipeline, 0);
 			assert(newPipeline);
 			pipeline = newPipeline;
+			pipelines.emplace_back(newPipeline);
 		};
+
+		pipelines.clear();
 
 		replace(debugtextPipeline, createComputePipeline(device, pipelineCache, debugtextProgram));
 		replace(drawcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE } }));
@@ -2116,62 +2119,25 @@ void VulkanContext::Release()
 	vkDestroyQueryPool(device, queryPoolPipeline, 0);
 #endif
 
-	vkDestroyPipeline(device, meshPipeline, 0);
-	vkDestroyPipeline(device, meshpostPipeline, 0);
+	for (VkPipeline pipeline : pipelines)
+		vkDestroyPipeline(device, pipeline, 0);
+
 	destroyProgram(device, meshProgram, descriptorPool);
-	{
-		vkDestroyPipeline(device, meshtaskPipeline, 0);
-		vkDestroyPipeline(device, meshtasklatePipeline, 0);
-		vkDestroyPipeline(device, meshtaskpostPipeline, 0);
-		destroyProgram(device, meshtaskProgram, descriptorPool);
-	}
-	{
-		vkDestroyPipeline(device, debugtextPipeline, 0);
-		destroyProgram(device, debugtextProgram, descriptorPool);
-	}
-	{
-		vkDestroyPipeline(device, drawcullPipeline, 0);
-		vkDestroyPipeline(device, drawculllatePipeline, 0);
-		vkDestroyPipeline(device, taskcullPipeline, 0);
-		vkDestroyPipeline(device, taskculllatePipeline, 0);
-		destroyProgram(device, drawcullProgram, descriptorPool);
-	}
-	{
-		vkDestroyPipeline(device, tasksubmitPipeline, 0);
-		destroyProgram(device, tasksubmitProgram, descriptorPool);
-	}
-	{
-		vkDestroyPipeline(device, clustersubmitPipeline, 0);
-		destroyProgram(device, clustersubmitProgram, descriptorPool);
-
-		vkDestroyPipeline(device, clustercullPipeline, 0);
-		vkDestroyPipeline(device, clusterculllatePipeline, 0);
-		destroyProgram(device, clustercullProgram, descriptorPool);
-
-		vkDestroyPipeline(device, clusterPipeline, 0);
-		vkDestroyPipeline(device, clusterpostPipeline, 0);
-		destroyProgram(device, clusterProgram, descriptorPool);
-	}
-	{
-		vkDestroyPipeline(device, depthreducePipeline, 0);
-		destroyProgram(device, depthreduceProgram, descriptorPool);
-	}
-
-	vkDestroyPipeline(device, blitPipeline, 0);
+	destroyProgram(device, meshtaskProgram, descriptorPool);
+	destroyProgram(device, debugtextProgram, descriptorPool);
+	destroyProgram(device, drawcullProgram, descriptorPool);
+	destroyProgram(device, tasksubmitProgram, descriptorPool);
+	destroyProgram(device, clustersubmitProgram, descriptorPool);
+	destroyProgram(device, clustercullProgram, descriptorPool);
+	destroyProgram(device, clusterProgram, descriptorPool);
+	destroyProgram(device, depthreduceProgram, descriptorPool);
 	destroyProgram(device, blitProgram, descriptorPool);
 
 	if (raytracingSupported)
 	{
-		vkDestroyPipeline(device, shadePipeline, 0);
 		destroyProgram(device, shadeProgram, descriptorPool);
-
-		vkDestroyPipeline(device, shadowlqPipeline, 0);
-		vkDestroyPipeline(device, shadowhqPipeline, 0);
-		vkDestroyPipeline(device, shadowfillPipeline, 0);
 		destroyProgram(device, shadowProgram, descriptorPool);
 		destroyProgram(device, shadowfillProgram, descriptorPool);
-
-		vkDestroyPipeline(device, shadowblurPipeline, 0);
 		destroyProgram(device, shadowblurProgram, descriptorPool);
 	}
 

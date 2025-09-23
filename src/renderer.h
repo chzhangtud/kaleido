@@ -273,6 +273,8 @@ public:
 	VkPipeline shadowfillPipeline = 0;
 	VkPipeline shadowblurPipeline = 0;
 
+	std::vector<VkPipeline> pipelines;
+
 	// Program
 	Program debugtextProgram{};
 	Program drawcullProgram{};
