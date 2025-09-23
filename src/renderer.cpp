@@ -1302,16 +1302,15 @@ bool VulkanContext::DrawFrame()
 	//  view = glm::scale(glm::identity<glm::mat4>(), vec3(1, 1, 1)) * view;
 	view = glm::lookAt(scene->camera.position, scene->camera.position + front, up);
 
-	float znear = 0.1f;
 	mat4 projection;
 	if (enableDollyZoom)
 	{
 		float so = soRef - glm::abs(glm::dot(glm::normalize(front), scene->camera.position - cameraOriginForDolly));
-		projection = perspectiveProjectionDollyZoom(scene->camera.fovY, float(swapchain.width) / float(swapchain.height), znear, so, soRef);
+		projection = perspectiveProjectionDollyZoom(scene->camera.fovY, float(swapchain.width) / float(swapchain.height), scene->camera.znear, so, soRef);
 	}
 	else
 	{
-		projection = perspectiveProjection(scene->camera.fovY, float(swapchain.width) / float(swapchain.height), znear);
+		projection = perspectiveProjection(scene->camera.fovY, float(swapchain.width) / float(swapchain.height), scene->camera.znear);
 	}
 	mat4 projectionT = transpose(projection);
 
@@ -1322,7 +1321,7 @@ bool VulkanContext::DrawFrame()
 	cullData.view = view;
 	cullData.P00 = projection[0][0];
 	cullData.P11 = projection[1][1];
-	cullData.znear = znear;
+	cullData.znear = scene->camera.znear;
 	cullData.zfar = scene->drawDistance;
 	cullData.frustum[0] = frustumX.x;
 	cullData.frustum[1] = frustumX.z;
@@ -1864,7 +1863,7 @@ bool VulkanContext::DrawFrame()
 				vkCmdBindDescriptorSets(commandBuffer, shadowblurProgram.bindPoint, shadowblurProgram.layout, 0, 1, &shadowblurSets[pass], 0, nullptr);
 			}
 
-			vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, 0);
+			vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, scene->camera.znear);
 
 			vkCmdPushConstants(commandBuffer, shadowblurProgram.layout, shadowblurProgram.pushConstantStages, 0, sizeof(blurData), &blurData);
 			vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowblurProgram.localSizeX), getGroupCount(swapchain.height, shadowblurProgram.localSizeY), 1);

@@ -112,11 +112,11 @@ bool shadowTraceTransparent(vec3 wpos, vec3 dir, uint rayflags)
 void main()
 {
 	uvec2 pos = gl_GlobalInvocationID.xy;
-	if (shadowData.checkerboard == 1)
+	if (shadowData.checkerboard > 0)
 	{
 		// checkerboard even
 		pos.x *= 2;
-		pos.x += pos.y & 1;
+		pos.x += (pos.y ^ shadowData.checkerboard) & 1;
 	}
 
 	vec2 uv = (vec2(pos) + 0.5) / shadowData.imageSize;

@@ -67,6 +67,7 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 	scene->camera.position = { 2.f, 0.f, 0.4f };
 	scene->camera.orientation = glm::radians(glm::vec3(0.f, 80.f, 0.f));
 	scene->camera.fovY = glm::radians(70.f);
+	scene->camera.znear = 0.1f;
 	scene->sunDirection = normalize(vec3(1.0f, 1.0f, 1.0f));
 
 	bool sceneMode = false;

@@ -93,6 +93,7 @@ struct Camera
 	vec3 position;
 	quat orientation;
 	float fovY;
+	float znear;
 };
 
 struct Keyframe
