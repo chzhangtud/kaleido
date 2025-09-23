@@ -143,7 +143,11 @@ void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& v
 
 void compactBLAS(VkDevice device, std::vector<VkAccelerationStructureKHR>& blas, const std::vector<VkDeviceSize>& compactedSizes, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties);
 
-VkAccelerationStructureKHR buildTLAS(VkDevice device, Buffer& tlasBuffer, const std::vector<MeshDraw>& draws, const std::vector<VkAccelerationStructureKHR>& blas, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties);
+void fillInstanceRT(VkAccelerationStructureInstanceKHR& instance, const MeshDraw& draw, uint32_t instanceIndex, VkDeviceAddress blas);
+
+VkAccelerationStructureKHR createTLAS(VkDevice device, Buffer& tlasBuffer, Buffer& scratchBuffer, const Buffer& instanceBuffer, uint32_t primitiveCount, const VkPhysicalDeviceMemoryProperties& memoryProperties);
+
+void buildTLAS(VkDevice device, VkCommandBuffer commandBuffer, VkAccelerationStructureKHR tlas, const Buffer& tlasBuffer, const Buffer& scratchBuffer, const Buffer& instanceBuffer, uint32_t primitiveCount, VkBuildAccelerationStructureModeKHR mode);
 
 #if defined(_WIN32)
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
@@ -314,7 +318,7 @@ public:
 
 	//
 	VkQueryPool queryPoolTimestamp{ VK_NULL_HANDLE };
-	uint64_t timestampResults[20];
+	uint64_t timestampResults[22];
 #if defined(WIN32)
 	VkQueryPool queryPoolPipeline{ VK_NULL_HANDLE };
 	uint64_t pipelineResults[3];
@@ -337,9 +341,12 @@ public:
 	Buffer ccb{};
 	Buffer blasBuffer{};
 	Buffer tlasBuffer{};
+	Buffer tlasScratchBuffer{};
+	Buffer tlasInstanceBuffer{};
 
 	// Ray tracing
 	std::vector<VkAccelerationStructureKHR> blas;
+	std::vector<VkDeviceAddress> blasAddresses;
 	VkAccelerationStructureKHR tlas{ VK_NULL_HANDLE };
 
 	// Sampler
@@ -348,6 +355,7 @@ public:
 	VkSampler depthSampler{ VK_NULL_HANDLE };
 
 	// Flags
+	bool tlasNeedsRebuild{ true };
 	bool meshShadingSupported{ false };
 	bool raytracingSupported{ false };
 	bool pushDescriptorSupported{ false };
