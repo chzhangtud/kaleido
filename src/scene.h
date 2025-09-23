@@ -95,12 +95,29 @@ struct Camera
 	float fovY;
 };
 
+struct Keyframe
+{
+	vec3 translation;
+	float scale;
+	quat rotation;
+};
+
+struct Animation
+{
+	uint32_t drawIndex;
+
+	float startTime;
+	float period;
+	std::vector<Keyframe> keyframes;
+};
+
 struct Scene
 {
 	Scene(const char* _path);
 	Geometry geometry;
 	std::vector<Material> materials;
 	std::vector<MeshDraw> draws;
+	std::vector<Animation> animations;
 	std::vector<std::string> texturePaths;
 	vec3 sunDirection{ 1.0f };
 	uint32_t meshletVisibilityCount{ 0u };
@@ -115,4 +132,4 @@ struct Scene
 };
 
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false);
-bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false);
+bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false);

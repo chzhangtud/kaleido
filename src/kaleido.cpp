@@ -83,7 +83,7 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
 		{
 			glm::vec3 euler(0.f);
-			if (!loadScene(scene->geometry, scene->materials, scene->draws, scene->texturePaths, scene->camera, scene->sunDirection, modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode))
+			if (!loadScene(scene->geometry, scene->materials, scene->draws, scene->texturePaths, scene->animations, scene->camera, scene->sunDirection, modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode))
 			{
 				LOGE("Error: scene %s failed to load", modelPath.c_str());
 			#if defined(WIN32)

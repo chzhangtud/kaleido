@@ -16,6 +16,27 @@ struct GLFWwindow;
 #include <imgui_impl_android.h>
 #endif
 
+template <typename T, typename Compare = std::less<T>>
+void DisplayProfilingData(const char* str, T data, T threshGreen, T threshOrange, Compare comp = Compare())
+{
+	ImGui::Text("%s", str);
+	if (comp(data, threshGreen))
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 255, 0, 255));
+	}
+	else if (comp(data, threshOrange))
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 165, 0, 255));
+	}
+	else
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 0, 0, 255));
+	}
+	ImGui::SameLine();
+	ImGui::Text("%.2f", data);
+	ImGui::PopStyleColor();
+}
+
 class GuiRenderer
 {
 public:

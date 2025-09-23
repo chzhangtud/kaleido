@@ -470,6 +470,10 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		{
 			debugGuiMode++;
 		}
+		if (key == GLFW_KEY_SPACE)
+		{
+			animationEnabled = !animationEnabled;
+		}
 	}
 }
 
@@ -889,7 +893,7 @@ void VulkanContext::InitResources()
 		uploadBuffer(device, commandPool, commandBuffer, queue, midb, scratch, scene->geometry.meshletIndexData.data(), scene->geometry.meshletIndexData.size() * sizeof(unsigned char));
 	}
 
-	createBuffer(db, device, memoryProperties, scene->draws.size() * sizeof(MeshDraw), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	createBuffer(db, device, memoryProperties, scene->draws.size() * sizeof(MeshDraw), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	createBuffer(dvb, device, memoryProperties, scene->draws.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
@@ -1194,6 +1198,38 @@ bool VulkanContext::DrawFrame()
 			allocInfo.pSetLayouts = layouts.data();
 
 			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, depthreduceSets.data()));
+		}
+	}
+
+	if (animationEnabled)
+	{
+		static double animationTime = 0.0; // TODO: handle overflow when the program last for long time
+		animationTime += deltaTime;
+
+		for (Animation& animation : scene->animations)
+		{
+			double index = (animationTime - animation.startTime) / animation.period;
+
+			if (index < 0)
+				continue;
+
+			index = fmod(index, double(animation.keyframes.size()));
+
+			int index0 = int(index) % animation.keyframes.size();
+			int index1 = (index0 + 1) % animation.keyframes.size();
+
+			double t = index - floor(index);
+
+			const Keyframe& keyframe0 = animation.keyframes[index0];
+			const Keyframe& keyframe1 = animation.keyframes[index1];
+
+			MeshDraw& draw = scene->draws[animation.drawIndex];
+			draw.position = glm::mix(keyframe0.translation, keyframe1.translation, float(t));
+			draw.scale = glm::mix(keyframe0.scale, keyframe1.scale, float(t));
+			draw.orientation = glm::slerp(keyframe0.rotation, keyframe1.rotation, float(t));
+
+			MeshDraw& gpuDraw = static_cast<MeshDraw*>(db.data)[animation.drawIndex];
+			memcpy(&gpuDraw, &draw, sizeof(draw));
 		}
 	}
 
@@ -2014,6 +2050,7 @@ bool VulkanContext::DrawFrame()
 		ImGui::Checkbox("Enable Reload Shaders", &reloadShaders);
 		ImGui::SetNextItemWidth(200.f);
 		ImGui::SliderInt("Debug Info Mode (0=off, 1=on, 2=verbose)", &debugGuiMode, 0, 2);
+		ImGui::Checkbox("Enable Animation", &animationEnabled);
 
 		ImGui::End();
 	}
@@ -2241,11 +2278,11 @@ bool VulkanContext::DrawFrame()
 	VK_CHECK(vkResetFences(device, 1, &frameFence));
 
 	auto ret = vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT);
-	//	assert(ret == VK_SUCCESS);
+	VK_CHECK_QUERY(ret);
 
 #if defined(WIN32)
 	ret = vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT);
-	//assert(ret == VK_SUCCESS);
+	VK_CHECK_QUERY(ret);
 #endif
 
 	double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;

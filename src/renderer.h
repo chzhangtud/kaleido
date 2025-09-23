@@ -33,7 +33,7 @@ static bool shadingEnabled = true;
 static bool shadowblurEnabled = true;
 static bool shadowCheckerboard = false;
 static int shadowQuality = 1;
-
+static bool animationEnabled = false;
 static int debugGuiMode = 1;
 static int debugLodStep = 0;
 static bool reloadShaders = false;
