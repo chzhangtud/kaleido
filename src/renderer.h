@@ -40,6 +40,7 @@ static int debugLodStep = 0;
 static bool reloadShaders = false;
 static uint32_t reloadShadersColor = 0xffffffff;
 static double reloadShadersTimer = 0;
+static bool debugSleep = false;
 
 static std::shared_ptr<Scene> scene = nullptr;
 

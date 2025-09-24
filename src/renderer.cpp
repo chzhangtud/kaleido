@@ -174,6 +174,10 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		{
 			animationEnabled = !animationEnabled;
 		}
+		if (key == GLFW_KEY_APOSTROPHE)
+		{
+			debugSleep = !debugSleep;
+		}
 	}
 }
 
@@ -1730,7 +1734,7 @@ bool VulkanContext::DrawFrame()
 		double trianglesPerSec = double(triangleCount) / double(frameGPUAvg * 1e-3);
 		double drawsPerSec = double(scene->draws.size()) / double(frameGPUAvg * 1e-3);
 
-		debugtext(0, ~0u, "%scpu: %.2f ms; gpu: %.2f ms", reloadShaders ? "   " : "", frameCPUAvg, frameGPUAvg);
+		debugtext(0, ~0u, "%scpu: %.2f ms  (%+.2f); gpu: %.2f ms", reloadShaders ? "   " : "", frameCPUAvg, deltaTime * frameCPUAvg, frameGPUAvg);
 		if (reloadShaders)
 				debugtext(0, reloadShadersColor, "R*");
 
@@ -1797,6 +1801,7 @@ bool VulkanContext::DrawFrame()
 		ImGui::SetNextItemWidth(200.f);
 		ImGui::SliderInt("Debug Info Mode (0=off, 1=on, 2=verbose)", &debugGuiMode, 0, 2);
 		ImGui::Checkbox("Enable Animation", &animationEnabled);
+		ImGui::Checkbox("Enable Debug Sleep", &debugSleep);
 
 		ImGui::End();
 	}
@@ -2037,6 +2042,11 @@ bool VulkanContext::DrawFrame()
 
 	frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
 	frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
+
+	if (debugSleep)
+	{
+		Sleep(200);
+	}
 
 	frameIndex++;
 
