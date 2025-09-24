@@ -19,7 +19,7 @@ struct ShadowData
 	float sunJitter;
 	mat4 inverseViewProjection;
 	vec2 imageSize;
-	uint checkerboard;
+	int checkerboard;
 };
 
 layout(push_constant) uniform block
@@ -111,10 +111,10 @@ bool shadowTraceTransparent(vec3 wpos, vec3 dir, uint rayflags)
 
 void main()
 {
-	uvec2 pos = gl_GlobalInvocationID.xy;
+	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 	if (shadowData.checkerboard > 0)
 	{
-		// checkerboard even
+		// checkerboard
 		pos.x *= 2;
 		pos.x += (pos.y ^ shadowData.checkerboard) & 1;
 	}
@@ -150,5 +150,5 @@ void main()
 
 	float shadow = shadowhit ? 0.0 : 1.0;
 
-	imageStore(outImage, ivec2(pos), vec4(shadow, 0, 0, 0));
+	imageStore(outImage, pos, vec4(shadow, 0, 0, 0));
 }

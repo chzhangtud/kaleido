@@ -14,6 +14,9 @@
 #define MESH_MAXVTX 64
 #define MESH_MAXTRI 124
 
+// Number of clusters along X dimension in a 3D tiled dispatch (must be a divisor of 256)
+#define CLUSTER_TILE 16
+
 // Maximum number of total task shader workgroups; 4M workgroups ~= 256M meshlets ~= 16B triangles if TASK_WGSIZE=64 and MESH_MAXTRI=124
 #define TASK_WGLIMIT (1 << 22)
 

@@ -510,7 +510,7 @@ static VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLay
 	return layout;
 }
 
-static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, Shaders shaders, bool pushDescriptorSupported, VkDescriptorSetLayout setLayout)
+static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, Shaders shaders, bool pushDescriptorSupported, VkDescriptorSetLayout setLayout, uint32_t* pushDescriptorCount)
 {
 	std::vector<VkDescriptorUpdateTemplateEntry> entries;
 
@@ -532,6 +532,8 @@ static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipeli
 			entries.emplace_back(entry);
 		}
 	}
+
+	*pushDescriptorCount = uint32_t(entries.size());
 
 	VkDescriptorUpdateTemplateCreateInfo createInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
 
@@ -656,6 +658,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 
 	VkPipelineRasterizationStateCreateInfo rasterizationState = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
 	rasterizationState.lineWidth = 1.f;
+	//rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
 	rasterizationState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	// rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
 	rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
@@ -761,8 +764,10 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 	program.layout = createPipelineLayout(device, program.descriptorSetLayout, arrayLayout, program.pushConstantStages, pushConstantSize);
 	assert(program.layout);
 
-	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders, pushDescriptorSupported, program.descriptorSetLayout);
+	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders, pushDescriptorSupported, program.descriptorSetLayout, &program.pushDescriptorCount);
 	assert(program.updateTemplate);
+
+	program.pushConstantSize = uint32_t(pushConstantSize);
 
 	const Shader* shader = shaders.size() == 1 ? *shaders.begin() : nullptr;
 

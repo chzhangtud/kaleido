@@ -32,9 +32,9 @@ void main()
 	if (tid == 0)
 	{
 		// TODO: actually use CLUSTER_LIMIT
-		groupCountX = 16;
+		groupCountX = CLUSTER_TILE;
 		groupCountY = min((count + 255) / 256, 65535);;
-		groupCountZ = 16;
+		groupCountZ = CLUSTER_TILE;
 	}
 
 	// the above may result in reading command data that was never written; as such, pad the excess entries with dummy commands (up to 63)

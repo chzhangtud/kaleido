@@ -1,6 +1,21 @@
 #include "renderer.h"
 #include "tools.h"
 
+template <typename PushConstants, size_t PushDescriptors>
+void dispatch(VkCommandBuffer commandBuffer, const Program& program, uint32_t threadCountX, uint32_t threadCountY, const PushConstants& pushConstants, const DescriptorInfo (&pushDescriptors)[PushDescriptors])
+{
+	assert(program.pushConstantSize == sizeof(pushConstants));
+	assert(program.pushDescriptorCount == PushDescriptors);
+
+	if (program.pushConstantStages)
+		vkCmdPushConstants(commandBuffer, program.layout, program.pushConstantStages, 0, sizeof(pushConstants), &pushConstants);
+
+	if (program.pushDescriptorCount)
+		vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, program.updateTemplate, program.layout, 0, pushDescriptors);
+
+	vkCmdDispatch(commandBuffer, getGroupCount(threadCountX, program.localSizeX), getGroupCount(threadCountY, program.localSizeY), 1);
+}
+
 VkSemaphore createSemaphore(VkDevice device)
 {
 	VkSemaphoreCreateInfo createInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
@@ -347,7 +362,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	{
 		meshShadingSupported = meshShadingSupported || strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0;
 		raytracingSupported = raytracingSupported || strcmp(ext.extensionName, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) == 0;
-		// pushDescriptorSupported = pushDescriptorSupported || strcmp(ext.extensionName, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) == 0; // TODO
+		pushDescriptorSupported = pushDescriptorSupported || strcmp(ext.extensionName, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) == 0; // TODO
 	}
 
 	meshShadingEnabled = meshShadingSupported;
@@ -771,6 +786,7 @@ void VulkanContext::InitResources()
 
 bool VulkanContext::DrawFrame()
 {
+	static uint64_t frameIndex = 0;
 	double frameCPUBegin = GetTimeInSeconds();
 
 	const auto& guiRenderer = GuiRenderer::GetInstance();
@@ -895,6 +911,7 @@ bool VulkanContext::DrawFrame()
 			swapchainImageViews[i] = createImageView(device, swapchain.images[i], swapchainFormat, 0, 1);
 		}
 
+		if (!pushDescriptorSupported)
 		{
 			if (!depthreduceSets.empty())
 				vkFreeDescriptorSets(device, descriptorPool, uint32_t(depthreduceSets.size()), depthreduceSets.data());
@@ -1114,16 +1131,15 @@ bool VulkanContext::DrawFrame()
 
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, drawcullProgram.updateTemplate, drawcullProgram.layout, 0, descriptors);
+				dispatch(commandBuffer, drawcullProgram, uint32_t(scene->draws.size()), 1, passData, descriptors);
 			}
 			else
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, drawcullSets[descriptorSetIndex], drawcullProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, drawcullProgram.bindPoint, drawcullProgram.layout, 0, 1, &drawcullSets[descriptorSetIndex], 0, nullptr);
+				vkCmdPushConstants(commandBuffer, drawcullProgram.layout, drawcullProgram.pushConstantStages, 0, sizeof(cullData), &passData);
+				vkCmdDispatch(commandBuffer, getGroupCount(uint32_t(scene->draws.size()), drawcullProgram.localSizeX), 1, 1);
 			}
-
-			vkCmdPushConstants(commandBuffer, drawcullProgram.layout, drawcullProgram.pushConstantStages, 0, sizeof(cullData), &passData);
-			vkCmdDispatch(commandBuffer, getGroupCount(uint32_t(scene->draws.size()), drawcullProgram.localSizeX), 1, 1);
 		}
 
 		if (taskSubmit)
@@ -1390,22 +1406,21 @@ bool VulkanContext::DrawFrame()
 
 			DescriptorInfo descriptors[] = { { depthPyramidMips[i], VK_IMAGE_LAYOUT_GENERAL }, sourceDepth };
 
+			uint32_t levelWidth = std::max(1u, depthPyramidWidth >> i);
+			uint32_t levelHeight = std::max(1u, depthPyramidHeight >> i);
+
+			vec4 reduceData = vec4(levelWidth, levelHeight, 0.f, 0.f);
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, depthreduceProgram.updateTemplate, depthreduceProgram.layout, 0, descriptors);
+				dispatch(commandBuffer, depthreduceProgram, levelWidth, levelHeight, reduceData, descriptors);
 			}
 			else
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, depthreduceSets[i], depthreduceProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, depthreduceProgram.bindPoint, depthreduceProgram.layout, 0, 1, &depthreduceSets[i], 0, nullptr);
+				vkCmdPushConstants(commandBuffer, depthreduceProgram.layout, depthreduceProgram.pushConstantStages, 0, sizeof(reduceData), &reduceData);
+				vkCmdDispatch(commandBuffer, getGroupCount(levelWidth, depthreduceProgram.localSizeX), getGroupCount(levelHeight, depthreduceProgram.localSizeY), 1);
 			}
-			uint32_t levelWidth = std::max(1u, depthPyramidWidth >> i);
-			uint32_t levelHeight = std::max(1u, depthPyramidHeight >> i);
-
-			vec4 reduceData = vec4(levelWidth, levelHeight, 0.f, 0.f);
-
-			vkCmdPushConstants(commandBuffer, depthreduceProgram.layout, depthreduceProgram.pushConstantStages, 0, sizeof(reduceData), &reduceData);
-			vkCmdDispatch(commandBuffer, getGroupCount(levelWidth, depthreduceProgram.localSizeX), getGroupCount(levelHeight, depthreduceProgram.localSizeY), 1);
 			VkImageMemoryBarrier2 reduceBarrier = imageBarrier(depthPyramid.image,
 			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
@@ -1490,6 +1505,7 @@ bool VulkanContext::DrawFrame()
 
 		// checkerboard rendering: we dispatch half as many columns and xform them to fill the screen
 		int shadowWidthCB = shadowCheckerboard ? (swapchain.width + 1) / 2 : swapchain.width;
+		int shadowCheckerboardF = shadowCheckerboard ? 1 + (frameIndex % 2) : 0;
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 		VkImageMemoryBarrier2 preshadowBarrier =
@@ -1503,26 +1519,26 @@ bool VulkanContext::DrawFrame()
 			vkCmdBindPipeline(commandBuffer, shadowProgram.bindPoint, shadowQuality == 0 ? shadowlqPipeline : shadowhqPipeline);
 			DescriptorInfo descriptors[] = { { shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas, db.buffer, mb.buffer, mtb.buffer, vb.buffer, ib.buffer, textureSampler };
 
+			ShadowData shadowData = {};
+			shadowData.sunDirection = scene->sunDirection;
+			shadowData.sunJitter = shadowblurEnabled ? 1e-2f : 0;
+			shadowData.inverseViewProjection = inverse(projection * view);
+			shadowData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
+			shadowData.checkerboard = shadowCheckerboardF;
+
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadowProgram.updateTemplate, shadowProgram.layout, 0, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+				dispatch(commandBuffer, shadowProgram, shadowWidthCB, swapchain.height, shadowData, descriptors);
 			}
 			else
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, shadowProgram.descriptorSet, shadowProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 0, 1, &shadowProgram.descriptorSet, 0, nullptr);
 				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+				vkCmdPushConstants(commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(shadowData), &shadowData);
+				vkCmdDispatch(commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
 			}
-
-			ShadowData shadowData = {};
-			shadowData.sunDirection = scene->sunDirection;
-			shadowData.sunJitter = shadowblurEnabled ? 1e-2f : 0;
-			shadowData.inverseViewProjection = inverse(projection * view);
-			shadowData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
-			shadowData.checkerboard = shadowCheckerboard;
-			vkCmdPushConstants(commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(shadowData), &shadowData);
-			vkCmdDispatch(commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
 		}
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
@@ -1538,12 +1554,9 @@ bool VulkanContext::DrawFrame()
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowfillPipeline);
 
 			DescriptorInfo descriptors[] = { { shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
-			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadowfillProgram.updateTemplate, shadowfillProgram.layout, 0, descriptors);
-
 			vec4 fillData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
 
-			vkCmdPushConstants(commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(fillData), &fillData);
-			vkCmdDispatch(commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
+			dispatch(commandBuffer, shadowfillProgram, shadowWidthCB, swapchain.height, fillData, descriptors);
 		}
 
 		for (int pass = 0; pass < (shadowblurEnabled ? 2 : 0); ++pass)
@@ -1563,21 +1576,19 @@ bool VulkanContext::DrawFrame()
 			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blurBarriers), blurBarriers);
 			vkCmdBindPipeline(commandBuffer, shadowblurProgram.bindPoint, shadowblurPipeline);
 			DescriptorInfo descriptors[] = { { blurTo.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, blurFrom.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+			vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, scene->camera.znear);
 
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadowblurProgram.updateTemplate, shadowblurProgram.layout, 0, descriptors);
+				dispatch(commandBuffer, shadowblurProgram, swapchain.width, swapchain.height, blurData, descriptors);
 			}
 			else
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, shadowblurSets[pass], shadowblurProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, shadowblurProgram.bindPoint, shadowblurProgram.layout, 0, 1, &shadowblurSets[pass], 0, nullptr);
+				vkCmdPushConstants(commandBuffer, shadowblurProgram.layout, shadowblurProgram.pushConstantStages, 0, sizeof(blurData), &blurData);
+				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowblurProgram.localSizeX), getGroupCount(swapchain.height, shadowblurProgram.localSizeY), 1);
 			}
-
-			vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, scene->camera.znear);
-
-			vkCmdPushConstants(commandBuffer, shadowblurProgram.layout, shadowblurProgram.pushConstantStages, 0, sizeof(blurData), &blurData);
-			vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowblurProgram.localSizeX), getGroupCount(swapchain.height, shadowblurProgram.localSizeY), 1);
 		}
 
 		VkImageMemoryBarrier2 postblurBarrier =
@@ -1593,24 +1604,23 @@ bool VulkanContext::DrawFrame()
 
 			DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, gbufferTargets[1].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL } };
 
-			if (pushDescriptorSupported)
-			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, shadeProgram.updateTemplate, shadeProgram.layout, 0, descriptors);
-			}
-			else
-			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, shadeProgram.descriptorSet, shadeProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, shadeProgram.bindPoint, shadeProgram.layout, 0, 1, &shadeProgram.descriptorSet, 0, nullptr);
-			}
-
 			ShadeData shadeData = {};
 			shadeData.cameraPosition = scene->camera.position;
 			shadeData.sunDirection = scene->sunDirection;
 			shadeData.inverseViewProjection = inverse(projection * view);
 			shadeData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
 
-			vkCmdPushConstants(commandBuffer, shadeProgram.layout, shadeProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
-			vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadeProgram.localSizeX), getGroupCount(swapchain.height, shadeProgram.localSizeY), 1);
+			if (pushDescriptorSupported)
+			{
+				dispatch(commandBuffer, shadeProgram, swapchain.width, swapchain.height, shadeData, descriptors);
+			}
+			else
+			{
+				vkUpdateDescriptorSetWithTemplateKHR(device, shadeProgram.descriptorSet, shadeProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, shadeProgram.bindPoint, shadeProgram.layout, 0, 1, &shadeProgram.descriptorSet, 0, nullptr);
+				vkCmdPushConstants(commandBuffer, shadeProgram.layout, shadeProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
+				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadeProgram.localSizeX), getGroupCount(swapchain.height, shadeProgram.localSizeY), 1);
+			}
 		}
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 3);
 	}
@@ -1624,20 +1634,19 @@ bool VulkanContext::DrawFrame()
 		vkCmdBindPipeline(commandBuffer, blitProgram.bindPoint, blitPipeline);
 
 		DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
-
+		vec4 blitData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
+		
 		if (pushDescriptorSupported)
 		{
-			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, blitProgram.updateTemplate, blitProgram.layout, 0, descriptors);
+			dispatch(commandBuffer, blitProgram, swapchain.width, swapchain.height, blitData, descriptors);
 		}
 		else
 		{
 			vkUpdateDescriptorSetWithTemplateKHR(device, blitProgram.descriptorSet, blitProgram.updateTemplate, descriptors);
 			vkCmdBindDescriptorSets(commandBuffer, blitProgram.bindPoint, blitProgram.layout, 0, 1, &blitProgram.descriptorSet, 0, nullptr);
+			vkCmdPushConstants(commandBuffer, blitProgram.layout, blitProgram.pushConstantStages, 0, sizeof(blitData), &blitData);
+			vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, blitProgram.localSizeX), getGroupCount(swapchain.height, blitProgram.localSizeY), 1);
 		}
-		vec4 blitData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
-		vkCmdPushConstants(commandBuffer, blitProgram.layout, blitProgram.pushConstantStages, 0, sizeof(blitData), &blitData);
-		vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, blitProgram.localSizeX), getGroupCount(swapchain.height, blitProgram.localSizeY), 1);
-
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 3);
 	}
 
@@ -1655,7 +1664,6 @@ bool VulkanContext::DrawFrame()
 
 	static double frameCPUAvg = 0.0;
 	static double frameGPUAvg = 0.0;
-	static uint64_t frameIndex = 0;
 
 	if (debugGuiMode % 3)
 	{
@@ -1778,6 +1786,7 @@ bool VulkanContext::DrawFrame()
 		ImGui::SetNextItemWidth(200.f);
 		ImGui::SliderInt("Shadow Quality (0=low, 1=high)", &shadowQuality, 0, 1);
 		ImGui::Checkbox("Enable Shadow Blurring", &shadowblurEnabled);
+		ImGui::Checkbox("Enable Shadow Checkerboard", &shadowCheckerboard);
 		ImGui::Checkbox("Enable LoD", &lodEnabled);
 		if (lodEnabled)
 		{

@@ -35,6 +35,8 @@ struct Program
 	VkDescriptorSetLayout descriptorSetLayout;
 	VkDescriptorUpdateTemplate updateTemplate;
 	VkShaderStageFlags pushConstantStages;
+	uint32_t pushConstantSize;
+	uint32_t pushDescriptorCount;
 	VkDescriptorSet descriptorSet{ VK_NULL_HANDLE }; // fallback when "push descriptor" is not supported
 
 	uint32_t localSizeX;
