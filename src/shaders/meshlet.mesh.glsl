@@ -130,9 +130,11 @@ void main()
         Vertex v = vertices[vi];
 
         vec3 position = vec3(v.vx, v.vy, v.vz);
-        vec3 normal = vec3(v.nx, v.ny, v.nz) / 127.0 - 1.0;
-        vec4 tangent = vec4(int(v.tx), int(v.ty), int(v.tz), int(v.tw)) / 127.0 - 1.0;
         vec2 texcoord = vec2(v.tu, v.tv);
+
+        vec3 normal;
+		vec4 tangent;
+		unpackTBN(v.np, uint(v.tp), normal, tangent);
 
         normal = rotateQuat(normal, meshDraw.orientation);
         tangent.xyz = rotateQuat(tangent.xyz, meshDraw.orientation);
