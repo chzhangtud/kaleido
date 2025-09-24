@@ -141,7 +141,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		}
 		if (key == GLFW_KEY_S && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL))
 		{
-			shadingEnabled = !shadingEnabled;
+			shadowEnabled = !shadowEnabled;
 			return;
 		}
 		if (key == GLFW_KEY_B)
@@ -471,13 +471,11 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		clusterProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["meshlet.mesh"], &shaderSet["mesh.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
 	}
 
-	blitProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["blit.comp"] }, sizeof(vec4), pushDescriptorSupported, descriptorPool);
-	shadeProgram = {};
+	shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shade.comp"] }, sizeof(ShadeData), pushDescriptorSupported, descriptorPool);
 	shadowProgram = {};
 	shadowblurProgram = {};
 	if (raytracingSupported)
 	{
-		shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shade.comp"] }, sizeof(ShadeData), pushDescriptorSupported, descriptorPool);
 		shadowProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadow.comp"] }, sizeof(ShadowData), pushDescriptorSupported, descriptorPool, textureSetLayout);
 		shadowfillProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadowfill.comp"] }, sizeof(vec4), pushDescriptorSupported, descriptorPool);
 		shadowblurProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shadowblur.comp"] }, sizeof(vec4), pushDescriptorSupported, descriptorPool);
@@ -519,10 +517,9 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 			replace(clusterpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }));
 		}
 
-		replace(blitPipeline, createComputePipeline(device, pipelineCache, blitProgram));
+		replace(shadePipeline, createComputePipeline(device, pipelineCache, shadeProgram));
 		if (raytracingSupported)
 		{
-			replace(shadePipeline, createComputePipeline(device, pipelineCache, shadeProgram));
 			replace(shadowlqPipeline, createComputePipeline(device, pipelineCache, shadowProgram, { { /* QUALITY= */ int32_t(0) } }));
 			replace(shadowhqPipeline, createComputePipeline(device, pipelineCache, shadowProgram, { { /* QUALITY= */ int32_t(1) } }));
 			replace(shadowfillPipeline, createComputePipeline(device, pipelineCache, shadowfillProgram));
@@ -1013,7 +1010,7 @@ bool VulkanContext::DrawFrame()
 
 	if (raytracingSupported)
 	{
-		uint32_t timestamp = 20;
+		uint32_t timestamp = 21;
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 
@@ -1486,7 +1483,7 @@ bool VulkanContext::DrawFrame()
 		render(/* late= */ true, clearColors, depthClear, 2, 14, "post render", /* postPass= */ 1);
 	}
 
-	VkImageMemoryBarrier2 blitBarriers[2 + gbufferCount] = {
+	VkImageMemoryBarrier2 shadingBarriers[2 + gbufferCount] = {
 		imageBarrier(swapchain.images[imageIndex],
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
@@ -1497,13 +1494,13 @@ bool VulkanContext::DrawFrame()
 	};
 
 	for (uint32_t i = 0; i < gbufferCount; ++i)
-		blitBarriers[i + 2] = imageBarrier(gbufferTargets[i].image,
+		shadingBarriers[i + 2] = imageBarrier(gbufferTargets[i].image,
 		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blitBarriers), blitBarriers);
+	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(shadingBarriers), shadingBarriers);
 
-	if (raytracingSupported && shadingEnabled)
+	if (raytracingSupported && shadowEnabled)
 	{
 		uint32_t timestamp = 16;
 
@@ -1603,6 +1600,26 @@ bool VulkanContext::DrawFrame()
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &postblurBarrier);
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
+	}
+	else
+	{
+		VkImageMemoryBarrier2 dummyBarrier =
+			imageBarrier(shadowTarget.image,
+				0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &dummyBarrier);
+
+		uint32_t timestamp = 16; // todo: we need an actual profiler
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
+	}
+
+	{
+		uint32_t timestamp = 19;
+
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 		{
 			vkCmdBindPipeline(commandBuffer, shadeProgram.bindPoint, shadePipeline);
 
@@ -1611,6 +1628,7 @@ bool VulkanContext::DrawFrame()
 			ShadeData shadeData = {};
 			shadeData.cameraPosition = scene->camera.position;
 			shadeData.sunDirection = scene->sunDirection;
+			shadeData.shadowEnabled = shadowEnabled;
 			shadeData.inverseViewProjection = inverse(projection * view);
 			shadeData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
 
@@ -1626,32 +1644,6 @@ bool VulkanContext::DrawFrame()
 				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadeProgram.localSizeX), getGroupCount(swapchain.height, shadeProgram.localSizeY), 1);
 			}
 		}
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 3);
-	}
-	else
-	{
-		uint32_t timestamp = 16;
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
-
-		vkCmdBindPipeline(commandBuffer, blitProgram.bindPoint, blitPipeline);
-
-		DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
-		vec4 blitData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
-		
-		if (pushDescriptorSupported)
-		{
-			dispatch(commandBuffer, blitProgram, swapchain.width, swapchain.height, blitData, descriptors);
-		}
-		else
-		{
-			vkUpdateDescriptorSetWithTemplateKHR(device, blitProgram.descriptorSet, blitProgram.updateTemplate, descriptors);
-			vkCmdBindDescriptorSets(commandBuffer, blitProgram.bindPoint, blitProgram.layout, 0, 1, &blitProgram.descriptorSet, 0, nullptr);
-			vkCmdPushConstants(commandBuffer, blitProgram.layout, blitProgram.pushConstantStages, 0, sizeof(blitData), &blitData);
-			vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, blitProgram.localSizeX), getGroupCount(swapchain.height, blitProgram.localSizeY), 1);
-		}
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 3);
 	}
 
 	static double cullGPUTime = 0.0;
@@ -1663,7 +1655,7 @@ bool VulkanContext::DrawFrame()
 	static double renderpostGPUTime = 0.0;
 	static double shadowsGPUTime = 0.0;
 	static double shadowblurGPUTime = 0.0;
-	static double finalGPUTime = 0.0;
+	static double shadeGPUTime = 0.0;
 	static double tlasGPUTime = 0.0;
 
 	static double frameCPUAvg = 0.0;
@@ -1728,8 +1720,8 @@ bool VulkanContext::DrawFrame()
 		renderpostGPUTime = double(timestampResults[15] - timestampResults[14]) * props.limits.timestampPeriod * 1e-6;
 		shadowsGPUTime = double(timestampResults[17] - timestampResults[16]) * props.limits.timestampPeriod * 1e-6;
 		shadowblurGPUTime = double(timestampResults[18] - timestampResults[17]) * props.limits.timestampPeriod * 1e-6;
-		finalGPUTime = double(timestampResults[19] - timestampResults[18]) * props.limits.timestampPeriod * 1e-6;
-		tlasGPUTime = double(timestampResults[21] - timestampResults[20]) * props.limits.timestampPeriod * 1e-6;
+		shadeGPUTime = double(timestampResults[20] - timestampResults[19]) * props.limits.timestampPeriod * 1e-6;
+		tlasGPUTime = double(timestampResults[22] - timestampResults[21]) * props.limits.timestampPeriod * 1e-6;
 
 		double trianglesPerSec = double(triangleCount) / double(frameGPUAvg * 1e-3);
 		double drawsPerSec = double(scene->draws.size()) / double(frameGPUAvg * 1e-3);
@@ -1740,15 +1732,15 @@ bool VulkanContext::DrawFrame()
 
 		if (debugGuiMode % 3 == 2)
 		{
-			debugtext(2, ~0u, "cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms",
+			debugtext(2, ~0u, "cull: %.2f ms, pyramid: %.2f ms, render: %.2f ms, shade: %.2f ms",
 			    cullGPUTime + culllateGPUTime + cullpostGPUTime,
 			    pyramidGPUTime,
-			    renderGPUTime + renderlateGPUTime + renderpostGPUTime);
-			debugtext(3, ~0u, "tlas: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms, final: %.2f ms",
+			    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
+				shadeGPUTime);
+			debugtext(3, ~0u, "tlas: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms",
 				tlasGPUTime,
 			    shadowsGPUTime,
-			    shadowblurGPUTime,
-			    finalGPUTime);
+			    shadowblurGPUTime);
 			debugtext(4, ~0u, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
 			    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, drawsPerSec * 1e-6);
 			debugtext(6, ~0u, "frustum culling %s, occlusion culling %s, level-of-detail %s",
@@ -1757,9 +1749,9 @@ bool VulkanContext::DrawFrame()
 			    taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
 			    clusterOcclusionEnabled ? "ON" : "OFF");
 
-			debugtext(9, ~0u, "RT shading %s, shadow blur %s, shadow quality %d, shadow checkerboard %s",
-			    raytracingSupported && shadingEnabled ? "ON" : "OFF",
-			    raytracingSupported && shadingEnabled && shadowblurEnabled ? "ON" : "OFF",
+			debugtext(9, ~0u, "RT shadow %s, blur %s, shadow quality %d, shadow checkerboard %s",
+			    raytracingSupported && shadowEnabled ? "ON" : "OFF",
+			    raytracingSupported && shadowEnabled && shadowblurEnabled ? "ON" : "OFF",
 			    shadowQuality, shadowCheckerboard ? "ON" : "OFF");
 		}
 	}
@@ -1786,7 +1778,7 @@ bool VulkanContext::DrawFrame()
 		ImGui::Checkbox("Enable Culing", &cullingEnabled);
 		ImGui::Checkbox("Enable Occlusion Culling", &occlusionEnabled);
 		ImGui::Checkbox("Enable Cluster Occlusion Culling", &clusterOcclusionEnabled);
-		ImGui::Checkbox("Enable Deferred Shading", &shadingEnabled);
+		ImGui::Checkbox("Enable Shadow", &shadowEnabled);
 		ImGui::SetNextItemWidth(200.f);
 		ImGui::SliderInt("Shadow Quality (0=low, 1=high)", &shadowQuality, 0, 1);
 		ImGui::Checkbox("Enable Shadow Blurring", &shadowblurEnabled);
@@ -2045,7 +2037,9 @@ bool VulkanContext::DrawFrame()
 
 	if (debugSleep)
 	{
+#if defined(WIN32)
 		Sleep(200);
+#endif
 	}
 
 	frameIndex++;
@@ -2150,7 +2144,6 @@ void VulkanContext::Release()
 	destroyProgram(device, clustercullProgram, descriptorPool);
 	destroyProgram(device, clusterProgram, descriptorPool);
 	destroyProgram(device, depthreduceProgram, descriptorPool);
-	destroyProgram(device, blitProgram, descriptorPool);
 
 	if (raytracingSupported)
 	{

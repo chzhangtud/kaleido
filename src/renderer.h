@@ -30,7 +30,7 @@ static bool lodEnabled = true;
 static bool occlusionEnabled = true;
 static bool clusterOcclusionEnabled = true;
 static bool taskShadingEnabled = false;
-static bool shadingEnabled = true;
+static bool shadowEnabled = true;
 static bool shadowblurEnabled = true;
 static bool shadowCheckerboard = false;
 static int shadowQuality = 1;
@@ -110,7 +110,7 @@ struct alignas(16) ShadeData
 	vec3 cameraPosition;
 	float pad0;
 	vec3 sunDirection;
-	float pad1;
+	int shadowEnabled;
 
 	mat4 inverseViewProjection;
 
@@ -267,7 +267,6 @@ public:
 	VkPipeline meshtaskpostPipeline = 0;
 	VkPipeline clusterPipeline = 0;
 	VkPipeline clusterpostPipeline = 0;
-	VkPipeline blitPipeline = 0;
 	VkPipeline shadePipeline = 0;
 	VkPipeline shadowlqPipeline = 0;
 	VkPipeline shadowhqPipeline = 0;
@@ -286,7 +285,6 @@ public:
 	Program meshProgram{};
 	Program meshtaskProgram{};
 	Program clusterProgram{};
-	Program blitProgram{};
 	Program shadeProgram{};
 	Program shadowProgram{};
 	Program shadowfillProgram{};
@@ -312,7 +310,7 @@ public:
 
 	//
 	VkQueryPool queryPoolTimestamp{ VK_NULL_HANDLE };
-	uint64_t timestampResults[22];
+	uint64_t timestampResults[23];
 #if defined(WIN32)
 	VkQueryPool queryPoolPipeline{ VK_NULL_HANDLE };
 	uint64_t pipelineResults[3];
