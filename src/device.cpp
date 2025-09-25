@@ -40,11 +40,15 @@ static bool isLayerSupported(const char* name)
 
 VkInstance createInstance()
 {
-	assert(volkGetInstanceVersion() >= CURRENT_VK_VERSION);
+	if (volkGetInstanceVersion() < API_VERSION)
+	{
+		fprintf(stderr, "ERROR: Vulkan 1.%d instance not found\n", VK_VERSION_MINOR(API_VERSION));
+		return 0;
+	}
 
 	// SHORTCUT: In real VUlkans applications you should check if the used version is available via vkEnumerateInstanceVersion.
 	VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
-	appInfo.apiVersion = CURRENT_VK_VERSION;
+	appInfo.apiVersion = API_VERSION;
 
 	VkInstanceCreateInfo createInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.pApplicationInfo = &appInfo;
@@ -191,7 +195,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 		if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU)
 			continue;
 
-		LOGI("GPU%d: %s", i, props.deviceName);
+		LOGI("GPU%d: %s (Vulkan 1.%d)", i, props.deviceName, VK_VERSION_MINOR(props.apiVersion));
 
 		uint32_t familyIndex = getGraphicsFamilyIndex(physicalDevices[i]);
 
@@ -207,15 +211,15 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 			continue;
 		}
 
-		if (props.apiVersion < CURRENT_VK_VERSION)
+		if (props.apiVersion < API_VERSION)
 		{
 			uint32_t major = VK_VERSION_MAJOR(props.apiVersion);
 			uint32_t minor = VK_VERSION_MINOR(props.apiVersion);
 			uint32_t patch = VK_VERSION_PATCH(props.apiVersion);
 
-			uint32_t requiredMajor = VK_VERSION_MAJOR(CURRENT_VK_VERSION);
-			uint32_t requiredMinor = VK_VERSION_MINOR(CURRENT_VK_VERSION);
-			uint32_t requiredPatch = VK_VERSION_PATCH(CURRENT_VK_VERSION);
+			uint32_t requiredMajor = VK_VERSION_MAJOR(API_VERSION);
+			uint32_t requiredMinor = VK_VERSION_MINOR(API_VERSION);
+			uint32_t requiredPatch = VK_VERSION_PATCH(API_VERSION);
 
 			LOGI("GPU%d skipped: Vulkan API version too low: %u.%u.%u, required: %u.%u.%u",
 			    i, major, minor, patch, requiredMajor, requiredMinor, requiredPatch);
@@ -248,7 +252,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	}
 	else
 	{
-		LOGE("No GPUs found!");
+		LOGE("No compatible GPU found!");
 	}
 
 	return result;
@@ -269,7 +273,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 
 	if (pushDescriptorSupported)
 	{
-		extensions.emplace_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+		// extensions.emplace_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 	}
 	else
 	{
@@ -328,6 +332,13 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features13.maintenance4 = VK_TRUE;
 	features13.shaderDemoteToHelperInvocation = VK_TRUE;
 
+#if defined(WIN32)
+	VkPhysicalDeviceVulkan14Features features14 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
+	features14.maintenance5 = true;
+	features14.maintenance6 = true;
+	features14.pushDescriptor = true;
+#endif
+
 	// This will only be used if meshShadingEnabled = true (see below)
 	VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
 	featuresMesh.taskShader = VK_TRUE;
@@ -352,8 +363,12 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	createInfo.pNext = &features11;
 	features11.pNext = &features12;
 	features12.pNext = &features13;
-
-	void** ppNext = &features13.pNext;
+#if defined(WIN32)
+	features13.pNext = &features14;
+	void** ppNext = &features14.pNext;
+#elif defined(ANDROID)
+    void** ppNext = &features13.pNext;
+#endif
 
 	if (meshShadingEnabled)
 	{

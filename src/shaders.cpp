@@ -474,7 +474,11 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders
 	}
 
 	VkDescriptorSetLayoutCreateInfo setCreateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-	setCreateInfo.flags = pushDescriptorSupported ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0;
+#if defined(WIN32)
+	setCreateInfo.flags = pushDescriptorSupported ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT : 0;
+#elif defined(ANDROID)
+    setCreateInfo.flags = 0;
+#endif
 
 	setCreateInfo.bindingCount = uint32_t(setBindings.size());
 	setCreateInfo.pBindings = setBindings.data();
@@ -540,7 +544,12 @@ static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipeli
 	createInfo.descriptorUpdateEntryCount = uint32_t(entries.size());
 	createInfo.pDescriptorUpdateEntries = entries.data();
 
-	createInfo.templateType = pushDescriptorSupported ? VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR : VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET;
+#if defined(WIN32)
+	createInfo.templateType = pushDescriptorSupported ? VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS : VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET;
+#elif defined(ANDROID)
+    createInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET;
+#endif
+
 	createInfo.descriptorSetLayout = pushDescriptorSupported ? VK_NULL_HANDLE : setLayout;
 	createInfo.pipelineBindPoint = bindPoint;
 	createInfo.pipelineLayout = layout;

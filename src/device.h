@@ -1,5 +1,11 @@
 #pragma once
-#define CURRENT_VK_VERSION VK_API_VERSION_1_3
+
+// We have a strict requirement for latest Vulkan version to be available
+#if defined(WIN32)
+#define API_VERSION VK_API_VERSION_1_4
+#elif defined(ANDROID)
+#define API_VERSION VK_API_VERSION_1_3
+#endif
 
 VkInstance createInstance();
 

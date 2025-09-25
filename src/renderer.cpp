@@ -10,9 +10,10 @@ void dispatch(VkCommandBuffer commandBuffer, const Program& program, uint32_t th
 	if (program.pushConstantStages)
 		vkCmdPushConstants(commandBuffer, program.layout, program.pushConstantStages, 0, sizeof(pushConstants), &pushConstants);
 
+#if defined(WIN32)
 	if (program.pushDescriptorCount)
-		vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, program.updateTemplate, program.layout, 0, pushDescriptors);
-
+		vkCmdPushDescriptorSetWithTemplate(commandBuffer, program.updateTemplate, program.layout, 0, pushDescriptors);
+#endif
 	vkCmdDispatch(commandBuffer, getGroupCount(threadCountX, program.localSizeX), getGroupCount(threadCountY, program.localSizeY), 1);
 }
 
@@ -342,7 +343,8 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	VK_CHECK(volkInitialize());
 
 	instance = createInstance();
-	assert(instance);
+	if (!instance)
+		return;
 
 	volkLoadInstanceOnly(instance);
 
@@ -354,7 +356,11 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	VK_CHECK(result);
 
 	physicalDevice = pickPhysicalDevice(physicalDevices, physicalDeviceCount);
-	assert(physicalDevice);
+	if (!physicalDevice)
+	{
+		vkDestroyInstance(instance, 0);
+		return;
+	}
 
 	uint32_t extensionCount;
 	VK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, 0, &extensionCount, 0));
@@ -366,8 +372,10 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	{
 		meshShadingSupported = meshShadingSupported || strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0;
 		raytracingSupported = raytracingSupported || strcmp(ext.extensionName, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) == 0;
-		pushDescriptorSupported = pushDescriptorSupported || strcmp(ext.extensionName, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) == 0; // TODO
 	}
+#if defined(WIN32)
+	pushDescriptorSupported = true;
+#endif
 
 	meshShadingEnabled = meshShadingSupported;
 
@@ -780,7 +788,7 @@ void VulkanContext::InitResources()
 	renderingInfo.pColorAttachmentFormats = &swapchainFormat;
 	renderingInfo.depthAttachmentFormat = depthFormat;
 
-	guiRenderer->Initialize(window, CURRENT_VK_VERSION, instance, physicalDevice, device, graphicsFamily, queue, renderingInfo, swapchainFormat, imageCount);
+	guiRenderer->Initialize(window, API_VERSION, instance, physicalDevice, device, graphicsFamily, queue, renderingInfo, swapchainFormat, imageCount);
 
 	lastFrame = GetTimeInSeconds();
 }
@@ -1154,11 +1162,13 @@ bool VulkanContext::DrawFrame()
 			vkCmdBindPipeline(commandBuffer, tasksubmitProgram.bindPoint, tasksubmitPipeline);
 
 			DescriptorInfo descriptors[] = { dccb.buffer, dcb.buffer };
+#if defined(WIN32)
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, tasksubmitProgram.updateTemplate, tasksubmitProgram.layout, 0, descriptors);
+				vkCmdPushDescriptorSetWithTemplate(commandBuffer, tasksubmitProgram.updateTemplate, tasksubmitProgram.layout, 0, descriptors);
 			}
 			else
+#endif
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, tasksubmitSets[descriptorSetIndex], tasksubmitProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, tasksubmitProgram.bindPoint, tasksubmitProgram.layout, 0, 1, &tasksubmitSets[descriptorSetIndex], 0, nullptr);
@@ -1214,11 +1224,13 @@ bool VulkanContext::DrawFrame()
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mlb.buffer, mvb.buffer, pyramidDesc, cib.buffer, ccb.buffer };
 
+#if defined(WIN32)
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, clustercullProgram.updateTemplate, clustercullProgram.layout, 0, descriptors);
+				vkCmdPushDescriptorSetWithTemplate(commandBuffer, clustercullProgram.updateTemplate, clustercullProgram.layout, 0, descriptors);
 			}
 			else
+#endif
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, clustercullSets[descriptorSetIndex], clustercullProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, clustercullProgram.bindPoint, clustercullProgram.layout, 0, 1, &clustercullSets[descriptorSetIndex], 0, nullptr);
@@ -1240,11 +1252,13 @@ bool VulkanContext::DrawFrame()
 
 			DescriptorInfo descriptors2[] = { ccb.buffer, cib.buffer };
 
+#if defined(WIN32)
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, clustersubmitProgram.updateTemplate, clustersubmitProgram.layout, 0, descriptors2);
+				vkCmdPushDescriptorSetWithTemplate(commandBuffer, clustersubmitProgram.updateTemplate, clustersubmitProgram.layout, 0, descriptors2);
 			}
 			else
+#endif
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, clustersubmitSets[descriptorSetIndex], clustersubmitProgram.updateTemplate, descriptors2);
 				vkCmdBindDescriptorSets(commandBuffer, clustersubmitProgram.bindPoint, clustersubmitProgram.layout, 0, 1, &clustersubmitSets[descriptorSetIndex], 0, nullptr);
@@ -1311,12 +1325,14 @@ bool VulkanContext::DrawFrame()
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
 
+#if defined(WIN32)
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, clusterProgram.updateTemplate, clusterProgram.layout, 0, descriptors);
+				vkCmdPushDescriptorSetWithTemplate(commandBuffer, clusterProgram.updateTemplate, clusterProgram.layout, 0, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, clusterProgram.bindPoint, clusterProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 			}
 			else
+#endif
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, clusterSets[descriptorSetIndex], clusterProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, clusterProgram.bindPoint, clusterProgram.layout, 0, 1, &clusterSets[descriptorSetIndex], 0, nullptr);
@@ -1334,11 +1350,13 @@ bool VulkanContext::DrawFrame()
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
 
+#if defined(WIN32)
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshtaskProgram.updateTemplate, meshtaskProgram.layout, 0, descriptors);
+				vkCmdPushDescriptorSetWithTemplate(commandBuffer, meshtaskProgram.updateTemplate, meshtaskProgram.layout, 0, descriptors);
 			}
 			else
+#endif
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, meshtaskSets[descriptorSetIndex], meshtaskProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, meshtaskProgram.bindPoint, meshtaskProgram.layout, 0, 1, &meshtaskSets[descriptorSetIndex], 0, nullptr);
@@ -1356,12 +1374,14 @@ bool VulkanContext::DrawFrame()
 
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), textureSampler, mtb.buffer };
 
+#if defined(WIN32)
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
+				vkCmdPushDescriptorSetWithTemplate(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
 				vkCmdBindDescriptorSets(commandBuffer, meshProgram.bindPoint, meshProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 			}
 			else
+#endif
 			{
 				vkCmdBindDescriptorSets(commandBuffer, meshProgram.bindPoint, meshProgram.layout, 0, 1, &meshSets[descriptorSetIndex], 0, nullptr);
 				vkCmdBindDescriptorSets(commandBuffer, meshProgram.bindPoint, meshProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
@@ -1691,11 +1711,13 @@ bool VulkanContext::DrawFrame()
 
 		DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL } };
 
+#if defined(WIN32)
 		if (pushDescriptorSupported)
 		{
-			vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, debugtextProgram.updateTemplate, debugtextProgram.layout, 0, descriptors);
+			vkCmdPushDescriptorSetWithTemplate(commandBuffer, debugtextProgram.updateTemplate, debugtextProgram.layout, 0, descriptors);
 		}
 		else
+#endif
 		{
 			vkUpdateDescriptorSetWithTemplateKHR(device, debugtextProgram.descriptorSet, debugtextProgram.updateTemplate, descriptors);
 			vkCmdBindDescriptorSets(commandBuffer, debugtextProgram.bindPoint, debugtextProgram.layout, 0, 1, &debugtextProgram.descriptorSet, 0, nullptr);
