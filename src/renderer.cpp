@@ -471,7 +471,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		clusterProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["meshlet.mesh"], &shaderSet["mesh.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
 	}
 
-	shadeProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["shade.comp"] }, sizeof(ShadeData), pushDescriptorSupported, descriptorPool);
+	finalProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["final.comp"] }, sizeof(ShadeData), pushDescriptorSupported, descriptorPool);
 	shadowProgram = {};
 	shadowblurProgram = {};
 	if (raytracingSupported)
@@ -517,7 +517,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 			replace(clusterpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }));
 		}
 
-		replace(shadePipeline, createComputePipeline(device, pipelineCache, shadeProgram));
+		replace(finalPipeline, createComputePipeline(device, pipelineCache, finalProgram));
 		if (raytracingSupported)
 		{
 			replace(shadowlqPipeline, createComputePipeline(device, pipelineCache, shadowProgram, { { /* QUALITY= */ int32_t(0) } }));
@@ -1506,7 +1506,7 @@ bool VulkanContext::DrawFrame()
 
 		// checkerboard rendering: we dispatch half as many columns and xform them to fill the screen
 		int shadowWidthCB = shadowCheckerboard ? (swapchain.width + 1) / 2 : swapchain.width;
-		int shadowCheckerboardF = shadowCheckerboard ? 1 + (frameIndex % 2) : 0;
+		int shadowCheckerboardF = shadowCheckerboard ? 1 : 0;
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 		VkImageMemoryBarrier2 preshadowBarrier =
@@ -1621,7 +1621,7 @@ bool VulkanContext::DrawFrame()
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 		{
-			vkCmdBindPipeline(commandBuffer, shadeProgram.bindPoint, shadePipeline);
+			vkCmdBindPipeline(commandBuffer, finalProgram.bindPoint, finalPipeline);
 
 			DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, gbufferTargets[1].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL } };
 
@@ -1634,14 +1634,14 @@ bool VulkanContext::DrawFrame()
 
 			if (pushDescriptorSupported)
 			{
-				dispatch(commandBuffer, shadeProgram, swapchain.width, swapchain.height, shadeData, descriptors);
+				dispatch(commandBuffer, finalProgram, swapchain.width, swapchain.height, shadeData, descriptors);
 			}
 			else
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, shadeProgram.descriptorSet, shadeProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, shadeProgram.bindPoint, shadeProgram.layout, 0, 1, &shadeProgram.descriptorSet, 0, nullptr);
-				vkCmdPushConstants(commandBuffer, shadeProgram.layout, shadeProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
-				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadeProgram.localSizeX), getGroupCount(swapchain.height, shadeProgram.localSizeY), 1);
+				vkUpdateDescriptorSetWithTemplateKHR(device, finalProgram.descriptorSet, finalProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, finalProgram.bindPoint, finalProgram.layout, 0, 1, &finalProgram.descriptorSet, 0, nullptr);
+				vkCmdPushConstants(commandBuffer, finalProgram.layout, finalProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
+				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, finalProgram.localSizeX), getGroupCount(swapchain.height, finalProgram.localSizeY), 1);
 			}
 		}
 	}
@@ -2147,7 +2147,7 @@ void VulkanContext::Release()
 
 	if (raytracingSupported)
 	{
-		destroyProgram(device, shadeProgram, descriptorPool);
+		destroyProgram(device, finalProgram, descriptorPool);
 		destroyProgram(device, shadowProgram, descriptorPool);
 		destroyProgram(device, shadowfillProgram, descriptorPool);
 		destroyProgram(device, shadowblurProgram, descriptorPool);

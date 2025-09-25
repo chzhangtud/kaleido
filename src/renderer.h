@@ -267,7 +267,7 @@ public:
 	VkPipeline meshtaskpostPipeline = 0;
 	VkPipeline clusterPipeline = 0;
 	VkPipeline clusterpostPipeline = 0;
-	VkPipeline shadePipeline = 0;
+	VkPipeline finalPipeline = 0;
 	VkPipeline shadowlqPipeline = 0;
 	VkPipeline shadowhqPipeline = 0;
 	VkPipeline shadowfillPipeline = 0;
@@ -285,7 +285,7 @@ public:
 	Program meshProgram{};
 	Program meshtaskProgram{};
 	Program clusterProgram{};
-	Program shadeProgram{};
+	Program finalProgram{};
 	Program shadowProgram{};
 	Program shadowfillProgram{};
 	Program shadowblurProgram{};
