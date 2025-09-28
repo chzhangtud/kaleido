@@ -15,7 +15,6 @@ layout(local_size_x = TASK_WGSIZE, local_size_y = 1, local_size_z = 1) in;
 
 layout (constant_id = 0) const bool LATE = false;
 
-
 layout(push_constant) uniform block
 {
     Globals globals;
@@ -41,12 +40,12 @@ layout(binding = 3) readonly buffer Meshlets
     Meshlet meshlets[];
 };
 
-layout(binding = 7) buffer MeshletVisibility
+layout(binding = 6) buffer MeshletVisibility
 {
     uint meshletVisibility[];
 };
 
-layout(binding = 8) uniform sampler2D depthPyramid;
+layout(binding = 7) uniform sampler2D depthPyramid;
 
 taskPayloadSharedEXT MeshTaskPayload payload;
 
@@ -61,15 +60,6 @@ void main()
 	MeshTaskCommand command = taskCommands[commandId];
     uint drawId = command.drawId;
 	MeshDraw meshDraw = draws[drawId];
-
-    Mesh mesh = meshes[meshDraw.meshIndex];
-
-    vec3 lodCenter = mesh.center *  meshDraw.scale +  meshDraw.position;
-	float lodRadius = mesh.radius * meshDraw.scale;
-
-    float lodDistance = log2(max(1.0, distance(lodCenter, vec3(0.0)) - lodRadius));
-	uint lodIndex = clamp(uint(lodDistance), 0, mesh.lodCount - 1);
-    lodIndex = globals.cullData.lodEnabled == 1 ? lodIndex : 0;
 
     uint lateDrawVisibility = command.lateDrawVisibility;
     uint taskCount = command.taskCount;

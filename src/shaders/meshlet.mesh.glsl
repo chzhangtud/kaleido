@@ -14,6 +14,7 @@
 #define TRIANGLE_NORMAL 0
 
 layout(local_size_x = MESH_WGSIZE, local_size_y = 1, local_size_z = 1) in;
+layout(triangles, max_vertices = MESH_MAXVTX, max_primitives = MESH_MAXTRI) out;
 
 layout (constant_id = 1) const bool TASK = false;
 
@@ -34,32 +35,32 @@ layout(binding = 1) readonly buffer Draws
     MeshDraw draws[];
 };
 
-layout(binding = 2) readonly buffer Meshes
-{
-    Mesh meshes[];
-};
-
 layout(binding = 3) readonly buffer Meshlets
 {
     Meshlet meshlets[];
 };
 
-layout(binding = 4) readonly buffer MeshletVertexData
+layout(binding = 4) readonly buffer MeshletData
 {
-    uint meshletVertexData[];
+	uint meshletData[];
 };
 
-layout(binding = 5) readonly buffer MeshletIndexData
+layout(binding = 4) readonly buffer MeshletData16
 {
-    uint8_t meshletIndexData[];
+	uint16_t meshletData16[];
 };
 
-layout(binding = 6) readonly buffer Vertices
+layout(binding = 4) readonly buffer MeshletData8
+{
+	uint8_t meshletData8[];
+};
+
+layout(binding = 5) readonly buffer Vertices
 {
     Vertex vertices[];
 };
 
-layout(binding = 9) readonly buffer ClusterIndices
+layout(binding = 8) readonly buffer ClusterIndices
 {
 	uint clusterIndices[];
 };
@@ -117,15 +118,21 @@ void main()
 
     vec2 screen = vec2(globals.screenWidth, globals.screenHeight);
 
-    SetMeshOutputsEXT(meshlets[mi].vertexCount, meshlets[mi].triangleCount);
+    uint vertexCount = uint(meshlets[mi].vertexCount);
+	uint triangleCount = uint(meshlets[mi].triangleCount);
 
+    SetMeshOutputsEXT(vertexCount, triangleCount);
+
+    uint dataOffset = meshlets[mi].dataOffset;
     uint baseVertex = meshlets[mi].baseVertex;
-    uint vertexOffset = meshlets[mi].vertexOffset;
-    uint triangleOffset = meshlets[mi].triangleOffset;
+    bool shortRefs = uint(meshlets[mi].shortRefs) == 1;
+    uint vertexOffset = dataOffset;
+    uint indexOffset = dataOffset + (shortRefs ? (vertexCount + 1) / 2 : vertexCount);
+    uint triangleOffset = indexOffset * 4;
     
     for (uint i = ti; i < uint(meshlets[mi].vertexCount); i += MESH_WGSIZE)
     {
-        uint vi = meshletVertexData[vertexOffset + i] + baseVertex;
+        uint vi = shortRefs ? uint(meshletData16[vertexOffset * 2 + i]) + baseVertex : meshletData[vertexOffset + i] + baseVertex;
 
         Vertex v = vertices[vi];
 
@@ -160,11 +167,11 @@ void main()
 #endif
 
 #if TRIANGLE_NORMAL
-    for (uint i = ti; i < uint(meshlets[mi].triangleCount); i += MESH_WGSIZE)
+    for (uint i = ti; i < triangleCount); i += MESH_WGSIZE)
     {
-        uint vi0 = meshletVertexData[vertexOffset + meshletIndexData[triangleOffset + 3 * i + 0]];
-        uint vi1 = meshletVertexData[vertexOffset + meshletIndexData[triangleOffset + 3 * i + 1]];
-        uint vi2 = meshletVertexData[vertexOffset + meshletIndexData[triangleOffset + 3 * i + 2]];
+        uint vi0 = meshletData[vertexOffset + meshletData8[triangleOffset + 3 * i + 0]];
+        uint vi1 = meshletData[vertexOffset + meshletData8[triangleOffset + 3 * i + 1]];
+        uint vi2 = meshletData[vertexOffset + meshletData8[triangleOffset + 3 * i + 2]];
         
         vec3 position0 = vec3(vertices[vi0].vx, vertices[vi0].vy, vertices[vi0].vz);
         vec3 position1 = vec3(vertices[vi1].vx, vertices[vi1].vy, vertices[vi1].vz);
@@ -176,10 +183,10 @@ void main()
     }
 #endif
     
-    for (uint i = ti; i < meshlets[mi].triangleCount; i += MESH_WGSIZE)
+    for (uint i = ti; i < triangleCount;)
     {
         uint offset = triangleOffset + 3 * i;
-        uint a = uint(meshletIndexData[offset]), b = uint(meshletIndexData[offset + 1]), c = uint(meshletIndexData[offset + 2]);
+        uint a = uint(meshletData8[offset]), b = uint(meshletData8[offset + 1]), c = uint(meshletData8[offset + 2]);
         gl_PrimitiveTriangleIndicesEXT[i] = uvec3(a, b, c);
 
 #if CULL
@@ -207,6 +214,12 @@ void main()
 
 		gl_MeshPrimitivesEXT[i].gl_CullPrimitiveEXT = culled;
 #endif
+
+    #if MESH_MAXTRI <= MESH_WGSIZE
+		break;
+	#else
+		i += MESH_WGSIZE;
+	#endif
     }
 }
 

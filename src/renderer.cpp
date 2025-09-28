@@ -589,8 +589,7 @@ void VulkanContext::InitResources()
 	if (meshShadingEnabled)
 	{
 		createBuffer(mlb, device, memoryProperties, scene->geometry.meshlets.size() * sizeof(Meshlet), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		createBuffer(mvdb, device, memoryProperties, scene->geometry.meshletVertexData.size() * sizeof(unsigned int), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		createBuffer(midb, device, memoryProperties, scene->geometry.meshletIndexData.size() * sizeof(unsigned char), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		createBuffer(mdb, device, memoryProperties, scene->geometry.meshletdata.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	}
 
 	uploadBuffer(device, commandPool, commandBuffer, queue, mb, scratch, scene->geometry.meshes.data(), scene->geometry.meshes.size() * sizeof(Mesh));
@@ -601,8 +600,7 @@ void VulkanContext::InitResources()
 	if (meshShadingEnabled)
 	{
 		uploadBuffer(device, commandPool, commandBuffer, queue, mlb, scratch, scene->geometry.meshlets.data(), scene->geometry.meshlets.size() * sizeof(Meshlet));
-		uploadBuffer(device, commandPool, commandBuffer, queue, mvdb, scratch, scene->geometry.meshletVertexData.data(), scene->geometry.meshletVertexData.size() * sizeof(unsigned int));
-		uploadBuffer(device, commandPool, commandBuffer, queue, midb, scratch, scene->geometry.meshletIndexData.data(), scene->geometry.meshletIndexData.size() * sizeof(unsigned char));
+		uploadBuffer(device, commandPool, commandBuffer, queue, mdb, scratch, scene->geometry.meshletdata.data(), scene->geometry.meshletdata.size() * sizeof(uint32_t));
 	}
 
 	createBuffer(db, device, memoryProperties, scene->draws.size() * sizeof(MeshDraw), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -1323,7 +1321,7 @@ bool VulkanContext::DrawFrame()
 			vkCmdBindPipeline(commandBuffer, clusterProgram.bindPoint, postPass >= 1 ? clusterpostPipeline : clusterPipeline);
 
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
-			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
+			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mdb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
 
 #if defined(WIN32)
 			if (pushDescriptorSupported)
@@ -1348,7 +1346,7 @@ bool VulkanContext::DrawFrame()
 			                                                                                                        : meshtaskPipeline);
 
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
-			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mvdb.buffer, midb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
+			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mdb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
 
 #if defined(WIN32)
 			if (pushDescriptorSupported)
@@ -1372,7 +1370,7 @@ bool VulkanContext::DrawFrame()
 		{
 			vkCmdBindPipeline(commandBuffer, meshProgram.bindPoint, postPass >= 1 ? meshpostPipeline : meshPipeline);
 
-			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), textureSampler, mtb.buffer };
+			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), textureSampler, mtb.buffer };
 
 #if defined(WIN32)
 			if (pushDescriptorSupported)
@@ -2120,8 +2118,7 @@ void VulkanContext::Release()
 	destroyBuffer(mtb, device);
 	{
 		destroyBuffer(mlb, device);
-		destroyBuffer(mvdb, device);
-		destroyBuffer(midb, device);
+		destroyBuffer(mdb, device);
 		destroyBuffer(mvb, device);
 		destroyBuffer(cib, device);
 		destroyBuffer(ccb, device);

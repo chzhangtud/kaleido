@@ -31,9 +31,9 @@ layout(location = 2) in vec3 normal;
 layout(location = 3) in vec4 tangent;
 layout(location = 4) in vec3 wpos;
 
-layout(binding = 10) uniform sampler textureSampler;
+layout(binding = 9) uniform sampler textureSampler;
 
-layout(binding = 11) readonly buffer Materials
+layout(binding = 10) readonly buffer Materials
 {
 	Material materials[];
 };

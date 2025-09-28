@@ -175,10 +175,10 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 	#endif
 	}
 
-	LOGI("Geometry: VB %.2f MB, IB %.2f MB, meshlets %.2f MB",
-		double(scene->geometry.vertices.size() * sizeof(Vertex)) / 1e6,
-		double(scene->geometry.indices.size() * sizeof(uint32_t)) / 1e6,
-		double(scene->geometry.meshlets.size() * sizeof(Meshlet) + scene->geometry.meshletVertexData.size() * sizeof(unsigned int)) / 1e6 + scene->geometry.meshletIndexData.size() * sizeof(unsigned char) / 1e6);
+	LOGI("Geometry: VB %.2f MB, IB %.2f MB, meshlets %.2f MB\n",
+	    double(scene->geometry.vertices.size() * sizeof(Vertex)) / 1e6,
+	    double(scene->geometry.indices.size() * sizeof(uint32_t)) / 1e6,
+	    double(scene->geometry.meshlets.size() * sizeof(Meshlet) + scene->geometry.meshletdata.size() * sizeof(uint32_t)) / 1e6);
 
 	if (scene->draws.empty())
 	{

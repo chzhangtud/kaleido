@@ -322,8 +322,7 @@ public:
 	Buffer vb{};
 	Buffer ib{};
 	Buffer mlb{};
-	Buffer mvdb{};
-	Buffer midb{};
+	Buffer mdb{};
 	Buffer db{};
 	Buffer dvb{};
 	Buffer dcb{};

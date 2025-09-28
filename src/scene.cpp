@@ -10,40 +10,59 @@
 
 namespace fs = std::filesystem;
 
-size_t appendMeshlets(Geometry& result, const std::vector<vec3>& vertices, const std::vector<uint32_t>& indices, uint32_t baseVertex, bool fast = false)
+static size_t appendMeshlets(Geometry& result, const std::vector<vec3>& vertices, const std::vector<uint32_t>& indices, uint32_t baseVertex, bool fast = false)
 {
-	size_t max_vertices = MESH_MAXVTX;
-	size_t max_triangles = MESH_MAXTRI;
-	const float cone_weight = 0.5f;
+	const size_t max_vertices = MESH_MAXVTX;
+	const size_t max_triangles = MESH_MAXTRI;
+	const float cone_weight = 0.25f;
 
 	std::vector<meshopt_Meshlet> meshlets(meshopt_buildMeshletsBound(indices.size(), max_vertices, max_triangles));
-	std::vector<unsigned int> meshletVertexData(meshlets.size() * max_vertices);
-	std::vector<unsigned char> meshletIndexData(meshlets.size() * max_triangles * 3);
+	std::vector<unsigned int> meshlet_vertices(meshlets.size() * max_vertices);
+	std::vector<unsigned char> meshlet_triangles(meshlets.size() * max_triangles * 3);
 
 	if (fast)
-		meshlets.resize(meshopt_buildMeshletsScan(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(), vertices.size(), max_vertices, max_triangles));
+		meshlets.resize(meshopt_buildMeshletsScan(meshlets.data(), meshlet_vertices.data(), meshlet_triangles.data(), indices.data(), indices.size(), vertices.size(), max_vertices, max_triangles));
 	else
-		meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshletVertexData.data(), meshletIndexData.data(), indices.data(), indices.size(), &vertices[0].x, vertices.size(), sizeof(vec3), max_vertices, max_triangles, cone_weight));
-	uint32_t meshletVertexOffset = uint32_t(result.meshletVertexData.size());
-	uint32_t meshletIndexOffset = uint32_t(result.meshletIndexData.size());
-
-	result.meshletVertexData.insert(result.meshletVertexData.end(), meshletVertexData.begin(), meshletVertexData.end());
-	result.meshletIndexData.insert(result.meshletIndexData.end(), meshletIndexData.begin(), meshletIndexData.end());
+		meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshlet_vertices.data(), meshlet_triangles.data(), indices.data(), indices.size(), &vertices[0].x, vertices.size(), sizeof(vec3), max_vertices, max_triangles, cone_weight));
 
 	for (auto& meshlet : meshlets)
 	{
-		meshopt_optimizeMeshlet(&meshletVertexData[meshlet.vertex_offset], &meshletIndexData[meshlet.triangle_offset], meshlet.triangle_count, meshlet.vertex_count);
+		meshopt_optimizeMeshlet(&meshlet_vertices[meshlet.vertex_offset], &meshlet_triangles[meshlet.triangle_offset], meshlet.triangle_count, meshlet.vertex_count);
+
+		size_t dataOffset = result.meshletdata.size();
+
+		unsigned int minVertex = ~0u, maxVertex = 0;
+		for (unsigned int i = 0; i < meshlet.vertex_count; ++i)
+		{
+			minVertex = std::min(meshlet_vertices[meshlet.vertex_offset + i], minVertex);
+			maxVertex = std::max(meshlet_vertices[meshlet.vertex_offset + i], maxVertex);
+		}
+
+		bool shortRefs = maxVertex - minVertex < (1 << 16);
+
+		for (unsigned int i = 0; i < meshlet.vertex_count; ++i)
+		{
+			unsigned int ref = meshlet_vertices[meshlet.vertex_offset + i] - minVertex;
+			if (shortRefs && i % 2)
+				result.meshletdata.back() |= ref << 16;
+			else
+				result.meshletdata.push_back(ref);
+		}
+
+		const unsigned int* indexGroups = reinterpret_cast<const unsigned int*>(&meshlet_triangles[0] + meshlet.triangle_offset);
+		unsigned int indexGroupCount = (meshlet.triangle_count * 3 + 3) / 4;
+
+		for (unsigned int i = 0; i < indexGroupCount; ++i)
+			result.meshletdata.push_back(indexGroups[i]);
+
+		meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshlet_vertices[meshlet.vertex_offset], &meshlet_triangles[meshlet.triangle_offset], meshlet.triangle_count, &vertices[0].x, vertices.size(), sizeof(vec3));
 
 		Meshlet m = {};
-
-		m.vertexOffset = meshlet.vertex_offset + meshletVertexOffset;
-		m.triangleOffset = meshlet.triangle_offset + meshletIndexOffset;
-		m.baseVertex = baseVertex;
-		m.vertexCount = uint8_t(meshlet.vertex_count);
-		m.triangleCount = uint8_t(meshlet.triangle_count);
-
-		meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshletVertexData[meshlet.vertex_offset], &meshletIndexData[meshlet.triangle_offset],
-		    meshlet.triangle_count, &vertices[0].x, vertices.size(), sizeof(vec3));
+		m.dataOffset = uint32_t(dataOffset);
+		m.baseVertex = baseVertex + minVertex;
+		m.triangleCount = meshlet.triangle_count;
+		m.vertexCount = meshlet.vertex_count;
+		m.shortRefs = shortRefs;
 
 		m.center = vec3(bounds.center[0], bounds.center[1], bounds.center[2]);
 		m.radius = bounds.radius;
@@ -51,7 +70,8 @@ size_t appendMeshlets(Geometry& result, const std::vector<vec3>& vertices, const
 		m.coneAxis[1] = bounds.cone_axis_s8[1];
 		m.coneAxis[2] = bounds.cone_axis_s8[2];
 		m.coneCutoff = bounds.cone_cutoff_s8;
-		result.meshlets.emplace_back(m);
+
+		result.meshlets.push_back(m);
 	}
 
 	return meshlets.size();

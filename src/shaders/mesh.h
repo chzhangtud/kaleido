@@ -16,11 +16,11 @@ struct Meshlet
 	int8_t coneAxis[3];
 	int8_t coneCutoff;
 
-	uint vertexOffset;
-	uint triangleOffset;
+	uint dataOffset;
 	uint baseVertex;
 	uint8_t vertexCount;
 	uint8_t triangleCount;
+	uint8_t shortRefs;
 };
 
 struct CullData

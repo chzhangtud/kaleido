@@ -14,11 +14,12 @@ struct alignas(16) Meshlet
 	int8_t coneAxis[3];
 	int8_t coneCutoff;
 
-	uint32_t vertexOffset;
-	uint32_t triangleOffset;
+	uint32_t dataOffset; // dataOffset..dataOffset+vertexCount-1 stores vertex indices, we store indices packed in 4b units after that
 	uint32_t baseVertex;
 	uint8_t vertexCount;
 	uint8_t triangleCount;
+	uint8_t shortRefs;
+	uint8_t padding;
 };
 
 struct alignas(16) Material
@@ -82,8 +83,7 @@ struct Geometry
 	std::vector<Vertex> vertices;
 	std::vector<uint32_t> indices;
 	std::vector<Meshlet> meshlets;
-	std::vector<unsigned int> meshletVertexData;
-	std::vector<unsigned char> meshletIndexData;
+	std::vector<uint32_t> meshletdata;
 
 	std::vector<Mesh> meshes;
 };
