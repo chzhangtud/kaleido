@@ -43,7 +43,8 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 #elif defined(__ANDROID__)
 	g_window = ANativeWindow_fromSurface(env, surface);
 	std::string path; // TODO
-	std::string modelPath = "DamagedHelmet.gltf";
+//    std::string modelPath = "DamagedHelmet.gltf";
+    std::string modelPath = "afterRain/scene.gltf";
 #endif
 
 	scene = std::make_shared<Scene>(path.c_str());
@@ -64,8 +65,10 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 	scene->materials.resize(1);
 	scene->materials[0].diffuseFactor = vec4(1);
 
-	scene->camera.position = { 2.f, 0.f, 0.4f };
-	scene->camera.orientation = glm::radians(glm::vec3(0.f, 80.f, 0.f));
+	//scene->camera.position = { 2.f, 0.f, 0.4f };
+	//scene->camera.orientation = glm::radians(glm::vec3(0.f, 80.f, 0.f));
+	 scene->camera.position = { 14.5f, 3.f, 10.f };
+	 scene->camera.orientation = glm::radians(glm::vec3(-5.f, -220.f, 0.f));
 	scene->camera.fovY = glm::radians(70.f);
 	scene->camera.znear = 0.1f;
 	scene->sunDirection = normalize(vec3(1.0f, 1.0f, 1.0f));

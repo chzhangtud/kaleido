@@ -710,7 +710,7 @@ bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, V
 
 		return loadUncompressedImage(image, device, commandPool, commandBuffer, queue, memoryProperties, scratch, texWidth, texHeight, texChannels);
 	}
-	else if (strstr(path, ".png") || strstr(path, ".PNG") || strstr(path, ".jpg") || strstr(path, ".JPG"))
+	else if (strstr(path, ".png") || strstr(path, ".PNG") || strstr(path, ".jpg") || strstr(path, ".JPG") || strstr(path, ".jpeg") || strstr(path, ".JPEG"))
 	{
 		int texWidth, texHeight, texChannels;
 		stbi_uc* pixels = nullptr;

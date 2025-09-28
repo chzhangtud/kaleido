@@ -453,7 +453,11 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 
 	textureSetLayout = createDescriptorArrayLayout(device);
 
+#if defined(WIN32)
+	bool rcs = loadShaders(shaderSet, scene->path.c_str(), "shaders/");
+#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 	bool rcs = loadShaders(shaderSet, device, scene->path.c_str(), "shaders/");
+#endif
 	assert(rcs);
 
 	debugtextProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["debugtext.comp"] }, sizeof(TextData), pushDescriptorSupported, descriptorPool);
@@ -838,13 +842,19 @@ bool VulkanContext::DrawFrame()
 
 		for (Shader& shader : shaderSet.shaders)
 		{
+		#if defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 			if (shader.module)
 				vkDestroyShaderModule(device, shader.module, 0);
+		#endif
 
 			std::vector<char> oldSpirv = std::move(shader.spirv);
 
 			std::string spirvPath = "/shaders/" + shader.name + ".spv";
+		#if defined(WIN32)
+			bool rcs = loadShader(shader, scene->path.c_str(), spirvPath.c_str());
+		#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 			bool rcs = loadShader(shader, device, scene->path.c_str(), spirvPath.c_str());
+		#endif
 			assert(rcs);
 
 			changed |= oldSpirv != shader.spirv;
@@ -2177,9 +2187,11 @@ void VulkanContext::Release()
 	vkDestroyDescriptorPool(device, descriptorPool, 0);
 	vkDestroyDescriptorPool(device, scene->textureSet.first, 0);
 
+#if defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 	for (Shader& shader : shaderSet.shaders)
 		if (shader.module)
 			vkDestroyShaderModule(device, shader.module, 0);
+#endif
 
 	vkDestroySampler(device, textureSampler, 0);
 	vkDestroySampler(device, readSampler, 0);
