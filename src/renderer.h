@@ -349,6 +349,7 @@ public:
 	bool tlasNeedsRebuild{ true };
 	bool meshShadingSupported{ false };
 	bool raytracingSupported{ false };
+	bool clusterrtSupported = false;
 	bool pushDescriptorSupported{ false };
 	bool dvbCleared{ false };
 	bool mvbCleared{ false };

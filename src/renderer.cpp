@@ -372,6 +372,9 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	{
 		meshShadingSupported = meshShadingSupported || strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0;
 		raytracingSupported = raytracingSupported || strcmp(ext.extensionName, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) == 0;
+	#if defined(WIN32)
+		clusterrtSupported = clusterrtSupported || strcmp(ext.extensionName, VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME) == 0;
+	#endif
 	}
 #if defined(WIN32)
 	pushDescriptorSupported = true;
@@ -385,7 +388,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	graphicsFamily = getGraphicsFamilyIndex(physicalDevice);
 	assert(graphicsFamily != VK_QUEUE_FAMILY_IGNORED);
 
-	device = createDevice(instance, physicalDevice, graphicsFamily, pushDescriptorSupported, meshShadingEnabled, raytracingSupported);
+	device = createDevice(instance, physicalDevice, graphicsFamily, pushDescriptorSupported, meshShadingEnabled, raytracingSupported, clusterrtSupported);
 	assert(device);
 
 	volkLoadDevice(device);
@@ -593,7 +596,7 @@ void VulkanContext::InitResources()
 	if (meshShadingEnabled)
 	{
 		createBuffer(mlb, device, memoryProperties, scene->geometry.meshlets.size() * sizeof(Meshlet), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		createBuffer(mdb, device, memoryProperties, scene->geometry.meshletdata.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		createBuffer(mdb, device, memoryProperties, scene->geometry.meshletdata.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	}
 
 	uploadBuffer(device, commandPool, commandBuffer, queue, mb, scratch, scene->geometry.meshes.data(), scene->geometry.meshes.size() * sizeof(Mesh));
@@ -632,9 +635,24 @@ void VulkanContext::InitResources()
 
 	if (raytracingSupported)
 	{
-		std::vector<VkDeviceSize> compactedSizes;
-		buildBLAS(device, scene->geometry.meshes, vb, ib, blas, compactedSizes, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
-		compactBLAS(device, blas, compactedSizes, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
+	#if defined(WIN32)
+		if (clusterrtSupported)
+		{
+			Buffer vxb = {};
+			createBuffer(vxb, device, memoryProperties, scene->geometry.meshletvtx0.size() * sizeof(uint16_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+			memcpy(vxb.data, scene->geometry.meshletvtx0.data(), scene->geometry.meshletvtx0.size() * sizeof(uint16_t));
+
+			buildCLAS(device, scene->geometry.meshes, scene->geometry.meshlets, vxb, mdb, blas, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
+
+			destroyBuffer(vxb, device);
+		}
+		else
+	#endif
+		{
+			std::vector<VkDeviceSize> compactedSizes;
+			buildBLAS(device, scene->geometry.meshes, vb, ib, blas, compactedSizes, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
+			compactBLAS(device, blas, compactedSizes, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
+		}
 
 		blasAddresses.resize(blas.size());
 
