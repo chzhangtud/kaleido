@@ -358,6 +358,8 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	physicalDevice = pickPhysicalDevice(physicalDevices, physicalDeviceCount);
 	if (!physicalDevice)
 	{
+		if (debugCallback) 
+			vkDestroyDebugReportCallbackEXT(instance, debugCallback, 0);
 		vkDestroyInstance(instance, 0);
 		return;
 	}
@@ -1020,8 +1022,11 @@ bool VulkanContext::DrawFrame()
 	{
 		// TODO: this is stupidly redundant
 		vkCmdFillBuffer(commandBuffer, dvb.buffer, 0, sizeof(uint32_t) * scene->draws.size(), 0);
-
-		VkBufferMemoryBarrier2 fillBarrier = bufferBarrier(dvb.buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+		VkBufferMemoryBarrier2 fillBarrier = bufferBarrier(dvb.buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+			#if defined(WIN32)
+			| VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT
+			#endif
+			, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 		pipelineBarrier(commandBuffer, 0, 1, &fillBarrier, 0, nullptr);
 
 		dvbCleared = true;
@@ -1122,7 +1127,10 @@ bool VulkanContext::DrawFrame()
 		size_t descriptorSetIndex = late ? (postPass > 0 ? 2 : 1) : 0;
 		uint32_t rasterizationStage =
 		    taskSubmit
-		        ? VK_PIPELINE_STAGE_TASK_SHADER_BIT_NV | VK_PIPELINE_STAGE_MESH_SHADER_BIT_NV
+		        ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+			#if defined(WIN32)
+				| VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT
+			#endif
 		        : VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
@@ -1688,6 +1696,7 @@ bool VulkanContext::DrawFrame()
 				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, finalProgram.localSizeX), getGroupCount(swapchain.height, finalProgram.localSizeY), 1);
 			}
 		}
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
 	}
 
 	static double cullGPUTime = 0.0;
@@ -1754,9 +1763,6 @@ bool VulkanContext::DrawFrame()
 		uint64_t triangleCount = 0;
 #endif
 
-		double frameGpuBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
-		double frameGpuEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
-
 		cullGPUTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
 		renderGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
 		pyramidGPUTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
@@ -1783,19 +1789,20 @@ bool VulkanContext::DrawFrame()
 			    pyramidGPUTime,
 			    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
 				shadeGPUTime);
-			debugtext(3, ~0u, "tlas: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms",
-				tlasGPUTime,
-			    shadowsGPUTime,
-			    shadowblurGPUTime);
-			debugtext(4, ~0u, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
+			debugtext(3, ~0u, "render breakdown: early %.2f ms, late %.2f ms, post %.2f ms",
+				    renderGPUTime, renderlateGPUTime, renderpostGPUTime);
+
+			debugtext(4, ~0u, "tlas: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms",
+				tlasGPUTime, shadowsGPUTime, shadowblurGPUTime);
+			debugtext(5, ~0u, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
 			    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, drawsPerSec * 1e-6);
-			debugtext(6, ~0u, "frustum culling %s, occlusion culling %s, level-of-detail %s",
+			debugtext(7, ~0u, "frustum culling %s, occlusion culling %s, level-of-detail %s",
 			    cullingEnabled ? "ON" : "OFF", occlusionEnabled ? "ON" : "OFF", lodEnabled ? "ON" : "OFF");
-			debugtext(7, ~0u, "mesh shading %s, task shading %s, cluster occlusion culling %s",
+			debugtext(8, ~0u, "mesh shading %s, task shading %s, cluster occlusion culling %s",
 			    taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
 			    clusterOcclusionEnabled ? "ON" : "OFF");
 
-			debugtext(9, ~0u, "RT shadow %s, blur %s, shadow quality %d, shadow checkerboard %s",
+			debugtext(10, ~0u, "RT shadow %s, blur %s, shadow quality %d, shadow checkerboard %s",
 			    raytracingSupported && shadowEnabled ? "ON" : "OFF",
 			    raytracingSupported && shadowEnabled && shadowblurEnabled ? "ON" : "OFF",
 			    shadowQuality, shadowCheckerboard ? "ON" : "OFF");

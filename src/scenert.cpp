@@ -2,6 +2,10 @@
 #include "resources.h"
 #include "config.h"
 
+const VkBuildAccelerationStructureFlagsKHR  kBuildBLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+const VkBuildAccelerationStructureFlagsKHR  kBuildCLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+const VkBuildAccelerationStructureFlagsKHR  kBuildTLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+
 void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& vb, const Buffer& ib, std::vector<VkAccelerationStructureKHR>& blas, std::vector<VkDeviceSize>& compactedSizes, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
 {
 	std::vector<uint32_t> primitiveCounts(meshes.size());
@@ -46,7 +50,7 @@ void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& v
 
 		buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
 		buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-		buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+		buildInfo.flags = kBuildBLAS | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
 		buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
 		buildInfo.geometryCount = 1;
 		buildInfo.pGeometries = &geo;
@@ -233,7 +237,7 @@ void buildCBLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vec
 
 	VkClusterAccelerationStructureInputInfoNV clusterInfo = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV };
 	clusterInfo.maxAccelerationStructureCount = 0;
-	clusterInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+	clusterInfo.flags = kBuildCLAS;
 	clusterInfo.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_BUILD_TRIANGLE_CLUSTER_NV;
 	clusterInfo.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV;
 	clusterInfo.opInput.pTriangleClusters = &clusterSizes;
@@ -263,14 +267,13 @@ void buildCBLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vec
 
 	VkClusterAccelerationStructureInputInfoNV accelInfo = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV };
 	accelInfo.maxAccelerationStructureCount = meshes.size();
-	accelInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+	accelInfo.flags = kBuildBLAS;
 	accelInfo.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_BUILD_CLUSTERS_BOTTOM_LEVEL_NV;
 	accelInfo.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV;
 	accelInfo.opInput.pClustersBottomLevel = &accelSizes;
 
 	VkClusterAccelerationStructureInputInfoNV moveInfo = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV };
 	moveInfo.maxAccelerationStructureCount = clusterInfo.maxAccelerationStructureCount;
-	moveInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
 	moveInfo.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_MOVE_OBJECTS_NV;
 	moveInfo.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV;
 	moveInfo.opInput.pMoveObjects = &moveSizes;
@@ -369,6 +372,7 @@ void buildCBLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vec
 	compactTotalSize = (compactTotalSize + kAlignment - 1) & ~(kAlignment - 1);
 
 	LOGI("CLAS compacted accelerationStructureSize: %.2f MB\n", double(compactTotalSize) / 1e6);
+	LOGI("CLAS+CBLAS accelerationStructureSize: %.2f MB\n", double(compactTotalSize + bsizeInfo.accelerationStructureSize) / 1e6);
 
 	createBuffer(blasBuffer, device, memoryProperties, compactTotalSize + bsizeInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
@@ -476,7 +480,7 @@ VkAccelerationStructureKHR createTLAS(VkDevice device, Buffer& tlasBuffer, Buffe
 
 	VkAccelerationStructureBuildGeometryInfoKHR buildInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
 	buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-	buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+	buildInfo.flags = kBuildTLAS | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
 	buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
 	buildInfo.geometryCount = 1;
 	buildInfo.pGeometries = &geometry;
@@ -507,7 +511,7 @@ void buildTLAS(VkDevice device, VkCommandBuffer commandBuffer, VkAccelerationStr
 
 	VkAccelerationStructureBuildGeometryInfoKHR buildInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
 	buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-	buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+	buildInfo.flags = kBuildTLAS | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
 	buildInfo.mode = mode;
 	buildInfo.geometryCount = 1;
 	buildInfo.pGeometries = &geometry;
