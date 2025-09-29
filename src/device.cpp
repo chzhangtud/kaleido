@@ -292,7 +292,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 		extensions.emplace_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 	}
     
-#if defined(WIN32)
+#if defined(VK_NV_cluster_acceleration_structure)
 	if (clusterrtSupported)
 		extensions.push_back(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME);
 #endif

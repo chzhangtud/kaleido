@@ -217,9 +217,12 @@ void compactBLAS(VkDevice device, std::vector<VkAccelerationStructureKHR>& blas,
 	blasBuffer = compactedBuffer;
 }
 
-#if defined(WIN32)
-void buildCLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vector<Meshlet>& meshlets, const Buffer& vxb, const Buffer& mdb, std::vector<VkAccelerationStructureKHR>& blas, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
+void buildCBLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vector<Meshlet>& meshlets, const Buffer& vxb, const Buffer& mdb, std::vector<VkAccelerationStructureKHR>& blas, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
 {
+#if defined(VK_NV_cluster_acceleration_structure)
+	const size_t kAlignment = 256;        // required by spec for acceleration structures
+	const size_t kClusterAlignment = 128; // required by spec for cluster acceleration structures
+
 	VkClusterAccelerationStructureTriangleClusterInputNV clusterSizes = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_TRIANGLE_CLUSTER_INPUT_NV };
 	clusterSizes.vertexFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 	clusterSizes.maxGeometryIndexValue = 0;
@@ -254,6 +257,10 @@ void buildCLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vect
 	accelSizes.maxTotalClusterCount = clusterInfo.maxAccelerationStructureCount;
 	accelSizes.maxClusterCountPerAccelerationStructure = maxClustersPerMesh;
 
+	VkClusterAccelerationStructureMoveObjectsInputNV moveSizes = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_MOVE_OBJECTS_INPUT_NV };
+	moveSizes.type = VK_CLUSTER_ACCELERATION_STRUCTURE_TYPE_TRIANGLE_CLUSTER_NV;
+	moveSizes.noMoveOverlap = true;
+
 	VkClusterAccelerationStructureInputInfoNV accelInfo = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV };
 	accelInfo.maxAccelerationStructureCount = meshes.size();
 	accelInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
@@ -261,23 +268,31 @@ void buildCLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vect
 	accelInfo.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV;
 	accelInfo.opInput.pClustersBottomLevel = &accelSizes;
 
+	VkClusterAccelerationStructureInputInfoNV moveInfo = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV };
+	moveInfo.maxAccelerationStructureCount = clusterInfo.maxAccelerationStructureCount;
+	moveInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+	moveInfo.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_MOVE_OBJECTS_NV;
+	moveInfo.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV;
+	moveInfo.opInput.pMoveObjects = &moveSizes;
+
 	VkAccelerationStructureBuildSizesInfoKHR csizeInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
 	vkGetClusterAccelerationStructureBuildSizesNV(device, &clusterInfo, &csizeInfo);
 
 	VkAccelerationStructureBuildSizesInfoKHR bsizeInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
 	vkGetClusterAccelerationStructureBuildSizesNV(device, &accelInfo, &bsizeInfo);
 
-	LOGI("CLAS accelerationStructureSize: %.2f MB, scratchSize: %.2f MB\n", double(csizeInfo.accelerationStructureSize) / 1e6, double(csizeInfo.buildScratchSize) / 1e6);
+	moveSizes.maxMovedBytes = csizeInfo.accelerationStructureSize;
+	VkAccelerationStructureBuildSizesInfoKHR msizeInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+	vkGetClusterAccelerationStructureBuildSizesNV(device, &moveInfo, &msizeInfo);
+
+	LOGI("CLAS accelerationStructureSize: %.2f MB, scratchSize: %.2f MB, compaction scratchSize: %.2f MB\n", double(csizeInfo.accelerationStructureSize) / 1e6, double(csizeInfo.buildScratchSize) / 1e6, double(msizeInfo.updateScratchSize) / 1e6);
 	LOGI("CBLAS accelerationStructureSize: %.2f MB, scratchSize: %.2f MB\n", double(bsizeInfo.accelerationStructureSize) / 1e6, double(bsizeInfo.buildScratchSize) / 1e6);
 
 	Buffer clasBuffer;
 	createBuffer(clasBuffer, device, memoryProperties, csizeInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	createBuffer(blasBuffer, device, memoryProperties, bsizeInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
 	Buffer scratchBuffer;
-	createBuffer(scratchBuffer, device, memoryProperties, std::max(bsizeInfo.buildScratchSize, csizeInfo.buildScratchSize), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
+	createBuffer(scratchBuffer, device, memoryProperties, std::max(std::max(bsizeInfo.buildScratchSize, csizeInfo.buildScratchSize), msizeInfo.updateScratchSize), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	Buffer infosBuffer;
 	createBuffer(infosBuffer, device, memoryProperties, std::max(clusterInfo.maxAccelerationStructureCount * sizeof(VkClusterAccelerationStructureBuildTriangleClusterInfoNV), accelInfo.maxAccelerationStructureCount * sizeof(VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV)), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
@@ -311,6 +326,7 @@ void buildCLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vect
 
 	Buffer rangeBuffer;
 	// todo host vis -> device local?
+	// todo merge with infos and suballocate more cleanly
 	createBuffer(rangeBuffer, device, memoryProperties, (clusterInfo.maxAccelerationStructureCount + accelInfo.maxAccelerationStructureCount) * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	VkClusterAccelerationStructureCommandsInfoNV clusterBuild = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV };
@@ -342,23 +358,43 @@ void buildCLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vect
 	VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 	VK_CHECK(vkDeviceWaitIdle(device));
 
-	size_t totalClusterSize = 0;
+	size_t compactTotalSize  = 0;
 	for (size_t i = 0; i < clusterInfo.maxAccelerationStructureCount; ++i)
-		totalClusterSize += ((uint32_t*)rangeBuffer.data)[clusterInfo.maxAccelerationStructureCount * 2 + i * 2];
+	{
+		uint32_t size = ((uint32_t*)rangeBuffer.data)[clusterInfo.maxAccelerationStructureCount * 2 + i * 2];
+		compactTotalSize += (size + kClusterAlignment - 1) & ~(kClusterAlignment - 1);
+	}
 
-	LOGI("CLAS actual total accelerationStructureSize: %.2f MB\n", double(totalClusterSize) / 1e6);
+	// align subsequent acceleration structures
+	compactTotalSize = (compactTotalSize + kAlignment - 1) & ~(kAlignment - 1);
+
+	LOGI("CLAS compacted accelerationStructureSize: %.2f MB\n", double(compactTotalSize) / 1e6);
+
+	createBuffer(blasBuffer, device, memoryProperties, compactTotalSize + bsizeInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	// TODO: we are not actually querying size required for compaction, so scratch could be insufficient
+	VkClusterAccelerationStructureCommandsInfoNV clusterMove = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV };
+	clusterMove.input = moveInfo;
+	clusterMove.dstImplicitData = getBufferAddress(blasBuffer, device);
+	clusterMove.scratchData = getBufferAddress(scratchBuffer, device);
+	clusterMove.dstAddressesArray.deviceAddress = getBufferAddress(rangeBuffer, device) + clusterInfo.maxAccelerationStructureCount * 8;
+	clusterMove.dstAddressesArray.size = moveInfo.maxAccelerationStructureCount * 8;
+	clusterMove.dstAddressesArray.stride = 8;
+	clusterMove.srcInfosArray.deviceAddress = getBufferAddress(rangeBuffer, device);
+	clusterMove.srcInfosArray.size = moveInfo.maxAccelerationStructureCount * 8;
+	clusterMove.srcInfosArray.stride = 8; // TODO: redundant, probably a driver bug
+
+	LOGI("max cluster count %d, total cluster count %d, total blas count %d\n", int(maxClustersPerMesh), int(clusterInfo.maxAccelerationStructureCount), int(accelInfo.maxAccelerationStructureCount));
 
 	VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV* accelData = static_cast<VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV*>(infosBuffer.data);
 	size_t accelOffset = 0;
-
-	LOGI("max cluster count %d, total cluster count %d, total blas count %d\n", int(maxClustersPerMesh), int(clusterInfo.maxAccelerationStructureCount), int(accelInfo.maxAccelerationStructureCount));
 
 	for (const Mesh& mesh : meshes)
 	{
 		VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV accel = {};
 		accel.clusterReferencesCount = uint32_t(mesh.lods[0].meshletCount);
 		accel.clusterReferencesStride = 8;
-		accel.clusterReferences = getBufferAddress(rangeBuffer, device) + accelOffset * 8;
+		accel.clusterReferences = getBufferAddress(rangeBuffer, device) + clusterInfo.maxAccelerationStructureCount * 8 + accelOffset * 8;
 
 		memcpy(accelData, &accel, sizeof(VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV));
 		accelData++;
@@ -367,7 +403,7 @@ void buildCLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vect
 
 	VkClusterAccelerationStructureCommandsInfoNV accelBuild = { VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV };
 	accelBuild.input = accelInfo;
-	accelBuild.dstImplicitData = getBufferAddress(blasBuffer, device);
+	accelBuild.dstImplicitData = getBufferAddress(blasBuffer, device) + compactTotalSize;
 	accelBuild.scratchData = getBufferAddress(scratchBuffer, device);
 	accelBuild.dstAddressesArray.deviceAddress = getBufferAddress(rangeBuffer, device) + clusterInfo.maxAccelerationStructureCount * 16;
 	accelBuild.dstAddressesArray.size = accelInfo.maxAccelerationStructureCount * 8;
@@ -380,6 +416,9 @@ void buildCLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vect
 
 	VK_CHECK(vkResetCommandPool(device, commandPool, 0));
 	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+	vkCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &clusterMove);
+	stageBarrier(commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR);
 
 	vkCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &accelBuild);
 	VK_CHECK(vkEndCommandBuffer(commandBuffer));
@@ -406,9 +445,11 @@ void buildCLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vect
 	destroyBuffer(infosBuffer, device);
 	destroyBuffer(rangeBuffer, device);
 
-	// TODO: destroyBuffer(clasBuffer, device);
-}
+	destroyBuffer(clasBuffer, device);
+#else
+	VK_CHECK(VK_ERROR_FEATURE_NOT_PRESENT);
 #endif
+}
 
 void fillInstanceRT(VkAccelerationStructureInstanceKHR& instance, const MeshDraw& draw, uint32_t instanceIndex, VkDeviceAddress blas)
 {
