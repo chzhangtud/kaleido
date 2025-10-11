@@ -75,6 +75,7 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 
 	bool sceneMode = false;
 	bool fastMode = getenv("FAST") && atoi(getenv("FAST"));
+	clusterRTEnabled = getenv("CLRT") && atoi(getenv("CLRT"));
 
 #if defined(WIN32)
 	bool loadSingleModel = (argc == 2);
@@ -87,7 +88,7 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
 		{
 			glm::vec3 euler(0.f);
-			if (!loadScene(scene->geometry, scene->materials, scene->draws, scene->texturePaths, scene->animations, scene->camera, scene->sunDirection, modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode))
+			if (!loadScene(scene->geometry, scene->materials, scene->draws, scene->texturePaths, scene->animations, scene->camera, scene->sunDirection, modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled))
 			{
 				LOGE("Error: scene %s failed to load", modelPath.c_str());
 			#if defined(WIN32)
@@ -159,7 +160,7 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 	{
 		for (int i = 1; i < argc; ++i)
 		{
-			if (!loadMesh(scene->geometry, argv[i], vContext->meshShadingSupported, fastMode))
+			if (!loadMesh(scene->geometry, argv[i], vContext->meshShadingSupported, fastMode, clusterRTEnabled))
 			{
 				LOGE("Error: mesh %s failed to load", argv[i]);
 				return 1;
