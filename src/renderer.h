@@ -125,6 +125,7 @@ static float lastX = 400, lastY = 300;
 static float pitch = 0.0f;
 static float yaw = 0.0f;
 static float roll = 0.0f;
+static bool cameraDirty = true;
 
 static bool enableDollyZoom = false;
 static float soRef = 5.0f;
@@ -178,6 +179,8 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 #endif
+
+void updateCamera();
 
 inline static const size_t gbufferCount = 2;
 

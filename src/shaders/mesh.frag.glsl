@@ -90,7 +90,7 @@ void main()
 
 #if DEBUG
 	uint mhash = hash(drawId);
-	gbuffer[0] = vec4(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255), 255) / 255.0;
-	gbuffer[0] = vec4(normal, 1.0);
+	gbuffer[0] = vec4(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255), 255.0) / 255.0;
+	// gbuffer[0] = vec4(normal, 1.0);
 #endif
 }

@@ -210,6 +210,28 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 	yaw += xoffset;
 	pitch += yoffset;
 
+	cameraDirty = true;
+}
+
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
+{
+	if (button == GLFW_MOUSE_BUTTON_LEFT)
+	{
+		if (action == GLFW_PRESS)
+		{
+			mousePressed = true;
+			firstMouse = true;
+		}
+		else if (action == GLFW_RELEASE)
+		{
+			mousePressed = false;
+		}
+	}
+}
+#endif
+
+void updateCamera()
+{
 	glm::mat3 matPitch = {
 		glm::vec3(1.0f, 0.0f, 0.0f),
 		glm::vec3(0.0f, cos(glm::radians(pitch)), -sin(glm::radians(pitch))),
@@ -237,23 +259,6 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 	auto sce = VulkanContext::GetInstance()->GetScene();
 	sce->camera.orientation = glm::quatLookAt(front, up);
 }
-
-void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
-{
-	if (button == GLFW_MOUSE_BUTTON_LEFT)
-	{
-		if (action == GLFW_PRESS)
-		{
-			mousePressed = true;
-			firstMouse = true;
-		}
-		else if (action == GLFW_RELEASE)
-		{
-			mousePressed = false;
-		}
-	}
-}
-#endif
 
 mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
 {
@@ -892,6 +897,12 @@ bool VulkanContext::DrawFrame()
 		reloadShadersTimer = glfwGetTime() + 1;
 	}
 #endif
+
+	if (cameraDirty)
+	{
+		updateCamera();
+		cameraDirty = false;
+	}
 
 	SwapchainStatus swapchainStatus = updateSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, window, swapchainFormat);
 
@@ -2002,8 +2013,15 @@ bool VulkanContext::DrawFrame()
 		ImGui::Begin("Scene");
 		if (ImGui::CollapsingHeader("Camera"))
 		{
-			ImGui::Text("Camera Position: (%.2f, %.2f, %.2f)", scene->camera.position.x, scene->camera.position.y, scene->camera.position.z);
-			ImGui::Text("Camera Rotation: (Pitch %.2f, Yaw %.2f, Roll %.2f)", pitch, yaw, roll);
+			ImGui::DragFloat3("Camera Position", (float*)(&scene->camera.position), 0.01f);
+			float rotations[3] = { pitch, yaw, roll };
+			if (ImGui::DragFloat3("Camera Rotation (Pitch, Yaw, Roll)", rotations, 0.01f))
+			{
+				pitch = rotations[0];
+				yaw = rotations[1];
+				roll = rotations[2];
+				cameraDirty = true;
+			}
 			ImGui::SetNextItemWidth(200.f);
 			ImGui::DragFloat("Camera Moving Speed", &cameraSpeed, 0.01f, 0.0f, 10.f);
 			if (ImGui::Checkbox("Enable Dolly Zoom", &enableDollyZoom))

@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive: require
 
 #include "math.h"
+#define DEBUG 0
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -66,5 +67,10 @@ void main()
 
 	vec3 outputColor = albedo.rgb * (ndotl * min(shadow + shadowAmbient, 1.0) * sunIntensity + ambient) + vec3(specular * shadow) * sunIntensity + emissive;
 	float deband = gradientNoise(vec2(pos)) * 2 - 1;
-	imageStore(outImage, ivec2(pos), vec4(tonemap(outputColor) + deband * (0.5 / 255), 1.0));
+
+	vec4 finalOutput = vec4(tonemap(outputColor) + deband * (0.5 / 255), 1.0);
+#if DEBUG
+	finalOutput = gbuffer0;
+#endif
+	imageStore(outImage, ivec2(pos), finalOutput);
 }
