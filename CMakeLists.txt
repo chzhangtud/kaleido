@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(kaleido VERSION 0.1)
+option(SHADER_DEBUG "Embed debug information into SPIV shaders" OFF)
 
 if (WIN32)
 if(NOT DEFINED ENV{VULKAN_SDK})
@@ -123,6 +124,12 @@ endif()
 
 file(MAKE_DIRECTORY ${SHADERS_DEST_DIR})
 
+set(GLSL_FLAGS --target-env vulkan1.3)
+
+if (SHADER_DEBUG)
+  list(APPEND GLSL_FLAGS -gVS)
+endif()
+
 foreach(GLSL_FILE IN LISTS GLSL_FILES)
     file(RELATIVE_PATH REL_PATH "${SHADERS_SOURCE_DIR}" ${GLSL_FILE})
 
@@ -136,7 +143,7 @@ foreach(GLSL_FILE IN LISTS GLSL_FILES)
     add_custom_command(
         OUTPUT ${SPV_FILE}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DEST_DIR}
-        COMMAND ${GLSLANG_VALIDATOR} --target-env vulkan1.3 ${GLSL_FILE} -V -o ${SPV_FILE}
+        COMMAND ${GLSLANG_VALIDATOR} ${GLSL_FLAGS} ${GLSL_FILE} -V -o ${SPV_FILE}
         DEPENDS ${GLSL_FILE}
         COMMENT "Compiling shader ${GLSL_FILE} -> ${SPV_FILE}"
         VERBATIM

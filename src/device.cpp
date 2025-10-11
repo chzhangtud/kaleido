@@ -38,6 +38,21 @@ static bool isLayerSupported(const char* name)
 	return false;
 }
 
+static bool isInstanceExtensionSupported(const char* name)
+{
+	uint32_t propertyCount = 0;
+	VK_CHECK(vkEnumerateInstanceExtensionProperties(NULL, &propertyCount, 0));
+
+	std::vector<VkExtensionProperties> properties(propertyCount);
+	VK_CHECK(vkEnumerateInstanceExtensionProperties(NULL, &propertyCount, properties.data()));
+
+	for (uint32_t i = 0; i < propertyCount; ++i)
+		if (strcmp(name, properties[i].extensionName) == 0)
+			return true;
+
+	return false;
+}
+
 VkInstance createInstance()
 {
 	if (volkGetInstanceVersion() < API_VERSION)
@@ -84,20 +99,24 @@ VkInstance createInstance()
 #endif
 #endif
 
-	const char* extensions[] = {
-		VK_KHR_SURFACE_EXTENSION_NAME,
-#if defined(VK_USE_PLATFORM_WIN32_KHR)
-		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
-		VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
-#endif
-#ifndef NDEBUG
-		VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
-#endif
-	};
+	std::vector<const char*> extensions;
+	extensions.emplace_back(VK_KHR_SURFACE_EXTENSION_NAME);
 
-	createInfo.ppEnabledExtensionNames = extensions;
-	createInfo.enabledExtensionCount = sizeof(extensions) / sizeof(extensions[0]);
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+	extensions.emplace_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+	extensions.emplace_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
+#endif
+
+#ifndef NDEBUG
+	extensions.emplace_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+#endif
+
+	if (isInstanceExtensionSupported(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
+		extensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+	createInfo.ppEnabledExtensionNames = extensions.data();
+	createInfo.enabledExtensionCount = extensions.size();
 
 	VkInstance instance = 0;
 	VK_CHECK(vkCreateInstance(&createInfo, 0, &instance));
