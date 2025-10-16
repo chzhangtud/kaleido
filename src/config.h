@@ -38,5 +38,7 @@
 // Minimum number of images in flight
 #define MIN_IMAGES 3
 
+#define DESCRIPTOR_SET_PER_FRAME 3 // early, late, post
+
 // Maximum number of texture descriptors in the pool
 #define DESCRIPTOR_LIMIT 65536

@@ -426,16 +426,16 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	{
 		// TODO: find a proper way for resource allocation, maybe using bindless resources for android
 		VkDescriptorPoolSize poolSizes[] = {
-			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 160 },
-			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 160 },
-			{ VK_DESCRIPTOR_TYPE_SAMPLER, 160 },
-			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 160 },
-			{ VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 10 }
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 160 * MAX_FRAMES },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 160 * MAX_FRAMES },
+			{ VK_DESCRIPTOR_TYPE_SAMPLER, 160 * MAX_FRAMES },
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 160 * MAX_FRAMES },
+			{ VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 10 * MAX_FRAMES }
 		};
 
 		VkDescriptorPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
 		poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-		poolInfo.maxSets = 50;
+		poolInfo.maxSets = 150;
 		poolInfo.poolSizeCount = COUNTOF(poolSizes);
 		poolInfo.pPoolSizes = poolSizes;
 
@@ -705,9 +705,14 @@ void VulkanContext::InitResources()
 	for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
 	{
 		acquireSemaphores[ii] = createSemaphore(device);
-		releaseSemaphores[ii] = createSemaphore(device);
 		frameFences[ii] = createFence(device);
-		assert(acquireSemaphores[ii] && releaseSemaphores[ii] && frameFences[ii]);
+		assert(acquireSemaphores[ii] && frameFences[ii]);
+		releaseSemaphores[ii].resize(swapchain.imageCount);
+		for (uint32_t jj = 0; jj < swapchain.imageCount; ++jj)
+		{
+			releaseSemaphores[ii][jj] = createSemaphore(device);
+			assert(releaseSemaphores[ii][jj]);
+		}
 	}
 
 #if defined(WIN32)
@@ -723,97 +728,91 @@ void VulkanContext::InitResources()
 
 	if (!pushDescriptorSupported)
 	{
+		uint32_t setSize = MAX_FRAMES * DESCRIPTOR_SET_PER_FRAME;
 		// cull descriptor sets
 		{
-			drawcullSets.resize(3); // early, late, post
-			std::vector<VkDescriptorSetLayout> layouts(drawcullSets.size(), drawcullProgram.descriptorSetLayout);
+			std::vector<VkDescriptorSetLayout> layouts(setSize, drawcullProgram.descriptorSetLayout);
 			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = uint32_t(drawcullSets.size());
+			allocInfo.descriptorSetCount = setSize;
 			allocInfo.pSetLayouts = layouts.data();
 
-			auto ret = vkAllocateDescriptorSets(device, &allocInfo, drawcullSets.data());
+			auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)drawcullSets);
 			VK_CHECK(ret);
 		}
 		{
-			tasksubmitSets.resize(3); // early, late, post
-			std::vector<VkDescriptorSetLayout> layouts(tasksubmitSets.size(), tasksubmitProgram.descriptorSetLayout);
+			std::vector<VkDescriptorSetLayout> layouts(setSize, tasksubmitProgram.descriptorSetLayout);
 			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = uint32_t(tasksubmitSets.size());
+			allocInfo.descriptorSetCount = setSize;
 			allocInfo.pSetLayouts = layouts.data();
 
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, tasksubmitSets.data()));
+			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)tasksubmitSets));
 		}
 
 		// render descriptor sets
 		{
-			clustercullSets.resize(3);
-			std::vector<VkDescriptorSetLayout> layouts(clustercullSets.size(), clustercullProgram.descriptorSetLayout);
+			std::vector<VkDescriptorSetLayout> layouts(setSize, clustercullProgram.descriptorSetLayout);
 			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = uint32_t(clustercullSets.size());
+			allocInfo.descriptorSetCount = setSize;
 			allocInfo.pSetLayouts = layouts.data();
 
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, clustercullSets.data()));
+            auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)clustercullSets);
+			VK_CHECK(ret);
 		}
 		{
-			clustersubmitSets.resize(3);
-			std::vector<VkDescriptorSetLayout> layouts(clustersubmitSets.size(), clustersubmitProgram.descriptorSetLayout);
+			std::vector<VkDescriptorSetLayout> layouts(setSize, clustersubmitProgram.descriptorSetLayout);
 			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = uint32_t(clustersubmitSets.size());
+			allocInfo.descriptorSetCount = setSize;
 			allocInfo.pSetLayouts = layouts.data();
 
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, clustersubmitSets.data()));
+			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)clustersubmitSets));
 		}
 		if (meshShadingEnabled)
 		{
 			{
-				meshtaskSets.resize(3);
-				std::vector<VkDescriptorSetLayout> layouts(meshtaskSets.size(), meshtaskProgram.descriptorSetLayout);
+				std::vector<VkDescriptorSetLayout> layouts(setSize, meshtaskProgram.descriptorSetLayout);
 				VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 				allocInfo.descriptorPool = descriptorPool;
-				allocInfo.descriptorSetCount = uint32_t(meshtaskSets.size());
+				allocInfo.descriptorSetCount = setSize;
 				allocInfo.pSetLayouts = layouts.data();
 
-				auto ret = vkAllocateDescriptorSets(device, &allocInfo, meshtaskSets.data());
+				auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)meshtaskSets);
 				VK_CHECK(ret);
 			}
 			{
-				clusterSets.resize(3);
-				std::vector<VkDescriptorSetLayout> layouts(clusterSets.size(), clusterProgram.descriptorSetLayout);
+				std::vector<VkDescriptorSetLayout> layouts(setSize, clusterProgram.descriptorSetLayout);
 				VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 				allocInfo.descriptorPool = descriptorPool;
-				allocInfo.descriptorSetCount = uint32_t(clusterSets.size());
+				allocInfo.descriptorSetCount = setSize;
 				allocInfo.pSetLayouts = layouts.data();
 
-				auto ret = vkAllocateDescriptorSets(device, &allocInfo, clusterSets.data());
+				auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)clusterSets);
 				VK_CHECK(ret);
 			}
 		}
 
 		{
-			meshSets.resize(3);
-			std::vector<VkDescriptorSetLayout> layouts(meshSets.size(), meshProgram.descriptorSetLayout);
+			std::vector<VkDescriptorSetLayout> layouts(setSize, meshProgram.descriptorSetLayout);
 			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = uint32_t(meshSets.size());
+			allocInfo.descriptorSetCount = setSize;
 			allocInfo.pSetLayouts = layouts.data();
 
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, meshSets.data()));
+			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)meshSets));
 		}
 
 		// shadow blur sets
 		{
-			shadowblurSets.resize(3);
-			std::vector<VkDescriptorSetLayout> layouts(shadowblurSets.size(), shadowblurProgram.descriptorSetLayout);
+			std::vector<VkDescriptorSetLayout> layouts(setSize, shadowblurProgram.descriptorSetLayout);
 			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = uint32_t(shadowblurSets.size());
+			allocInfo.descriptorSetCount = setSize;
 			allocInfo.pSetLayouts = layouts.data();
 
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, shadowblurSets.data()));
+			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)shadowblurSets));
 		}
 	}
 
@@ -968,17 +967,20 @@ bool VulkanContext::DrawFrame()
 
 		if (!pushDescriptorSupported)
 		{
-			if (!depthreduceSets.empty())
-				vkFreeDescriptorSets(device, descriptorPool, uint32_t(depthreduceSets.size()), depthreduceSets.data());
+			for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
+			{
+				if (!depthreduceSets[ii].empty())
+					vkFreeDescriptorSets(device, descriptorPool, uint32_t(depthreduceSets[ii].size()), depthreduceSets[ii].data());
 
-			depthreduceSets.resize(depthPyramidLevels);
-			std::vector<VkDescriptorSetLayout> layouts(depthPyramidLevels, depthreduceProgram.descriptorSetLayout);
-			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = depthPyramidLevels;
-			allocInfo.pSetLayouts = layouts.data();
+				depthreduceSets[ii].resize(depthPyramidLevels);
+				std::vector<VkDescriptorSetLayout> layouts(depthPyramidLevels, depthreduceProgram.descriptorSetLayout);
+				VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+				allocInfo.descriptorPool = descriptorPool;
+				allocInfo.descriptorSetCount = depthPyramidLevels;
+				allocInfo.pSetLayouts = layouts.data();
 
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, depthreduceSets.data()));
+				VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, depthreduceSets[ii].data()));
+			}
 		}
 	}
 
@@ -1023,18 +1025,21 @@ bool VulkanContext::DrawFrame()
 		}
 	}
 
-	VkCommandPool commandPool = commandPools[frameIndex % MAX_FRAMES];
-	VkCommandBuffer commandBuffer = commandBuffers[frameIndex % MAX_FRAMES];
-	VkSemaphore acquireSemaphore = acquireSemaphores[frameIndex % MAX_FRAMES];
-	VkSemaphore releaseSemaphore = releaseSemaphores[frameIndex % MAX_FRAMES];
-	VkFence frameFence = frameFences[frameIndex % MAX_FRAMES];
-	VkQueryPool queryPoolTimestamp = queryPoolsTimestamp[frameIndex % MAX_FRAMES];
+	uint8_t frameOffset = frameIndex % MAX_FRAMES;
+	VkCommandPool commandPool = commandPools[frameOffset];
+	VkCommandBuffer commandBuffer = commandBuffers[frameOffset];
+	VkSemaphore acquireSemaphore = acquireSemaphores[frameOffset];
+	VkFence frameFence = frameFences[frameOffset];
+	VkQueryPool queryPoolTimestamp = queryPoolsTimestamp[frameOffset];
 #if defined(WIN32)
-	VkQueryPool queryPoolPipeline = queryPoolsPipeline[frameIndex % MAX_FRAMES];
+	VkQueryPool queryPoolPipeline = queryPoolsPipeline[frameOffset];
 #endif
 
 	uint32_t imageIndex = 0;
 	VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, acquireSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+	VkSemaphore releaseSemaphore = releaseSemaphores[frameOffset][imageIndex];
+
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
 		return true; // attempting to render to an out-of-date swapchain would break semaphore synchronization
 	VK_CHECK_SWAPCHAIN(acquireResult);
@@ -1207,8 +1212,8 @@ bool VulkanContext::DrawFrame()
 			}
 			else
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, drawcullSets[descriptorSetIndex], drawcullProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, drawcullProgram.bindPoint, drawcullProgram.layout, 0, 1, &drawcullSets[descriptorSetIndex], 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, drawcullSets[frameOffset][descriptorSetIndex], drawcullProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, drawcullProgram.bindPoint, drawcullProgram.layout, 0, 1, &drawcullSets[frameOffset][descriptorSetIndex], 0, nullptr);
 				vkCmdPushConstants(commandBuffer, drawcullProgram.layout, drawcullProgram.pushConstantStages, 0, sizeof(cullData), &passData);
 				vkCmdDispatch(commandBuffer, getGroupCount(uint32_t(scene->draws.size()), drawcullProgram.localSizeX), 1, 1);
 			}
@@ -1233,8 +1238,8 @@ bool VulkanContext::DrawFrame()
 			else
 #endif
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, tasksubmitSets[descriptorSetIndex], tasksubmitProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, tasksubmitProgram.bindPoint, tasksubmitProgram.layout, 0, 1, &tasksubmitSets[descriptorSetIndex], 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, tasksubmitSets[frameOffset][descriptorSetIndex], tasksubmitProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, tasksubmitProgram.bindPoint, tasksubmitProgram.layout, 0, 1, &tasksubmitSets[frameOffset][descriptorSetIndex], 0, nullptr);
 			}
 			vkCmdDispatch(commandBuffer, 1, 1, 1);
 		}
@@ -1295,8 +1300,8 @@ bool VulkanContext::DrawFrame()
 			else
 #endif
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, clustercullSets[descriptorSetIndex], clustercullProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, clustercullProgram.bindPoint, clustercullProgram.layout, 0, 1, &clustercullSets[descriptorSetIndex], 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, clustercullSets[frameOffset][descriptorSetIndex], clustercullProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, clustercullProgram.bindPoint, clustercullProgram.layout, 0, 1, &clustercullSets[frameOffset][descriptorSetIndex], 0, nullptr);
 			}
 
 			CullData passData = cullData;
@@ -1323,8 +1328,8 @@ bool VulkanContext::DrawFrame()
 			else
 #endif
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, clustersubmitSets[descriptorSetIndex], clustersubmitProgram.updateTemplate, descriptors2);
-				vkCmdBindDescriptorSets(commandBuffer, clustersubmitProgram.bindPoint, clustersubmitProgram.layout, 0, 1, &clustersubmitSets[descriptorSetIndex], 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, clustersubmitSets[frameOffset][descriptorSetIndex], clustersubmitProgram.updateTemplate, descriptors2);
+				vkCmdBindDescriptorSets(commandBuffer, clustersubmitProgram.bindPoint, clustersubmitProgram.layout, 0, 1, &clustersubmitSets[frameOffset][descriptorSetIndex], 0, nullptr);
 			}
 
 			vkCmdDispatch(commandBuffer, 1, 1, 1);
@@ -1397,8 +1402,8 @@ bool VulkanContext::DrawFrame()
 			else
 #endif
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, clusterSets[descriptorSetIndex], clusterProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, clusterProgram.bindPoint, clusterProgram.layout, 0, 1, &clusterSets[descriptorSetIndex], 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, clusterSets[frameOffset][descriptorSetIndex], clusterProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, clusterProgram.bindPoint, clusterProgram.layout, 0, 1, &clusterSets[frameOffset][descriptorSetIndex], 0, nullptr);
 				vkCmdBindDescriptorSets(commandBuffer, clusterProgram.bindPoint, clusterProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 			}
 
@@ -1421,8 +1426,8 @@ bool VulkanContext::DrawFrame()
 			else
 #endif
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, meshtaskSets[descriptorSetIndex], meshtaskProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, meshtaskProgram.bindPoint, meshtaskProgram.layout, 0, 1, &meshtaskSets[descriptorSetIndex], 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, meshtaskSets[frameOffset][descriptorSetIndex], meshtaskProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, meshtaskProgram.bindPoint, meshtaskProgram.layout, 0, 1, &meshtaskSets[frameOffset][descriptorSetIndex], 0, nullptr);
 			}
 
 			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshtaskProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
@@ -1446,9 +1451,9 @@ bool VulkanContext::DrawFrame()
 			else
 #endif
 			{
-				vkCmdBindDescriptorSets(commandBuffer, meshProgram.bindPoint, meshProgram.layout, 0, 1, &meshSets[descriptorSetIndex], 0, nullptr);
+				vkCmdBindDescriptorSets(commandBuffer, meshProgram.bindPoint, meshProgram.layout, 0, 1, &meshSets[frameOffset][descriptorSetIndex], 0, nullptr);
 				vkCmdBindDescriptorSets(commandBuffer, meshProgram.bindPoint, meshProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
-				vkUpdateDescriptorSetWithTemplateKHR(device, meshSets[descriptorSetIndex], meshProgram.updateTemplate, descriptors);
+				vkUpdateDescriptorSetWithTemplateKHR(device, meshSets[frameOffset][descriptorSetIndex], meshProgram.updateTemplate, descriptors);
 			}
 
 			vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -1500,8 +1505,8 @@ bool VulkanContext::DrawFrame()
 			}
 			else
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, depthreduceSets[i], depthreduceProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, depthreduceProgram.bindPoint, depthreduceProgram.layout, 0, 1, &depthreduceSets[i], 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, depthreduceSets[frameOffset][i], depthreduceProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, depthreduceProgram.bindPoint, depthreduceProgram.layout, 0, 1, &depthreduceSets[frameOffset][i], 0, nullptr);
 				vkCmdPushConstants(commandBuffer, depthreduceProgram.layout, depthreduceProgram.pushConstantStages, 0, sizeof(reduceData), &reduceData);
 				vkCmdDispatch(commandBuffer, getGroupCount(levelWidth, depthreduceProgram.localSizeX), getGroupCount(levelHeight, depthreduceProgram.localSizeY), 1);
 			}
@@ -1617,8 +1622,8 @@ bool VulkanContext::DrawFrame()
 			}
 			else
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, shadowProgram.descriptorSet, shadowProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 0, 1, &shadowProgram.descriptorSet, 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, shadowProgram.descriptorSets[frameOffset], shadowProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 0, 1, &shadowProgram.descriptorSets[frameOffset], 0, nullptr);
 				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 				vkCmdPushConstants(commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(shadowData), &shadowData);
 				vkCmdDispatch(commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
@@ -1668,8 +1673,8 @@ bool VulkanContext::DrawFrame()
 			}
 			else
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, shadowblurSets[pass], shadowblurProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, shadowblurProgram.bindPoint, shadowblurProgram.layout, 0, 1, &shadowblurSets[pass], 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, shadowblurSets[frameOffset][pass], shadowblurProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, shadowblurProgram.bindPoint, shadowblurProgram.layout, 0, 1, &shadowblurSets[frameOffset][pass], 0, nullptr);
 				vkCmdPushConstants(commandBuffer, shadowblurProgram.layout, shadowblurProgram.pushConstantStages, 0, sizeof(blurData), &blurData);
 				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowblurProgram.localSizeX), getGroupCount(swapchain.height, shadowblurProgram.localSizeY), 1);
 			}
@@ -1721,8 +1726,8 @@ bool VulkanContext::DrawFrame()
 			}
 			else
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, finalProgram.descriptorSet, finalProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, finalProgram.bindPoint, finalProgram.layout, 0, 1, &finalProgram.descriptorSet, 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, finalProgram.descriptorSets[frameOffset], finalProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, finalProgram.bindPoint, finalProgram.layout, 0, 1, &finalProgram.descriptorSets[frameOffset], 0, nullptr);
 				vkCmdPushConstants(commandBuffer, finalProgram.layout, finalProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
 				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, finalProgram.localSizeX), getGroupCount(swapchain.height, finalProgram.localSizeY), 1);
 			}
@@ -1783,8 +1788,8 @@ bool VulkanContext::DrawFrame()
 		else
 #endif
 		{
-			vkUpdateDescriptorSetWithTemplateKHR(device, debugtextProgram.descriptorSet, debugtextProgram.updateTemplate, descriptors);
-			vkCmdBindDescriptorSets(commandBuffer, debugtextProgram.bindPoint, debugtextProgram.layout, 0, 1, &debugtextProgram.descriptorSet, 0, nullptr);
+			vkUpdateDescriptorSetWithTemplateKHR(device, debugtextProgram.descriptorSets[frameOffset], debugtextProgram.updateTemplate, descriptors);
+			vkCmdBindDescriptorSets(commandBuffer, debugtextProgram.bindPoint, debugtextProgram.layout, 0, 1, &debugtextProgram.descriptorSets[frameOffset], 0, nullptr);
 		}
 
 		// debug text goes here!
@@ -2085,7 +2090,7 @@ bool VulkanContext::DrawFrame()
 	commandBufferSubmitInfo.deviceMask = 0;
 
 	VkSemaphoreSubmitInfo releaseSemaphoreInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
-	releaseSemaphoreInfo.semaphore = releaseSemaphores[imageIndex];
+	releaseSemaphoreInfo.semaphore = releaseSemaphore;
 	releaseSemaphoreInfo.value = 0;
 	releaseSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
 	releaseSemaphoreInfo.deviceIndex = 0;
@@ -2102,7 +2107,7 @@ bool VulkanContext::DrawFrame()
 
 	VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
 	presentInfo.waitSemaphoreCount = 1;
-	presentInfo.pWaitSemaphores = &releaseSemaphores[imageIndex];
+	presentInfo.pWaitSemaphores = &releaseSemaphore;
 	presentInfo.swapchainCount = 1;
 	presentInfo.pSwapchains = &swapchain.swapchain;
 	presentInfo.pImageIndices = &imageIndex;
@@ -2265,8 +2270,9 @@ void VulkanContext::Release()
 		vkDestroyFence(device, frameFence, 0);
 	for (auto acquireSemaphore : acquireSemaphores)
 		vkDestroySemaphore(device, acquireSemaphore, 0);
-	for (auto releaseSemaphore : releaseSemaphores)
-		vkDestroySemaphore(device, releaseSemaphore, 0);
+	for (auto releaseSemaphoreVector : releaseSemaphores)
+		for (auto releaseSemaphore : releaseSemaphoreVector)
+			vkDestroySemaphore(device, releaseSemaphore, 0);
 
 	// move gui renderer
 	auto guiRenderer = GuiRenderer::GetInstance();

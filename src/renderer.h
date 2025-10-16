@@ -239,7 +239,7 @@ public:
 	uint32_t depthPyramidWidth = 0;
 	uint32_t depthPyramidHeight = 0;
 	uint32_t depthPyramidLevels = 0;
-	std::vector<VkDescriptorSet> depthreduceSets;
+	std::vector<VkDescriptorSet> depthreduceSets[MAX_FRAMES];
 
 	VkFormat gbufferFormats[gbufferCount] = {};
 	VkFormat depthFormat{ VK_FORMAT_D32_SFLOAT };
@@ -296,21 +296,21 @@ public:
 
 	// TODO: The following descriptor sets can be just temporary.
 	// for cull
-	std::vector<VkDescriptorSet> drawcullSets{ VK_NULL_HANDLE };
-	std::vector<VkDescriptorSet> tasksubmitSets{ VK_NULL_HANDLE };
+	VkDescriptorSet drawcullSets[MAX_FRAMES][DESCRIPTOR_SET_PER_FRAME];
+	VkDescriptorSet tasksubmitSets[MAX_FRAMES][DESCRIPTOR_SET_PER_FRAME];
 
 	// for render
-	std::vector<VkDescriptorSet> clustercullSets{ VK_NULL_HANDLE };
-	std::vector<VkDescriptorSet> clustersubmitSets{ VK_NULL_HANDLE };
-	std::vector<VkDescriptorSet> clusterSets{ VK_NULL_HANDLE };
-	std::vector<VkDescriptorSet> meshtaskSets{ VK_NULL_HANDLE };
-	std::vector<VkDescriptorSet> meshSets{ VK_NULL_HANDLE };
-	std::vector<VkDescriptorSet> shadowblurSets{ VK_NULL_HANDLE };
+	VkDescriptorSet clustercullSets[MAX_FRAMES][DESCRIPTOR_SET_PER_FRAME];
+	VkDescriptorSet clustersubmitSets[MAX_FRAMES][DESCRIPTOR_SET_PER_FRAME];
+	VkDescriptorSet clusterSets[MAX_FRAMES][DESCRIPTOR_SET_PER_FRAME];
+	VkDescriptorSet meshtaskSets[MAX_FRAMES][DESCRIPTOR_SET_PER_FRAME];
+	VkDescriptorSet meshSets[MAX_FRAMES][DESCRIPTOR_SET_PER_FRAME];
+	VkDescriptorSet shadowblurSets[MAX_FRAMES][DESCRIPTOR_SET_PER_FRAME];
 
 	// synchronization
 	VkFence frameFences[MAX_FRAMES]{ VK_NULL_HANDLE };
 	VkSemaphore acquireSemaphores[MAX_FRAMES]{ VK_NULL_HANDLE };
-	VkSemaphore releaseSemaphores[MAX_FRAMES]{ VK_NULL_HANDLE };
+	std::vector<VkSemaphore> releaseSemaphores[MAX_FRAMES];
 
 	//
 	VkQueryPool queryPoolsTimestamp[MAX_FRAMES]{};

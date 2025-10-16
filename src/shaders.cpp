@@ -839,12 +839,13 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 
 	if (!pushDescriptorSupported)
 	{
+		std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES, program.descriptorSetLayout);
 		VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 		allocInfo.descriptorPool = descriptorPool;
-		allocInfo.descriptorSetCount = 1;
-		allocInfo.pSetLayouts = &program.descriptorSetLayout;
+		allocInfo.descriptorSetCount = MAX_FRAMES;
+		allocInfo.pSetLayouts = layouts.data();
 
-		vkAllocateDescriptorSets(device, &allocInfo, &program.descriptorSet);
+		vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)program.descriptorSets);
 	}
 
 	return program;

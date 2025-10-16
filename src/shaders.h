@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "config.h"
 
 struct Shader
 {
@@ -39,7 +40,7 @@ struct Program
 	VkShaderStageFlags pushConstantStages;
 	uint32_t pushConstantSize;
 	uint32_t pushDescriptorCount;
-	VkDescriptorSet descriptorSet{ VK_NULL_HANDLE }; // fallback when "push descriptor" is not supported
+	VkDescriptorSet descriptorSets[MAX_FRAMES]{ VK_NULL_HANDLE }; // fallback when "push descriptor" is not supported
 
 	uint32_t localSizeX;
 	uint32_t localSizeY;
