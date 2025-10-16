@@ -422,7 +422,11 @@ void buildCBLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vec
 	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
 	vkCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &clusterMove);
-	stageBarrier(commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR);
+	VkBufferMemoryBarrier2 barrier = bufferBarrier(blasBuffer.buffer,
+	    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+	    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+
+	pipelineBarrier(commandBuffer, 0, 1, &barrier, 0, nullptr);
 
 	vkCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &accelBuild);
 	VK_CHECK(vkEndCommandBuffer(commandBuffer));

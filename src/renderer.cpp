@@ -2116,22 +2116,22 @@ bool VulkanContext::DrawFrame()
 
 	if (frameIndex >= MAX_FRAMES - 1)
 	{
-		VkFence waitFence = frameFences[(frameIndex - (MAX_FRAMES - 1)) % MAX_FRAMES];
+		int waitIndex = (frameIndex + 1) % MAX_FRAMES;
+		VkFence waitFence = frameFences[waitIndex];
 		VK_CHECK(vkWaitForFences(device, 1, &waitFence, VK_TRUE, ~0ull));
 		VK_CHECK(vkResetFences(device, 1, &waitFence));
 
-		VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
+		VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolsTimestamp[waitIndex], 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
 #if defined(WIN32)
-		VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT));
+		VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolsPipeline[waitIndex], 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT));
 #endif
+		double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
+		double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
+		frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
 	}
-
-	double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
-	double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
 	double frameCPUEnd = GetTimeInSeconds();
 
 	frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
-	frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
 
 	if (debugSleep)
 	{
