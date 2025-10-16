@@ -551,23 +551,30 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 
 	pipelinesReloadedCallback();
 
-	queryPoolTimestamp = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
-	assert(queryPoolTimestamp);
-
+	for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
+	{
+		queryPoolsTimestamp[ii] = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
+		assert(queryPoolsTimestamp[ii]);
+	}
 #if defined(WIN32)
-	queryPoolPipeline = createQueryPool(device, 4, VK_QUERY_TYPE_PIPELINE_STATISTICS);
-	assert(queryPoolPipeline);
+	for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
+	{
+		queryPoolsPipeline[ii] = createQueryPool(device, 4, VK_QUERY_TYPE_PIPELINE_STATISTICS);
+		assert(queryPoolsPipeline[ii]);
+	}
 #endif
 
-	commandPool = createCommandPool(device, graphicsFamily);
-	assert(commandPool);
+	for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
+	{
+		commandPools[ii] = createCommandPool(device, graphicsFamily);
+		assert(commandPools[ii]);
+		VkCommandBufferAllocateInfo allocateInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+		allocateInfo.commandPool = commandPools[ii];
+		allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocateInfo.commandBufferCount = 1;
 
-	VkCommandBufferAllocateInfo allocateInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-	allocateInfo.commandPool = commandPool;
-	allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	allocateInfo.commandBufferCount = 1;
-
-	VK_CHECK(vkAllocateCommandBuffers(device, &allocateInfo, &commandBuffer));
+		VK_CHECK(vkAllocateCommandBuffers(device, &allocateInfo, &commandBuffers[ii]));
+	}
 
 	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
 
@@ -606,15 +613,18 @@ void VulkanContext::InitResources()
 		createBuffer(mdb, device, memoryProperties, scene->geometry.meshletdata.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	}
 
-	uploadBuffer(device, commandPool, commandBuffer, queue, mb, scratch, scene->geometry.meshes.data(), scene->geometry.meshes.size() * sizeof(Mesh));
-	uploadBuffer(device, commandPool, commandBuffer, queue, mtb, scratch, scene->materials.data(), scene->materials.size() * sizeof(Material));
-	uploadBuffer(device, commandPool, commandBuffer, queue, vb, scratch, scene->geometry.vertices.data(), scene->geometry.vertices.size() * sizeof(Vertex));
-	uploadBuffer(device, commandPool, commandBuffer, queue, ib, scratch, scene->geometry.indices.data(), scene->geometry.indices.size() * sizeof(uint32_t));
+	VkCommandPool initCommandPool = commandPools[0];
+	VkCommandBuffer initCommandBuffer = commandBuffers[0];
+
+	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mb, scratch, scene->geometry.meshes.data(), scene->geometry.meshes.size() * sizeof(Mesh));
+	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mtb, scratch, scene->materials.data(), scene->materials.size() * sizeof(Material));
+	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, vb, scratch, scene->geometry.vertices.data(), scene->geometry.vertices.size() * sizeof(Vertex));
+	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, ib, scratch, scene->geometry.indices.data(), scene->geometry.indices.size() * sizeof(uint32_t));
 
 	if (meshShadingEnabled)
 	{
-		uploadBuffer(device, commandPool, commandBuffer, queue, mlb, scratch, scene->geometry.meshlets.data(), scene->geometry.meshlets.size() * sizeof(Meshlet));
-		uploadBuffer(device, commandPool, commandBuffer, queue, mdb, scratch, scene->geometry.meshletdata.data(), scene->geometry.meshletdata.size() * sizeof(uint32_t));
+		uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mlb, scratch, scene->geometry.meshlets.data(), scene->geometry.meshlets.size() * sizeof(Meshlet));
+		uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mdb, scratch, scene->geometry.meshletdata.data(), scene->geometry.meshletdata.size() * sizeof(uint32_t));
 	}
 
 	createBuffer(db, device, memoryProperties, scene->draws.size() * sizeof(MeshDraw), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -638,7 +648,7 @@ void VulkanContext::InitResources()
 		createBuffer(ccb, device, memoryProperties, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	}
 
-	uploadBuffer(device, commandPool, commandBuffer, queue, db, scratch, scene->draws.data(), scene->draws.size() * sizeof(MeshDraw));
+	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, db, scratch, scene->draws.data(), scene->draws.size() * sizeof(MeshDraw));
 
 	if (raytracingSupported)
 	{
@@ -648,15 +658,15 @@ void VulkanContext::InitResources()
 			createBuffer(vxb, device, memoryProperties, scene->geometry.meshletvtx0.size() * sizeof(uint16_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 			memcpy(vxb.data, scene->geometry.meshletvtx0.data(), scene->geometry.meshletvtx0.size() * sizeof(uint16_t));
 
-			buildCBLAS(device, scene->geometry.meshes, scene->geometry.meshlets, vxb, mdb, blas, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
+			buildCBLAS(device, scene->geometry.meshes, scene->geometry.meshlets, vxb, mdb, blas, blasBuffer, initCommandPool, initCommandBuffer, queue, memoryProperties);
 
 			destroyBuffer(vxb, device);
 		}
 		else
 		{
 			std::vector<VkDeviceSize> compactedSizes;
-			buildBLAS(device, scene->geometry.meshes, vb, ib, blas, compactedSizes, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
-			compactBLAS(device, blas, compactedSizes, blasBuffer, commandPool, commandBuffer, queue, memoryProperties);
+			buildBLAS(device, scene->geometry.meshes, vb, ib, blas, compactedSizes, blasBuffer, initCommandPool, initCommandBuffer, queue, memoryProperties);
+			compactBLAS(device, blas, compactedSizes, blasBuffer, initCommandPool, initCommandBuffer, queue, memoryProperties);
 		}
 
 		blasAddresses.resize(blas.size());
@@ -686,19 +696,18 @@ void VulkanContext::InitResources()
 	else
 		LOGW("Ray Tracing is not supported, this may cause artifacts!");
 
+	// Make sure we don't accidentally reuse the init command pool because that would require extra synchronization
+	initCommandPool = VK_NULL_HANDLE;
+	initCommandBuffer = VK_NULL_HANDLE;
+
 	swapchainImageViews.resize(swapchain.imageCount);
 
-	frameFence = createFence(device);
-	assert(frameFence);
-
-	acquireSemaphore = createSemaphore(device);
-	assert(acquireSemaphore);
-
-	releaseSemaphores.resize(swapchain.imageCount);
-	for (size_t ii = 0; ii < releaseSemaphores.size(); ++ii)
+	for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
 	{
+		acquireSemaphores[ii] = createSemaphore(device);
 		releaseSemaphores[ii] = createSemaphore(device);
-		assert(releaseSemaphores[ii]);
+		frameFences[ii] = createFence(device);
+		assert(acquireSemaphores[ii] && releaseSemaphores[ii] && frameFences[ii]);
 	}
 
 #if defined(WIN32)
@@ -973,6 +982,7 @@ bool VulkanContext::DrawFrame()
 		}
 	}
 
+	// TODO: this code races the GPU reading the transforms from both TLAS and draw buffers, which can cause rendering issues
 	if (animationEnabled)
 	{
 		static double animationTime = 0.0; // TODO: handle overflow when the program last for long time
@@ -1012,6 +1022,16 @@ bool VulkanContext::DrawFrame()
 			}
 		}
 	}
+
+	VkCommandPool commandPool = commandPools[frameIndex % MAX_FRAMES];
+	VkCommandBuffer commandBuffer = commandBuffers[frameIndex % MAX_FRAMES];
+	VkSemaphore acquireSemaphore = acquireSemaphores[frameIndex % MAX_FRAMES];
+	VkSemaphore releaseSemaphore = releaseSemaphores[frameIndex % MAX_FRAMES];
+	VkFence frameFence = frameFences[frameIndex % MAX_FRAMES];
+	VkQueryPool queryPoolTimestamp = queryPoolsTimestamp[frameIndex % MAX_FRAMES];
+#if defined(WIN32)
+	VkQueryPool queryPoolPipeline = queryPoolsPipeline[frameIndex % MAX_FRAMES];
+#endif
 
 	uint32_t imageIndex = 0;
 	VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, acquireSemaphore, VK_NULL_HANDLE, &imageIndex);
@@ -2089,16 +2109,17 @@ bool VulkanContext::DrawFrame()
 
 	VK_CHECK_SWAPCHAIN(vkQueuePresentKHR(queue, &presentInfo));
 
-	VK_CHECK(vkWaitForFences(device, 1, &frameFence, VK_TRUE, ~0ull));
-	VK_CHECK(vkResetFences(device, 1, &frameFence));
+	if (frameIndex >= MAX_FRAMES - 1)
+	{
+		VkFence waitFence = frameFences[(frameIndex - (MAX_FRAMES - 1)) % MAX_FRAMES];
+		VK_CHECK(vkWaitForFences(device, 1, &waitFence, VK_TRUE, ~0ull));
+		VK_CHECK(vkResetFences(device, 1, &waitFence));
 
-	auto ret = vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT);
-	VK_CHECK_QUERY(ret);
-
+		VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
 #if defined(WIN32)
-	ret = vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT);
-	VK_CHECK_QUERY(ret);
+		VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
 #endif
+	}
 
 	double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 	double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
@@ -2130,10 +2151,6 @@ void VulkanContext::DestroyInstance()
 
 void VulkanContext::Release()
 {
-	// move gui renderer
-	auto guiRenderer = GuiRenderer::GetInstance();
-	guiRenderer->Shutdown(device);
-
 	VK_CHECK(vkDeviceWaitIdle(device));
 
 	if (depthPyramid.image)
@@ -2192,15 +2209,20 @@ void VulkanContext::Release()
 	destroyBuffer(vb, device);
 	destroyBuffer(scratch, device);
 
-	vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
-	vkDestroyCommandPool(device, commandPool, 0);
+	for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
+	{
+		vkFreeCommandBuffers(device, commandPools[ii], 1, &commandBuffers[ii]);
+		vkDestroyCommandPool(device, commandPools[ii], 0);
+	}
 
 	destroySwapchain(device, swapchain);
 
-	vkDestroyQueryPool(device, queryPoolTimestamp, 0);
+	for (auto queryPoolTimestamp : queryPoolsTimestamp)
+		vkDestroyQueryPool(device, queryPoolTimestamp, 0);
 
 #if defined(WIN32)
-	vkDestroyQueryPool(device, queryPoolPipeline, 0);
+	for (auto queryPoolPipeline : queryPoolsPipeline)
+		vkDestroyQueryPool(device, queryPoolPipeline, 0);
 #endif
 
 	for (VkPipeline pipeline : pipelines)
@@ -2239,10 +2261,16 @@ void VulkanContext::Release()
 	vkDestroySampler(device, readSampler, 0);
 	vkDestroySampler(device, depthSampler, 0);
 
-	vkDestroyFence(device, frameFence, 0);
-	vkDestroySemaphore(device, acquireSemaphore, 0);
+	for (auto frameFence : frameFences)
+		vkDestroyFence(device, frameFence, 0);
+	for (auto acquireSemaphore : acquireSemaphores)
+		vkDestroySemaphore(device, acquireSemaphore, 0);
 	for (auto releaseSemaphore : releaseSemaphores)
 		vkDestroySemaphore(device, releaseSemaphore, 0);
+
+	// move gui renderer
+	auto guiRenderer = GuiRenderer::GetInstance();
+	guiRenderer->Shutdown(device);
 
 	vkDestroySurfaceKHR(instance, surface, 0);
 #if defined(WIN32)

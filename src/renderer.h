@@ -217,8 +217,8 @@ public:
 	VkDevice device{ VK_NULL_HANDLE };
 	VkPhysicalDevice physicalDevice{ VK_NULL_HANDLE };
 	VkPhysicalDeviceProperties props = {};
-	VkCommandPool commandPool{ VK_NULL_HANDLE };
-	VkCommandBuffer commandBuffer{ VK_NULL_HANDLE };
+	VkCommandPool commandPools[MAX_FRAMES]{ VK_NULL_HANDLE };
+	VkCommandBuffer commandBuffers[MAX_FRAMES]{ VK_NULL_HANDLE };
 	VkQueue queue{ VK_NULL_HANDLE };
 	VkPhysicalDeviceMemoryProperties memoryProperties{};
 	Buffer scratch{};
@@ -308,15 +308,15 @@ public:
 	std::vector<VkDescriptorSet> shadowblurSets{ VK_NULL_HANDLE };
 
 	// synchronization
-	VkFence frameFence{ VK_NULL_HANDLE };
-	VkSemaphore acquireSemaphore{ VK_NULL_HANDLE };
-	std::vector<VkSemaphore> releaseSemaphores{ VK_NULL_HANDLE };
+	VkFence frameFences[MAX_FRAMES]{ VK_NULL_HANDLE };
+	VkSemaphore acquireSemaphores[MAX_FRAMES]{ VK_NULL_HANDLE };
+	VkSemaphore releaseSemaphores[MAX_FRAMES]{ VK_NULL_HANDLE };
 
 	//
-	VkQueryPool queryPoolTimestamp{ VK_NULL_HANDLE };
+	VkQueryPool queryPoolsTimestamp[MAX_FRAMES]{};
 	uint64_t timestampResults[23];
 #if defined(WIN32)
-	VkQueryPool queryPoolPipeline{ VK_NULL_HANDLE };
+	VkQueryPool queryPoolsPipeline[MAX_FRAMES]{};
 	uint64_t pipelineResults[3];
 #endif
 
