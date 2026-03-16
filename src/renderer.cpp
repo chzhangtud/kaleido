@@ -106,6 +106,66 @@ float halfToFloat(uint16_t v)
 	return result.f;
 }
 
+// Platform-independent pointer helpers used for camera orientation.
+void OnPointerDown(float x, float y)
+{
+	mousePressed = true;
+	firstMouse = true;
+	lastX = x;
+	lastY = y;
+}
+
+void OnPointerMove(float x, float y)
+{
+	if (!mousePressed)
+		return;
+
+	if (ImGui::GetIO().WantCaptureMouse)
+		return;
+
+	static const float sensitivity = 0.1f;
+
+	if (firstMouse)
+	{
+		lastX = x;
+		lastY = y;
+		firstMouse = false;
+		return;
+	}
+
+	float xoffset = lastX - x;
+	float yoffset = lastY - y;
+	lastX = x;
+	lastY = y;
+
+	xoffset *= sensitivity;
+	yoffset *= sensitivity;
+
+	yaw += xoffset;
+	pitch += yoffset;
+
+	cameraDirty = true;
+}
+
+void OnPointerUp()
+{
+	mousePressed = false;
+}
+
+// Virtual sticks (Android): left stick controls movement, right stick controls look.
+static float g_moveX = 0.0f;
+static float g_moveY = 0.0f;
+static float g_lookX = 0.0f;
+static float g_lookY = 0.0f;
+
+void SetVirtualSticks(float moveX, float moveY, float lookX, float lookY)
+{
+	g_moveX = moveX;
+	g_moveY = moveY;
+	g_lookX = lookX;
+	g_lookY = lookY;
+}
+
 #if defined(WIN32)
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
@@ -184,33 +244,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
-	if (ImGui::GetIO().WantCaptureMouse)
-		return;
-	if (!mousePressed)
-		return;
-
-	static const float sensitivity = 0.1f;
-
-	if (firstMouse)
-	{
-		lastX = xpos;
-		lastY = ypos;
-		firstMouse = false;
-		return;
-	}
-
-	float xoffset = lastX - xpos;
-	float yoffset = lastY - ypos;
-	lastX = xpos;
-	lastY = ypos;
-
-	xoffset *= sensitivity;
-	yoffset *= sensitivity;
-
-	yaw += xoffset;
-	pitch += yoffset;
-
-	cameraDirty = true;
+	OnPointerMove(static_cast<float>(xpos), static_cast<float>(ypos));
 }
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
@@ -219,12 +253,11 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 	{
 		if (action == GLFW_PRESS)
 		{
-			mousePressed = true;
-			firstMouse = true;
+			OnPointerDown(static_cast<float>(lastX), static_cast<float>(lastY));
 		}
 		else if (action == GLFW_RELEASE)
 		{
-			mousePressed = false;
+			OnPointerUp();
 		}
 	}
 }
@@ -851,6 +884,24 @@ bool VulkanContext::DrawFrame()
 	glm::vec3 front = scene->camera.orientation * glm::vec3(0.0f, 0.0f, -1.0f);
 	glm::vec3 right = scene->camera.orientation * glm::vec3(1.0f, 0.0f, 0.0f);
 	glm::vec3 up = glm::cross(right, front);
+
+	// Apply virtual stick look (Android): right stick -> yaw/pitch.
+	if (g_lookX != 0.0f || g_lookY != 0.0f)
+	{
+		const float lookSpeedDegPerSec = 120.0f;
+		yaw += g_lookX * lookSpeedDegPerSec * deltaTime;
+		pitch += g_lookY * lookSpeedDegPerSec * deltaTime;
+		cameraDirty = true;
+	}
+
+	// Apply virtual stick movement (Android): left stick -> move/strafe.
+	if (g_moveX != 0.0f || g_moveY != 0.0f)
+	{
+		const float moveSpeedScale = 1.2f; // slightly faster than keyboard
+		float velocity = cameraSpeed * moveSpeedScale * deltaTime;
+		scene->camera.position += front * (g_moveY * velocity);
+		scene->camera.position += right * (g_moveX * velocity);
+	}
 
 #if defined(WIN32)
 	float velocity = cameraSpeed * deltaTime;

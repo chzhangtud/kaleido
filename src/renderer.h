@@ -181,6 +181,15 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 #endif
 
+// Generic input handlers for camera control (platform-independent).
+// On desktop they are normally driven by mouse, on Android by touch.
+void OnPointerDown(float x, float y);
+void OnPointerMove(float x, float y);
+void OnPointerUp();
+
+// Virtual stick input coming from Android (left: move, right: look).
+void SetVirtualSticks(float moveX, float moveY, float lookX, float lookY);
+
 void updateCamera();
 
 inline static const size_t gbufferCount = 2;

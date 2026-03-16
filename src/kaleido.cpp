@@ -1,4 +1,4 @@
-﻿#define VK_NO_PROTOTYPES
+#define VK_NO_PROTOTYPES
 #define VOLK_IMPLEMENTATION
 
 #include "common.h"
@@ -287,6 +287,13 @@ Java_com_chzhang_kaleido_MainActivity_nativeOnTouchEvent(JNIEnv* env, jobject ob
             io.AddMousePosEvent(x, y);
             break;
     }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_chzhang_kaleido_MainActivity_nativeOnVirtualSticks(JNIEnv* env, jobject obj,
+                                                            jfloat moveX, jfloat moveY, jfloat lookX, jfloat lookY)
+{
+    SetVirtualSticks(moveX, moveY, lookX, lookY);
 }
 static std::unordered_map<int, ImGuiKey> g_KeyMap = {
         {29, ImGuiKey_A},{30, ImGuiKey_B}, {31, ImGuiKey_C}, {32, ImGuiKey_D},
