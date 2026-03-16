@@ -81,10 +81,21 @@ void main()
 	vec3 nrm = normalize(nmap.r * tangent.xyz + nmap.g * bitangent + nmap.b * normal);
 
 	float emissivef = dot(emissive, vec3(0.3, 0.6, 0.1)) / (dot(albedo.rgb, vec3(0.3, 0.6, 0.1)) + 1e-3);
-	
-	// TODO: reconstruct metalness from specular texture
+
+	// Extract PBR-friendly parameters from legacy spec-gloss data:
+	// - Use gloss (specgloss.a) to derive roughness
+	// - Use specular brightness to estimate a scalar F0 for the BRDF
+	float gloss = clamp(specgloss.a, 0.0, 1.0);
+	float roughness = 1.0 - gloss;
+	roughness = clamp(roughness, 0.045, 1.0); // avoid noise from totally mirror-reflection
+
+	float f0Scalar = max(max(specgloss.r, specgloss.g), specgloss.b);
+	f0Scalar = clamp(f0Scalar, 0.02, 0.98);
+
+	vec2 encNormal = encodeOct(nrm) * 0.5 + 0.5 + deband * (0.5 / 1023);
+
 	gbuffer[0] = vec4(tosrgb(albedo).rgb, log2(1 + emissivef) / 5);
-	gbuffer[1] = vec4(encodeOct(nrm) * 0.5 + 0.5 + deband * (0.5 / 1023), specgloss.a, 0.0);
+	gbuffer[1] = vec4(encNormal, roughness, f0Scalar);
 	if (POST && albedo.a < 0.5)
 		discard;
 

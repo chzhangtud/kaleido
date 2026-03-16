@@ -7,6 +7,8 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
+const float PI = 3.14159265;
+
 struct ShadeData
 {
 	vec3 cameraPosition;
@@ -50,12 +52,42 @@ void main()
 	vec3 wpos = wposh.xyz / wposh.w;
 
 	vec3 view = normalize(shadeData.cameraPosition - wpos);
-	vec3 halfv = normalize(view + shadeData.sunDirection);
-	float ndoth = max(dot(normal, halfv), 0.0);
-	float gloss = gbuffer1.b;
+	vec3 lightDir = normalize(shadeData.sunDirection);
+	vec3 halfv = normalize(view + lightDir);
 
-	// TODO: this is not the BRDF we want
-	float specular = pow(ndoth, mix(1, 64, gloss)) * gloss;
+	float NdotL = max(dot(normal, lightDir), 0.0);
+	float NdotV = max(dot(normal, view), 0.0);
+	float NdotH = max(dot(normal, halfv), 0.0);
+	float VdotH = max(dot(view, halfv), 0.0);
+
+	// Read PBR parameters derived from the legacy spec-gloss model stored in the G-Buffer
+	float roughness = clamp(gbuffer1.b, 0.045, 1.0);
+	float alpha = roughness * roughness;
+
+	// Scalar F0 coming from the 4th channel of the G-Buffer
+	float f0Scalar = clamp(gbuffer1.a, 0.02, 0.98);
+	vec3  F0 = vec3(f0Scalar);
+
+	// GGX normal distribution function
+	float a2 = alpha * alpha;
+	float denom = (NdotH * NdotH * (a2 - 1.0) + 1.0);
+	float D = a2 / max(PI * denom * denom, 1e-5);
+
+	// Smith GGX geometry term (Schlick approximation)
+	float k = (alpha + 1.0);
+	k = (k * k) * 0.125; // /8
+	float Gv = NdotV / (NdotV * (1.0 - k) + k);
+	float Gl = NdotL / (NdotL * (1.0 - k) + k);
+	float G = Gv * Gl;
+
+	// Schlick Fresnel approximation
+	vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - VdotH, 5.0);
+
+	vec3 specularBRDF = (D * G * F) / max(4.0 * NdotL * NdotV, 1e-4);
+
+	// Assume non-metallic surfaces by default (no explicit metalness), energy conservation: kd = 1 - F
+	vec3 kd = vec3(1.0) - F;
+	vec3 diffuseBRDF = kd * albedo / PI;
 
 	float shadow = 1.0;
 	if (shadeData.shadowsEnabled == 1)
@@ -65,7 +97,10 @@ void main()
 	float shadowAmbient = 0.05;
 	float sunIntensity = 2.5;
 
-	vec3 outputColor = albedo.rgb * (ndotl * min(shadow + shadowAmbient, 1.0) * sunIntensity + ambient) + vec3(specular * shadow) * sunIntensity + emissive;
+	vec3 directLighting = (diffuseBRDF + specularBRDF) * NdotL * min(shadow + shadowAmbient, 1.0) * sunIntensity;
+	vec3 ambientLighting = albedo * ambient;
+
+	vec3 outputColor = directLighting + ambientLighting + emissive;
 	float deband = gradientNoise(vec2(pos)) * 2 - 1;
 
 	vec4 finalOutput = vec4(tonemap(outputColor) + deband * (0.5 / 255), 1.0);
