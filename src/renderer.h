@@ -15,6 +15,7 @@
 #include "device.h"
 #include "swapchain.h"
 #include "resources.h"
+#include "RenderResourceManager.h"
 #include "texture.h"
 #include "shaders.h"
 #include "math.h"
@@ -221,6 +222,7 @@ public:
 	VkCommandBuffer commandBuffers[MAX_FRAMES]{ VK_NULL_HANDLE };
 	VkQueue queue{ VK_NULL_HANDLE };
 	VkPhysicalDeviceMemoryProperties memoryProperties{};
+	RenderResourceManager resourceManager;
 	Buffer scratch{};
 	Swapchain swapchain{ VK_NULL_HANDLE };
 	VkSurfaceKHR surface{ VK_NULL_HANDLE };

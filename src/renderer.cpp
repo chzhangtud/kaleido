@@ -578,7 +578,10 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 
 	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
 
-	createBuffer(scratch, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	// Initialize central resource manager for buffers/textures used by the renderer.
+	resourceManager.Initialize(device, memoryProperties);
+
+	resourceManager.CreateBuffer(scratch, 128 * 1024 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 }
 
 void VulkanContext::SetScene(const std::shared_ptr<Scene>& _scene)
@@ -600,17 +603,17 @@ void VulkanContext::InitResources()
 	        ? VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
 	        : 0;
 
-	createBuffer(mb, device, memoryProperties, scene->geometry.meshes.size() * sizeof(Mesh), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(mb, scene->geometry.meshes.size() * sizeof(Mesh), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	createBuffer(mtb, device, memoryProperties, scene->materials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(mtb, scene->materials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	createBuffer(vb, device, memoryProperties, scene->geometry.vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	createBuffer(ib, device, memoryProperties, scene->geometry.indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT  | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(vb, scene->geometry.vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(ib, scene->geometry.indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT  | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	if (meshShadingEnabled)
 	{
-		createBuffer(mlb, device, memoryProperties, scene->geometry.meshlets.size() * sizeof(Meshlet), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		createBuffer(mdb, device, memoryProperties, scene->geometry.meshletdata.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		resourceManager.CreateBuffer(mlb, scene->geometry.meshlets.size() * sizeof(Meshlet), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		resourceManager.CreateBuffer(mdb, scene->geometry.meshletdata.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	}
 
 	VkCommandPool initCommandPool = commandPools[0];
@@ -627,13 +630,13 @@ void VulkanContext::InitResources()
 		uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mdb, scratch, scene->geometry.meshletdata.data(), scene->geometry.meshletdata.size() * sizeof(uint32_t));
 	}
 
-	createBuffer(db, device, memoryProperties, scene->draws.size() * sizeof(MeshDraw), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	resourceManager.CreateBuffer(db, scene->draws.size() * sizeof(MeshDraw), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-	createBuffer(dvb, device, memoryProperties, scene->draws.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(dvb, scene->draws.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	createBuffer(dcb, device, memoryProperties, TASK_WGLIMIT * sizeof(MeshTaskCommand), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(dcb, TASK_WGLIMIT * sizeof(MeshTaskCommand), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	createBuffer(dccb, device, memoryProperties, 16, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(dccb, 16, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	// TODO: there's a way to implement cluster visibility persistence *without* using bitwise storage at all, which may be beneficial on the balance, so we should try that.
 	// *if* we do that, we can drop meshletVisibilityOffset et al from everywhere
@@ -816,16 +819,17 @@ void VulkanContext::InitResources()
 		}
 	}
 
-	VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
-	renderingInfo.colorAttachmentCount = 1;
-	renderingInfo.pColorAttachmentFormats = &swapchainFormat;
-	renderingInfo.depthAttachmentFormat = depthFormat;
+VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+renderingInfo.colorAttachmentCount = 1;
+renderingInfo.pColorAttachmentFormats = &swapchainFormat;
+renderingInfo.depthAttachmentFormat = depthFormat;
 
-	guiRenderer->Initialize(window, API_VERSION, instance, physicalDevice, device, graphicsFamily, queue, renderingInfo, swapchainFormat, imageCount);
+guiRenderer->Initialize(window, API_VERSION, instance, physicalDevice, device, graphicsFamily, queue, renderingInfo, swapchainFormat, imageCount);
 
-	lastFrame = GetTimeInSeconds();
+lastFrame = GetTimeInSeconds();
 }
 
+// TODO: RenderGraph entry point: all per-frame rendering should start from this function
 bool VulkanContext::DrawFrame()
 {
 	static uint64_t frameIndex = 0;
@@ -929,27 +933,27 @@ bool VulkanContext::DrawFrame()
 		{
 			for (uint32_t i = 0; i < depthPyramidLevels; ++i)
 				vkDestroyImageView(device, depthPyramidMips[i], 0);
-			destroyImage(depthPyramid, device);
+			resourceManager.DestroyImage(depthPyramid);
 		}
 
 		if (shadowTarget.image)
-			destroyImage(shadowTarget, device);
+			resourceManager.DestroyImage(shadowTarget);
 		if (shadowblurTarget.image)
-			destroyImage(shadowblurTarget, device);
+			resourceManager.DestroyImage(shadowblurTarget);
 
 		for (uint32_t i = 0; i < gbufferCount; ++i)
-			createImage(gbufferTargets[i], device, memoryProperties, swapchain.width, swapchain.height, 1, gbufferFormats[i], VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-		createImage(depthTarget, device, memoryProperties, swapchain.width, swapchain.height, 1, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+			resourceManager.CreateImage(gbufferTargets[i], swapchain.width, swapchain.height, 1, gbufferFormats[i], VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+		resourceManager.CreateImage(depthTarget, swapchain.width, swapchain.height, 1, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
 
-		createImage(shadowTarget, device, memoryProperties, swapchain.width, swapchain.height, 1, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-		createImage(shadowblurTarget, device, memoryProperties, swapchain.width, swapchain.height, 1, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+		resourceManager.CreateImage(shadowTarget, swapchain.width, swapchain.height, 1, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+		resourceManager.CreateImage(shadowblurTarget, swapchain.width, swapchain.height, 1, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
 
 		// Note: previousPow2 makes sure all reductions are at most by 2x2 which makes sure they are consertive
 		depthPyramidWidth = previousPow2(swapchain.width);
 		depthPyramidHeight = previousPow2(swapchain.height);
 		depthPyramidLevels = getImageMipLevels(depthPyramidWidth, depthPyramidHeight);
 
-		createImage(depthPyramid, device, memoryProperties, depthPyramidWidth, depthPyramidHeight, depthPyramidLevels, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+		resourceManager.CreateImage(depthPyramid, depthPyramidWidth, depthPyramidHeight, depthPyramidLevels, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 
 		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
 		{
@@ -2163,39 +2167,39 @@ void VulkanContext::Release()
 		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
 			vkDestroyImageView(device, depthPyramidMips[i], 0);
 
-		destroyImage(depthPyramid, device);
+		resourceManager.DestroyImage(depthPyramid);
 	}
 	if (shadowTarget.image)
-		destroyImage(shadowTarget, device);
+		resourceManager.DestroyImage(shadowTarget);
 	if (shadowblurTarget.image)
-		destroyImage(shadowblurTarget, device);
+		resourceManager.DestroyImage(shadowblurTarget);
 	for (uint32_t i = 0; i < swapchain.imageCount; ++i)
 		if (swapchainImageViews[i])
 			vkDestroyImageView(device, swapchainImageViews[i], 0);
 
 	for (Image& image : scene->images)
 	{
-		destroyImage(image, device);
+		resourceManager.DestroyImage(image);
 	}
 
 	for (Image& image : gbufferTargets)
-		destroyImage(image, device);
+		resourceManager.DestroyImage(image);
 
-	destroyImage(depthTarget, device);
+	resourceManager.DestroyImage(depthTarget);
 
-	destroyBuffer(dccb, device);
-	destroyBuffer(dcb, device);
-	destroyBuffer(dvb, device);
-	destroyBuffer(db, device);
+	resourceManager.DestroyBuffer(dccb);
+	resourceManager.DestroyBuffer(dcb);
+	resourceManager.DestroyBuffer(dvb);
+	resourceManager.DestroyBuffer(db);
 
-	destroyBuffer(mb, device);
-	destroyBuffer(mtb, device);
+	resourceManager.DestroyBuffer(mb);
+	resourceManager.DestroyBuffer(mtb);
 	{
-		destroyBuffer(mlb, device);
-		destroyBuffer(mdb, device);
-		destroyBuffer(mvb, device);
-		destroyBuffer(cib, device);
-		destroyBuffer(ccb, device);
+		resourceManager.DestroyBuffer(mlb);
+		resourceManager.DestroyBuffer(mdb);
+		resourceManager.DestroyBuffer(mvb);
+		resourceManager.DestroyBuffer(cib);
+		resourceManager.DestroyBuffer(ccb);
 	}
 
 	if (raytracingSupported)
@@ -2204,15 +2208,15 @@ void VulkanContext::Release()
 		for (VkAccelerationStructureKHR as : blas)
 			vkDestroyAccelerationStructureKHR(device, as, 0);
 
-		destroyBuffer(tlasBuffer, device);
-		destroyBuffer(blasBuffer, device);
-		destroyBuffer(tlasScratchBuffer, device);
-		destroyBuffer(tlasInstanceBuffer, device);
+		resourceManager.DestroyBuffer(tlasBuffer);
+		resourceManager.DestroyBuffer(blasBuffer);
+		resourceManager.DestroyBuffer(tlasScratchBuffer);
+		resourceManager.DestroyBuffer(tlasInstanceBuffer);
 	}
 
-	destroyBuffer(ib, device);
-	destroyBuffer(vb, device);
-	destroyBuffer(scratch, device);
+	resourceManager.DestroyBuffer(ib);
+	resourceManager.DestroyBuffer(vb);
+	resourceManager.DestroyBuffer(scratch);
 
 	for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
 	{
