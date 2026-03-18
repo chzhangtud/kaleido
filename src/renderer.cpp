@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "tools.h"
+#include "RenderBackend.h"
 
 template <typename PushConstants, size_t PushDescriptors>
 void dispatch(VkCommandBuffer commandBuffer, const Program& program, uint32_t threadCountX, uint32_t threadCountY, const PushConstants& pushConstants, const DescriptorInfo (&pushDescriptors)[PushDescriptors])
@@ -868,6 +869,8 @@ bool VulkanContext::DrawFrame()
 	static uint64_t frameIndex = 0;
 	double frameCPUBegin = GetTimeInSeconds();
 
+	resourceManager.BeginFrame();
+
 	const auto& guiRenderer = GuiRenderer::GetInstance();
 #if defined(WIN32)
 	glfwPollEvents();
@@ -972,52 +975,108 @@ bool VulkanContext::DrawFrame()
 	if (swapchainStatus == Swapchain_NotReady)
 		return true;
 
-	if (swapchainStatus == Swapchain_Resized || !depthTarget.image)
-	{
-		for (Image& image : gbufferTargets)
-			if (image.image)
-				destroyImage(image, device);
-		if (depthTarget.image)
-			destroyImage(depthTarget, device);
+	Image* depthTarget = resourceManager.GetTexture(depthTargetHandle);
 
-		if (depthPyramid.image)
+	if (swapchainStatus == Swapchain_Resized || !depthTarget)
+	{
+		for (uint32_t i = 0; i < gbufferCount; ++i)
+			if (gbufferTargetHandles[i].IsValid())
+				resourceManager.ReleaseTexture(gbufferTargetHandles[i]);
+		if (depthTargetHandle.IsValid())
+			resourceManager.ReleaseTexture(depthTargetHandle);
+
+		if (depthPyramidHandle.IsValid())
 		{
 			for (uint32_t i = 0; i < depthPyramidLevels; ++i)
-				vkDestroyImageView(device, depthPyramidMips[i], 0);
-			resourceManager.DestroyImage(depthPyramid);
+			{
+				resourceManager.ReleaseImageView(depthPyramidMips[i]);
+				depthPyramidMips[i] = VK_NULL_HANDLE;
+			}
+			resourceManager.ReleaseTexture(depthPyramidHandle);
 		}
 
-		if (shadowTarget.image)
-			resourceManager.DestroyImage(shadowTarget);
-		if (shadowblurTarget.image)
-			resourceManager.DestroyImage(shadowblurTarget);
+		if (shadowTargetHandle.IsValid())
+			resourceManager.ReleaseTexture(shadowTargetHandle);
+		if (shadowblurTargetHandle.IsValid())
+			resourceManager.ReleaseTexture(shadowblurTargetHandle);
 
 		for (uint32_t i = 0; i < gbufferCount; ++i)
-			resourceManager.CreateImage(gbufferTargets[i], swapchain.width, swapchain.height, 1, gbufferFormats[i], VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-		resourceManager.CreateImage(depthTarget, swapchain.width, swapchain.height, 1, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+		{
+			RGTextureDesc gbufDesc{};
+			gbufDesc.width = swapchain.width;
+			gbufDesc.height = swapchain.height;
+			gbufDesc.mipLevels = 1;
+			gbufDesc.usage = TextureUsage::ColorAttachment | TextureUsage::Sampled;
 
-		resourceManager.CreateImage(shadowTarget, swapchain.width, swapchain.height, 1, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-		resourceManager.CreateImage(shadowblurTarget, swapchain.width, swapchain.height, 1, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+			switch (gbufferFormats[i])
+			{
+			case VK_FORMAT_R8G8B8A8_UNORM:
+				gbufDesc.format = TextureFormat::RGBA8_UNorm;
+				break;
+			case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+				gbufDesc.format = TextureFormat::A2B10G10R10_UNorm;
+				break;
+			default:
+				// Fallback to something reasonable.
+				gbufDesc.format = TextureFormat::RGBA8_UNorm;
+				break;
+			}
+
+			gbufferTargetHandles[i] = resourceManager.CreateTexture(gbufDesc);
+		}
+
+		RGTextureDesc depthDesc{};
+		depthDesc.width = swapchain.width;
+		depthDesc.height = swapchain.height;
+		depthDesc.mipLevels = 1;
+		depthDesc.format = TextureFormat::D32_Float;
+		depthDesc.usage = TextureUsage::DepthStencil | TextureUsage::Sampled;
+		depthTargetHandle = resourceManager.CreateTexture(depthDesc);
+
+		depthTarget = resourceManager.GetTexture(depthTargetHandle);
+		assert(depthTarget);
+
+		RGTextureDesc shadowDesc{};
+		shadowDesc.width = swapchain.width;
+		shadowDesc.height = swapchain.height;
+		shadowDesc.mipLevels = 1;
+		shadowDesc.format = TextureFormat::R8_UNorm;
+		shadowDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
+
+		shadowTargetHandle = resourceManager.CreateTexture(shadowDesc, /* transient= */ false);
+		shadowblurTargetHandle = {}; // created as a transient resource per-frame when needed
 
 		// Note: previousPow2 makes sure all reductions are at most by 2x2 which makes sure they are consertive
 		depthPyramidWidth = previousPow2(swapchain.width);
 		depthPyramidHeight = previousPow2(swapchain.height);
 		depthPyramidLevels = getImageMipLevels(depthPyramidWidth, depthPyramidHeight);
 
-		resourceManager.CreateImage(depthPyramid, depthPyramidWidth, depthPyramidHeight, depthPyramidLevels, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+		RGTextureDesc depthPyramidDesc{};
+		depthPyramidDesc.width = depthPyramidWidth;
+		depthPyramidDesc.height = depthPyramidHeight;
+		depthPyramidDesc.mipLevels = depthPyramidLevels;
+		depthPyramidDesc.format = TextureFormat::R32_Float;
+		depthPyramidDesc.usage = TextureUsage::Sampled | TextureUsage::Storage | TextureUsage::TransferSrc;
+
+		depthPyramidHandle = resourceManager.CreateTexture(depthPyramidDesc);
+		Image* depthPyramid = resourceManager.GetTexture(depthPyramidHandle);
+		assert(depthPyramid);
 
 		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
 		{
-			depthPyramidMips[i] = createImageView(device, depthPyramid.image, VK_FORMAT_R32_SFLOAT, i, 1);
+			depthPyramidMips[i] = resourceManager.AcquireImageView(depthPyramid->image, VK_FORMAT_R32_SFLOAT, i, 1, /* transient= */ false);
 			assert(depthPyramidMips[i]);
 		}
 
 		for (uint32_t i = 0; i < swapchain.imageCount; ++i)
 		{
 			if (swapchainImageViews[i])
-				vkDestroyImageView(device, swapchainImageViews[i], 0);
+			{
+				resourceManager.ReleaseImageView(swapchainImageViews[i]);
+				swapchainImageViews[i] = VK_NULL_HANDLE;
+			}
 
-			swapchainImageViews[i] = createImageView(device, swapchain.images[i], swapchainFormat, 0, 1);
+			swapchainImageViews[i] = resourceManager.AcquireImageView(swapchain.images[i], swapchainFormat, 0, 1, /* transient= */ false);
 		}
 
 		if (!pushDescriptorSupported)
@@ -1038,6 +1097,15 @@ bool VulkanContext::DrawFrame()
 			}
 		}
 	}
+
+	Image* gbufferTargets[gbufferCount] = {};
+	for (uint32_t i = 0; i < gbufferCount; ++i)
+	{
+		gbufferTargets[i] = resourceManager.GetTexture(gbufferTargetHandles[i]);
+		assert(gbufferTargets[i]);
+	}
+	depthTarget = resourceManager.GetTexture(depthTargetHandle);
+	assert(depthTarget);
 
 	// TODO: this code races the GPU reading the transforms from both TLAS and draw buffers, which can cause rendering issues
 	if (animationEnabled)
@@ -1215,6 +1283,9 @@ bool VulkanContext::DrawFrame()
 
 	auto cull = [&](VkPipeline pipeline, uint32_t timestamp, const char* phase, bool late, unsigned int postPass = 0)
 	{
+		Image* depthPyramid = resourceManager.GetTexture(depthPyramidHandle);
+		assert(depthPyramid);
+
 		size_t descriptorSetIndex = late ? (postPass > 0 ? 2 : 1) : 0;
 		uint32_t rasterizationStage =
 		    taskSubmit
@@ -1237,7 +1308,7 @@ bool VulkanContext::DrawFrame()
 		// the first cull (late=0) doesn't read pyramid data BUT the read in the shader is guarded by a push constant value (which could be specialization constant but isn't due to AMD bug)
 		// the second cull (late=1) does read pyramid data that was written in the pyramid stage
 		// as such, second cull needs to transition GENERAL->GENERAL with a COMPUTE->COMPUTE barrier, but the first cull needs to have a dummy transition because pyramid starts in UNDEFINED state on first frame
-		VkImageMemoryBarrier2 pyramidBarrier = imageBarrier(depthPyramid.image,
+		VkImageMemoryBarrier2 pyramidBarrier = imageBarrier(depthPyramid->image,
 		    late ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0, late ? VK_ACCESS_SHADER_WRITE_BIT : 0, late ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
@@ -1258,7 +1329,7 @@ bool VulkanContext::DrawFrame()
 			passData.postPass = postPass;
 			vkCmdBindPipeline(commandBuffer, drawcullProgram.bindPoint, pipeline);
 
-			DescriptorInfo pyramidDesc{ depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL };
+			DescriptorInfo pyramidDesc{ depthSampler, depthPyramid->imageView, VK_IMAGE_LAYOUT_GENERAL };
 			DescriptorInfo descriptors[] = { db.buffer, mb.buffer, dcb.buffer, dccb.buffer, dvb.buffer, pyramidDesc };
 
 			if (pushDescriptorSupported)
@@ -1315,6 +1386,9 @@ bool VulkanContext::DrawFrame()
 
 	auto render = [&](bool late, const std::vector<VkClearColorValue>& clearColors, const VkClearDepthStencilValue& depthClear, uint32_t query, uint32_t timestamp, const char* phase, unsigned int postPass = 0)
 	{
+		Image* depthPyramid = resourceManager.GetTexture(depthPyramidHandle);
+		assert(depthPyramid);
+
 		size_t descriptorSetIndex = late ? (postPass > 0 ? 2 : 1) : 0;
 		assert(clearColors.size() == gbufferCount);
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
@@ -1344,7 +1418,7 @@ bool VulkanContext::DrawFrame()
 
 			vkCmdBindPipeline(commandBuffer, clustercullProgram.bindPoint, late ? clusterculllatePipeline : clustercullPipeline);
 
-			DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
+			DescriptorInfo pyramidDesc(depthSampler, depthPyramid->imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mlb.buffer, mvb.buffer, pyramidDesc, cib.buffer, ccb.buffer };
 
 #if defined(WIN32)
@@ -1405,7 +1479,7 @@ bool VulkanContext::DrawFrame()
 		for (uint32_t i = 0; i < gbufferCount; ++i)
 		{
 			gbufferAttachments[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-			gbufferAttachments[i].imageView = gbufferTargets[i].imageView;
+			gbufferAttachments[i].imageView = gbufferTargets[i]->imageView;
 			gbufferAttachments[i].imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
 			gbufferAttachments[i].loadOp = late ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
 			gbufferAttachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1413,7 +1487,7 @@ bool VulkanContext::DrawFrame()
 		}
 
 		VkRenderingAttachmentInfo depthAttachment = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-		depthAttachment.imageView = depthTarget.imageView;
+		depthAttachment.imageView = depthTarget->imageView;
 		depthAttachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
 		depthAttachment.loadOp = late ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
 		depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1445,7 +1519,7 @@ bool VulkanContext::DrawFrame()
 		{
 			vkCmdBindPipeline(commandBuffer, clusterProgram.bindPoint, postPass >= 1 ? clusterpostPipeline : clusterPipeline);
 
-			DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
+			DescriptorInfo pyramidDesc(depthSampler, depthPyramid->imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mdb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
 
 #if defined(WIN32)
@@ -1470,7 +1544,7 @@ bool VulkanContext::DrawFrame()
 			vkCmdBindPipeline(commandBuffer, meshtaskProgram.bindPoint, postPass >= 1 ? meshtaskpostPipeline : late ? meshtasklatePipeline
 			                                                                                                        : meshtaskPipeline);
 
-			DescriptorInfo pyramidDesc(depthSampler, depthPyramid.imageView, VK_IMAGE_LAYOUT_GENERAL);
+			DescriptorInfo pyramidDesc(depthSampler, depthPyramid->imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mdb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
 
 #if defined(WIN32)
@@ -1527,14 +1601,17 @@ bool VulkanContext::DrawFrame()
 
 	auto pyramid = [&](uint32_t timestamp)
 	{
+		Image* depthPyramid = resourceManager.GetTexture(depthPyramidHandle);
+		assert(depthPyramid);
+
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
 
 		VkImageMemoryBarrier2 depthBarriers[] = {
-			imageBarrier(depthTarget.image,
+			imageBarrier(depthTarget->image,
 			    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
 			    VK_IMAGE_ASPECT_DEPTH_BIT),
-			imageBarrier(depthPyramid.image,
+			imageBarrier(depthPyramid->image,
 			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
 			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
 		};
@@ -1545,7 +1622,7 @@ bool VulkanContext::DrawFrame()
 		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
 		{
 			DescriptorInfo sourceDepth = (i == 0)
-			                                 ? DescriptorInfo(depthSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL)
+			                                 ? DescriptorInfo(depthSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL)
 			                                 : DescriptorInfo(depthSampler, depthPyramidMips[i - 1], VK_IMAGE_LAYOUT_GENERAL);
 
 			DescriptorInfo descriptors[] = { { depthPyramidMips[i], VK_IMAGE_LAYOUT_GENERAL }, sourceDepth };
@@ -1565,14 +1642,14 @@ bool VulkanContext::DrawFrame()
 				vkCmdPushConstants(commandBuffer, depthreduceProgram.layout, depthreduceProgram.pushConstantStages, 0, sizeof(reduceData), &reduceData);
 				vkCmdDispatch(commandBuffer, getGroupCount(levelWidth, depthreduceProgram.localSizeX), getGroupCount(levelHeight, depthreduceProgram.localSizeY), 1);
 			}
-			VkImageMemoryBarrier2 reduceBarrier = imageBarrier(depthPyramid.image,
+			VkImageMemoryBarrier2 reduceBarrier = imageBarrier(depthPyramid->image,
 			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
 			    VK_IMAGE_ASPECT_COLOR_BIT, i, 1);
 			pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &reduceBarrier);
 		}
 
-		VkImageMemoryBarrier2 depthWriteBarrier = imageBarrier(depthTarget.image,
+		VkImageMemoryBarrier2 depthWriteBarrier = imageBarrier(depthTarget->image,
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
 		    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 		    VK_IMAGE_ASPECT_DEPTH_BIT);
@@ -1582,14 +1659,14 @@ bool VulkanContext::DrawFrame()
 	};
 
 	VkImageMemoryBarrier2 renderBeginBarriers[gbufferCount + 1] = {
-		imageBarrier(depthTarget.image,
+		imageBarrier(depthTarget->image,
 		    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 		    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 		    VK_IMAGE_ASPECT_DEPTH_BIT),
 	};
 
 	for (uint32_t i = 0; i < gbufferCount; ++i)
-		renderBeginBarriers[i + 1] = imageBarrier(gbufferTargets[i].image,
+		renderBeginBarriers[i + 1] = imageBarrier(gbufferTargets[i]->image,
 		    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
 
@@ -1630,21 +1707,39 @@ bool VulkanContext::DrawFrame()
 		imageBarrier(swapchain.images[imageIndex],
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
-		imageBarrier(depthTarget.image,
+		imageBarrier(depthTarget->image,
 		    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		    VK_IMAGE_ASPECT_DEPTH_BIT)
 	};
 
 	for (uint32_t i = 0; i < gbufferCount; ++i)
-		shadingBarriers[i + 2] = imageBarrier(gbufferTargets[i].image,
+		shadingBarriers[i + 2] = imageBarrier(gbufferTargets[i]->image,
 		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(shadingBarriers), shadingBarriers);
 
+	Image* shadowTarget = resourceManager.GetTexture(shadowTargetHandle);
+	assert(shadowTarget);
+	
 	if (raytracingSupported && shadowEnabled)
 	{
+		Image* shadowblurTarget = nullptr;
+		if (shadowblurEnabled)
+		{
+			RGTextureDesc shadowBlurDesc{};
+			shadowBlurDesc.width = swapchain.width;
+			shadowBlurDesc.height = swapchain.height;
+			shadowBlurDesc.mipLevels = 1;
+			shadowBlurDesc.format = TextureFormat::R8_UNorm;
+			shadowBlurDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
+
+			shadowblurTargetHandle = resourceManager.CreateTexture(shadowBlurDesc, /* transient= */ true);
+			shadowblurTarget = resourceManager.GetTexture(shadowblurTargetHandle);
+			assert(shadowblurTarget);
+		}
+
 		uint32_t timestamp = 16;
 
 		// checkerboard rendering: we dispatch half as many columns and xform them to fill the screen
@@ -1653,7 +1748,7 @@ bool VulkanContext::DrawFrame()
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 		VkImageMemoryBarrier2 preshadowBarrier =
-		    imageBarrier(shadowTarget.image,
+		    imageBarrier(shadowTarget->image,
 		        0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
@@ -1661,7 +1756,7 @@ bool VulkanContext::DrawFrame()
 
 		{
 			vkCmdBindPipeline(commandBuffer, shadowProgram.bindPoint, shadowQuality == 0 ? shadowlqPipeline : shadowhqPipeline);
-			DescriptorInfo descriptors[] = { { shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas, db.buffer, mb.buffer, mtb.buffer, vb.buffer, ib.buffer, textureSampler };
+			DescriptorInfo descriptors[] = { { shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas, db.buffer, mb.buffer, mtb.buffer, vb.buffer, ib.buffer, textureSampler };
 
 			ShadowData shadowData = {};
 			shadowData.sunDirection = scene->sunDirection;
@@ -1689,7 +1784,7 @@ bool VulkanContext::DrawFrame()
 
 		if (shadowCheckerboard)
 		{
-			VkImageMemoryBarrier2 fillBarrier = imageBarrier(shadowTarget.image,
+			VkImageMemoryBarrier2 fillBarrier = imageBarrier(shadowTarget->image,
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
@@ -1697,7 +1792,7 @@ bool VulkanContext::DrawFrame()
 
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowfillPipeline);
 
-			DescriptorInfo descriptors[] = { { shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+			DescriptorInfo descriptors[] = { { shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
 			vec4 fillData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
 
 			dispatch(commandBuffer, shadowfillProgram, shadowWidthCB, swapchain.height, fillData, descriptors);
@@ -1705,8 +1800,9 @@ bool VulkanContext::DrawFrame()
 
 		for (int pass = 0; pass < (shadowblurEnabled ? 2 : 0); ++pass)
 		{
-			const Image& blurFrom = pass == 0 ? shadowTarget : shadowblurTarget;
-			const Image& blurTo = pass == 0 ? shadowblurTarget : shadowTarget;
+			assert(shadowblurTarget);
+			const Image& blurFrom = pass == 0 ? *shadowTarget : *shadowblurTarget;
+			const Image& blurTo = pass == 0 ? *shadowblurTarget : *shadowTarget;
 
 			VkImageMemoryBarrier2 blurBarriers[] = {
 				imageBarrier(blurFrom.image,
@@ -1719,7 +1815,7 @@ bool VulkanContext::DrawFrame()
 
 			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blurBarriers), blurBarriers);
 			vkCmdBindPipeline(commandBuffer, shadowblurProgram.bindPoint, shadowblurPipeline);
-			DescriptorInfo descriptors[] = { { blurTo.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, blurFrom.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+			DescriptorInfo descriptors[] = { { blurTo.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, blurFrom.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
 			vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, scene->camera.znear);
 
 			if (pushDescriptorSupported)
@@ -1736,7 +1832,7 @@ bool VulkanContext::DrawFrame()
 		}
 
 		VkImageMemoryBarrier2 postblurBarrier =
-		    imageBarrier(shadowTarget.image,
+		    imageBarrier(shadowTarget->image,
 		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
@@ -1747,7 +1843,7 @@ bool VulkanContext::DrawFrame()
 	else
 	{
 		VkImageMemoryBarrier2 dummyBarrier =
-			imageBarrier(shadowTarget.image,
+			imageBarrier(shadowTarget->image,
 				0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
@@ -1766,7 +1862,7 @@ bool VulkanContext::DrawFrame()
 		{
 			vkCmdBindPipeline(commandBuffer, finalProgram.bindPoint, finalPipeline);
 
-			DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, gbufferTargets[1].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, depthTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, shadowTarget.imageView, VK_IMAGE_LAYOUT_GENERAL } };
+			DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, gbufferTargets[1]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL } };
 
 			ShadeData shadeData = {};
 			shadeData.cameraPosition = scene->camera.position;
@@ -2197,6 +2293,8 @@ bool VulkanContext::DrawFrame()
 
 	frameIndex++;
 
+	resourceManager.EndFrame();
+
 	return true;
 }
 
@@ -2213,30 +2311,41 @@ void VulkanContext::Release()
 {
 	VK_CHECK(vkDeviceWaitIdle(device));
 
-	if (depthPyramid.image)
+	if (depthPyramidHandle.IsValid())
 	{
 		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
-			vkDestroyImageView(device, depthPyramidMips[i], 0);
+		{
+			resourceManager.ReleaseImageView(depthPyramidMips[i]);
+			depthPyramidMips[i] = VK_NULL_HANDLE;
+		}
 
-		resourceManager.DestroyImage(depthPyramid);
+		resourceManager.ReleaseTexture(depthPyramidHandle);
 	}
-	if (shadowTarget.image)
-		resourceManager.DestroyImage(shadowTarget);
-	if (shadowblurTarget.image)
-		resourceManager.DestroyImage(shadowblurTarget);
+	if (shadowTargetHandle.IsValid())
+		resourceManager.ReleaseTexture(shadowTargetHandle);
+	if (shadowblurTargetHandle.IsValid())
+		resourceManager.ReleaseTexture(shadowblurTargetHandle);
+
+	// Destroy pooled RG resources (textures/buffers) before destroying the device.
+	resourceManager.DestroyAll();
 	for (uint32_t i = 0; i < swapchain.imageCount; ++i)
 		if (swapchainImageViews[i])
-			vkDestroyImageView(device, swapchainImageViews[i], 0);
+		{
+			resourceManager.ReleaseImageView(swapchainImageViews[i]);
+			swapchainImageViews[i] = VK_NULL_HANDLE;
+		}
 
 	for (Image& image : scene->images)
 	{
 		resourceManager.DestroyImage(image);
 	}
 
-	for (Image& image : gbufferTargets)
-		resourceManager.DestroyImage(image);
+	for (uint32_t i = 0; i < gbufferCount; ++i)
+		if (gbufferTargetHandles[i].IsValid())
+			resourceManager.ReleaseTexture(gbufferTargetHandles[i]);
 
-	resourceManager.DestroyImage(depthTarget);
+	if (depthTargetHandle.IsValid())
+		resourceManager.ReleaseTexture(depthTargetHandle);
 
 	resourceManager.DestroyBuffer(dccb);
 	resourceManager.DestroyBuffer(dcb);

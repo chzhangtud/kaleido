@@ -27,7 +27,9 @@ enum class TextureFormat : uint32_t
 	R8_UNorm,
 	RG8_UNorm,
 	RGBA8_UNorm,
+	A2B10G10R10_UNorm,
 	RGBA16_Float,
+	R32_Float,
 	RGBA32_Float,
 	D24S8,
 	D32_Float,
@@ -40,6 +42,8 @@ enum class TextureUsage : uint32_t
 	ColorAttachment  = 1u << 1,
 	DepthStencil     = 1u << 2,
 	Storage          = 1u << 3,
+	TransferSrc      = 1u << 4,
+	TransferDst      = 1u << 5,
 };
 
 inline TextureUsage operator|(TextureUsage lhs, TextureUsage rhs)

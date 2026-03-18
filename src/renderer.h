@@ -240,12 +240,12 @@ public:
 	VkDescriptorPool descriptorPool{ VK_NULL_HANDLE };
 
 	VkPipelineRenderingCreateInfo gbufferInfo;
-	Image gbufferTargets[gbufferCount] = {};
-	Image depthTarget = {};
-	Image shadowTarget = {};
-	Image shadowblurTarget = {};
+	RGTextureHandle gbufferTargetHandles[gbufferCount] = {};
+	RGTextureHandle depthTargetHandle{};
+	RGTextureHandle shadowTargetHandle{};
+	RGTextureHandle shadowblurTargetHandle{};
 
-	Image depthPyramid = {};
+	RGTextureHandle depthPyramidHandle{};
 	VkImageView depthPyramidMips[16] = {};
 	uint32_t depthPyramidWidth = 0;
 	uint32_t depthPyramidHeight = 0;

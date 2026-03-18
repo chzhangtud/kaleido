@@ -167,8 +167,8 @@ VkImageView createImageView(VkDevice device, VkImage image, VkFormat format, uin
 	createInfo.subresourceRange.levelCount = levelCount;
 	createInfo.subresourceRange.layerCount = 1;
 
-	VkImageView view = 0;
-	VK_CHECK(vkCreateImageView(device, &createInfo, 0, &view));
+	VkImageView view = VK_NULL_HANDLE;
+	VK_CHECK(vkCreateImageView(device, &createInfo, nullptr, &view));
 
 	return view;
 }
@@ -186,8 +186,8 @@ void createImage(Image& result, VkDevice device, const VkPhysicalDeviceMemoryPro
 	createInfo.usage = usage;
 	createInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-	VkImage image = 0;
-	VK_CHECK(vkCreateImage(device, &createInfo, 0, &image));
+	VkImage image = VK_NULL_HANDLE;
+	VK_CHECK(vkCreateImage(device, &createInfo, nullptr, &image));
 
 	VkMemoryRequirements memoryRequirements;
 	vkGetImageMemoryRequirements(device, image, &memoryRequirements);
@@ -199,8 +199,8 @@ void createImage(Image& result, VkDevice device, const VkPhysicalDeviceMemoryPro
 	allocateInfo.allocationSize = memoryRequirements.size;
 	allocateInfo.memoryTypeIndex = memoryTypeIndex;
 
-	VkDeviceMemory memory = 0;
-	VK_CHECK(vkAllocateMemory(device, &allocateInfo, 0, &memory));
+	VkDeviceMemory memory = VK_NULL_HANDLE;
+	VK_CHECK(vkAllocateMemory(device, &allocateInfo, nullptr, &memory));
 
 	VK_CHECK(vkBindImageMemory(device, image, memory, 0));
 
@@ -211,9 +211,12 @@ void createImage(Image& result, VkDevice device, const VkPhysicalDeviceMemoryPro
 
 void destroyImage(const Image& image, VkDevice device)
 {
-	vkDestroyImageView(device, image.imageView, 0);
-	vkDestroyImage(device, image.image, 0);
-	vkFreeMemory(device, image.memory, 0);
+	if (image.imageView != VK_NULL_HANDLE)
+		vkDestroyImageView(device, image.imageView, nullptr);
+	if (image.image != VK_NULL_HANDLE)
+		vkDestroyImage(device, image.image, nullptr);
+	if (image.memory != VK_NULL_HANDLE)
+		vkFreeMemory(device, image.memory, nullptr);
 }
 
 uint32_t getImageMipLevels(uint32_t width, uint32_t height)
