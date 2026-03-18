@@ -1072,11 +1072,11 @@ bool VulkanContext::DrawFrame()
 		{
 			if (swapchainImageViews[i])
 			{
-				resourceManager.ReleaseImageView(swapchainImageViews[i]);
+				resourceManager.DestroyImageView(swapchainImageViews[i]);
 				swapchainImageViews[i] = VK_NULL_HANDLE;
 			}
 
-			swapchainImageViews[i] = resourceManager.AcquireImageView(swapchain.images[i], swapchainFormat, 0, 1, /* transient= */ false);
+			swapchainImageViews[i] = resourceManager.CreateImageView(swapchain.images[i], swapchainFormat, 0, 1);
 		}
 
 		if (!pushDescriptorSupported)
@@ -2326,14 +2326,15 @@ void VulkanContext::Release()
 	if (shadowblurTargetHandle.IsValid())
 		resourceManager.ReleaseTexture(shadowblurTargetHandle);
 
-	// Destroy pooled RG resources (textures/buffers) before destroying the device.
-	resourceManager.DestroyAll();
 	for (uint32_t i = 0; i < swapchain.imageCount; ++i)
 		if (swapchainImageViews[i])
 		{
-			resourceManager.ReleaseImageView(swapchainImageViews[i]);
+			resourceManager.DestroyImageView(swapchainImageViews[i]);
 			swapchainImageViews[i] = VK_NULL_HANDLE;
 		}
+
+	// Destroy pooled RG resources (textures/buffers/views) before destroying the device.
+	resourceManager.DestroyAll();
 
 	for (Image& image : scene->images)
 	{

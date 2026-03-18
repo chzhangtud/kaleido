@@ -176,6 +176,12 @@ public:
 		return view;
 	}
 
+	// ImageView API (uncached). Useful for swapchain image views (tied to swapchain lifetime).
+	VkImageView CreateImageView(VkImage image, VkFormat format, uint32_t mipLevel, uint32_t levelCount)
+	{
+		return createImageView(m_device, image, format, mipLevel, levelCount);
+	}
+
 	void ReleaseImageView(VkImageView view)
 	{
 		if (view == VK_NULL_HANDLE)
@@ -188,6 +194,24 @@ public:
 				return;
 			}
 		}
+	}
+
+	void DestroyImageView(VkImageView view)
+	{
+		if (view == VK_NULL_HANDLE)
+			return;
+		// If this view is from the cache, remove it from the pool.
+		for (size_t i = 0; i < m_viewPool.size(); ++i)
+		{
+			if (m_viewPool[i].view == view)
+			{
+				vkDestroyImageView(m_device, view, nullptr);
+				m_viewPool.erase(m_viewPool.begin() + i);
+				return;
+			}
+		}
+		// Otherwise treat it as an uncached/owned view.
+		vkDestroyImageView(m_device, view, nullptr);
 	}
 
 	// ---------------------------------------------------------------------------------------------
