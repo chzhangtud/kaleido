@@ -1687,7 +1687,7 @@ bool VulkanContext::DrawFrame()
 	rg.addPass("GBuffer Early",
 		[&](RGPassBuilder& builder)
 		{
-			builder.readTexture(depthPyramidHandle);
+			builder.readTextureFromPreviousFrame(depthPyramidHandle);  // Use previous frame's pyramid for culling
 			for (uint32_t i = 0; i < gbufferCount; ++i)
 				builder.writeTexture(gbufferTargetHandles[i], { RGLoadOp::Clear, RGStoreOp::Store });
 			builder.writeTexture(depthTargetHandle, { RGLoadOp::Clear, RGStoreOp::Store });

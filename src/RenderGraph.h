@@ -1,10 +1,14 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "RenderResourceManager.h"
+#include "common.h"
 
 enum class RGLoadOp
 {
@@ -48,6 +52,7 @@ struct RGPass
 {
 	std::string                         name;
 	std::vector<RGTextureHandle>        readTextures;
+	std::vector<RGTextureHandle>        readTexturesFromPreviousFrame;  // No producer dependency
 	std::vector<RGTextureWrite>         writeTextures;
 	std::vector<std::string>            readExternalTextures;
 	std::vector<RGExternalTextureWrite> writeExternalTextures;
@@ -63,12 +68,20 @@ public:
 	}
 
 	void readTexture(RGTextureHandle handle);
+	void readTextureFromPreviousFrame(RGTextureHandle handle);  // Read from history, no producer dependency
 	void writeTexture(RGTextureHandle handle, RGLoadStoreOp op = {});
 	void readExternalTexture(const std::string& name);
 	void writeExternalTexture(const std::string& name, RGLoadStoreOp op = {});
 
 private:
 	RGPass& m_pass;
+};
+
+// Resource dependency record: producer pass indices + consumer pass indices.
+struct RGResourceRecord
+{
+	std::vector<size_t> producerPassIndices;
+	std::vector<size_t> consumerPassIndices;
 };
 
 class RenderGraph
@@ -82,6 +95,14 @@ public:
 	void execute(RGPassContext& context) const;
 
 	const std::vector<RGPass>& getPasses() const { return m_passes; }
+
+	// Build resource dependency map and print debug info (inputs/outputs per pass).
+	void buildResourceDependencyMap(
+	    std::map<uint32_t, RGResourceRecord>& outTextureRecords,
+	    std::map<std::string, RGResourceRecord>& outExternalTextureRecords) const;
+
+	// Topological sort of passes. Returns sorted pass indices. On cycle, logs error and returns add order.
+	std::vector<size_t> getTopologicalOrder() const;
 
 private:
 	std::vector<RGPass> m_passes;
