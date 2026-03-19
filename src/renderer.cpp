@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "tools.h"
 #include "RenderBackend.h"
+#include "RenderGraph.h"
 
 template <typename PushConstants, size_t PushDescriptors>
 void dispatch(VkCommandBuffer commandBuffer, const Program& program, uint32_t threadCountX, uint32_t threadCountY, const PushConstants& pushConstants, const DescriptorInfo (&pushDescriptors)[PushDescriptors])
@@ -1681,188 +1682,259 @@ bool VulkanContext::DrawFrame()
 	clearColors[1] = { 0.f, 0.f, 0.f, 0.f };
 	VkClearDepthStencilValue depthClear = { 0.f, 0 };
 
-	// early cull: frustum cull & fill objects that *were* visible last frame
-	cull(taskSubmit ? taskcullPipeline : drawcullPipeline, 2, "early cull", /* late= */ false);
-	// early render: render objects that were visible last frame
-	render(/* late= */ false, clearColors, depthClear, 0, 4, "early render");
-	// depth pyramid generation
-	pyramid(6);
-	// late cull: frustum + occlusion cull & fill objects that were *not* visible last frame
-	cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 8, "late cull", /* late= */ true);
+	RenderGraph rg;
 
-	// late render: render objects that are visible this frame but weren't drawn in the early pass
-	render(/* late= */ true, clearColors, depthClear, 1, 10, "late render");
-
-	// we can skip post passes if no draw call needs them
-	if (scene->meshPostPasses >> 1)
-	{
-		// post cull: frustum + occlusion cull & fill extra objects
-		cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "post cull", /* late= */ true, /* postPass= */ 1);
-
-		// post render: render extra objects
-		render(/* late= */ true, clearColors, depthClear, 2, 14, "post render", /* postPass= */ 1);
-	}
-
-	VkImageMemoryBarrier2 shadingBarriers[2 + gbufferCount] = {
-		imageBarrier(swapchain.images[imageIndex],
-		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
-		imageBarrier(depthTarget->image,
-		    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		    VK_IMAGE_ASPECT_DEPTH_BIT)
-	};
-
-	for (uint32_t i = 0; i < gbufferCount; ++i)
-		shadingBarriers[i + 2] = imageBarrier(gbufferTargets[i]->image,
-		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(shadingBarriers), shadingBarriers);
-
-	Image* shadowTarget = resourceManager.GetTexture(shadowTargetHandle);
-	assert(shadowTarget);
-	
-	if (raytracingSupported && shadowEnabled)
-	{
-		Image* shadowblurTarget = nullptr;
-		if (shadowblurEnabled)
+	rg.addPass("GBuffer Early",
+		[&](RGPassBuilder& builder)
 		{
-			RGTextureDesc shadowBlurDesc{};
-			shadowBlurDesc.width = swapchain.width;
-			shadowBlurDesc.height = swapchain.height;
-			shadowBlurDesc.mipLevels = 1;
-			shadowBlurDesc.format = TextureFormat::R8_UNorm;
-			shadowBlurDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
-
-			shadowblurTargetHandle = resourceManager.CreateTexture(shadowBlurDesc, /* transient= */ true);
-			shadowblurTarget = resourceManager.GetTexture(shadowblurTargetHandle);
-			assert(shadowblurTarget);
-		}
-
-		uint32_t timestamp = 16;
-
-		// checkerboard rendering: we dispatch half as many columns and xform them to fill the screen
-		int shadowWidthCB = shadowCheckerboard ? (swapchain.width + 1) / 2 : swapchain.width;
-		int shadowCheckerboardF = shadowCheckerboard ? 1 : 0;
-
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
-		VkImageMemoryBarrier2 preshadowBarrier =
-		    imageBarrier(shadowTarget->image,
-		        0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
-
-		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &preshadowBarrier);
-
+			builder.readTexture(depthPyramidHandle);
+			for (uint32_t i = 0; i < gbufferCount; ++i)
+				builder.writeTexture(gbufferTargetHandles[i], { RGLoadOp::Clear, RGStoreOp::Store });
+			builder.writeTexture(depthTargetHandle, { RGLoadOp::Clear, RGStoreOp::Store });
+		},
+		[&](RGPassContext&)
 		{
-			vkCmdBindPipeline(commandBuffer, shadowProgram.bindPoint, shadowQuality == 0 ? shadowlqPipeline : shadowhqPipeline);
-			DescriptorInfo descriptors[] = { { shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas, db.buffer, mb.buffer, mtb.buffer, vb.buffer, ib.buffer, textureSampler };
+			cull(taskSubmit ? taskcullPipeline : drawcullPipeline, 2, "early cull", /* late= */ false);
+			render(/* late= */ false, clearColors, depthClear, 0, 4, "early render");
+		});
 
-			ShadowData shadowData = {};
-			shadowData.sunDirection = scene->sunDirection;
-			shadowData.sunJitter = shadowblurEnabled ? 1e-2f : 0;
-			shadowData.inverseViewProjection = inverse(projection * view);
-			shadowData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
-			shadowData.checkerboard = shadowCheckerboardF;
+	rg.addPass("Depth Pyramid",
+		[&](RGPassBuilder& builder)
+		{
+			builder.readTexture(depthTargetHandle);
+			builder.writeTexture(depthPyramidHandle, { RGLoadOp::DontCare, RGStoreOp::Store });
+		},
+		[&](RGPassContext&)
+		{
+			pyramid(6);
+		});
 
-			if (pushDescriptorSupported)
+	rg.addPass("GBuffer Late",
+		[&](RGPassBuilder& builder)
+		{
+			builder.readTexture(depthPyramidHandle);
+			for (uint32_t i = 0; i < gbufferCount; ++i)
+				builder.writeTexture(gbufferTargetHandles[i], { RGLoadOp::Load, RGStoreOp::Store });
+			builder.writeTexture(depthTargetHandle, { RGLoadOp::Load, RGStoreOp::Store });
+		},
+		[&](RGPassContext&)
+		{
+			cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 8, "late cull", /* late= */ true);
+			render(/* late= */ true, clearColors, depthClear, 1, 10, "late render");
+		});
+
+	rg.addPass("GBuffer Post",
+		[&](RGPassBuilder& builder)
+		{
+			builder.readTexture(depthPyramidHandle);
+			for (uint32_t i = 0; i < gbufferCount; ++i)
+				builder.writeTexture(gbufferTargetHandles[i], { RGLoadOp::Load, RGStoreOp::Store });
+			builder.writeTexture(depthTargetHandle, { RGLoadOp::Load, RGStoreOp::Store });
+		},
+		[&](RGPassContext&)
+		{
+			if (scene->meshPostPasses >> 1)
 			{
-				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
-				dispatch(commandBuffer, shadowProgram, shadowWidthCB, swapchain.height, shadowData, descriptors);
+				cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "post cull", /* late= */ true, /* postPass= */ 1);
+				render(/* late= */ true, clearColors, depthClear, 2, 14, "post render", /* postPass= */ 1);
+			}
+		});
+
+	rg.addPass("Shadow Pass",
+		[&](RGPassBuilder& builder)
+		{
+			builder.readTexture(depthTargetHandle);
+			builder.writeTexture(shadowTargetHandle, { RGLoadOp::DontCare, RGStoreOp::Store });
+
+			if (shadowblurEnabled)
+			{
+				RGTextureDesc shadowBlurDesc{};
+				shadowBlurDesc.width = swapchain.width;
+				shadowBlurDesc.height = swapchain.height;
+				shadowBlurDesc.mipLevels = 1;
+				shadowBlurDesc.format = TextureFormat::R8_UNorm;
+				shadowBlurDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
+
+				shadowblurTargetHandle = resourceManager.CreateTexture(shadowBlurDesc, /* transient= */ true);
+				builder.writeTexture(shadowblurTargetHandle, { RGLoadOp::DontCare, RGStoreOp::Store });
 			}
 			else
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, shadowProgram.descriptorSets[frameOffset], shadowProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 0, 1, &shadowProgram.descriptorSets[frameOffset], 0, nullptr);
-				vkCmdBindDescriptorSets(commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
-				vkCmdPushConstants(commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(shadowData), &shadowData);
-				vkCmdDispatch(commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
+				shadowblurTargetHandle = {};
 			}
-		}
-
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
-
-		if (shadowCheckerboard)
+		},
+		[&](RGPassContext& ctx)
 		{
-			VkImageMemoryBarrier2 fillBarrier = imageBarrier(shadowTarget->image,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
-
-			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &fillBarrier);
-
-			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowfillPipeline);
-
-			DescriptorInfo descriptors[] = { { shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
-			vec4 fillData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
-
-			dispatch(commandBuffer, shadowfillProgram, shadowWidthCB, swapchain.height, fillData, descriptors);
-		}
-
-		for (int pass = 0; pass < (shadowblurEnabled ? 2 : 0); ++pass)
-		{
-			assert(shadowblurTarget);
-			const Image& blurFrom = pass == 0 ? *shadowTarget : *shadowblurTarget;
-			const Image& blurTo = pass == 0 ? *shadowblurTarget : *shadowTarget;
-
-			VkImageMemoryBarrier2 blurBarriers[] = {
-				imageBarrier(blurFrom.image,
-				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL),
-				imageBarrier(blurTo.image,
-				    pass == 0 ? 0 : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, pass == 0 ? 0 : VK_ACCESS_SHADER_READ_BIT, pass == 0 ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+			VkImageMemoryBarrier2 shadingBarriers[2 + gbufferCount] = {
+				imageBarrier(swapchain.images[imageIndex],
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
 				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
+				imageBarrier(depthTarget->image,
+				    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				    VK_IMAGE_ASPECT_DEPTH_BIT)
 			};
+			for (uint32_t i = 0; i < gbufferCount; ++i)
+				shadingBarriers[i + 2] = imageBarrier(gbufferTargets[i]->image,
+				    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(shadingBarriers), shadingBarriers);
 
-			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blurBarriers), blurBarriers);
-			vkCmdBindPipeline(commandBuffer, shadowblurProgram.bindPoint, shadowblurPipeline);
-			DescriptorInfo descriptors[] = { { blurTo.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, blurFrom.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
-			vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, scene->camera.znear);
+			Image* shadowTarget = resourceManager.GetTexture(shadowTargetHandle);
+			assert(shadowTarget);
 
-			if (pushDescriptorSupported)
+			if (raytracingSupported && shadowEnabled)
 			{
-				dispatch(commandBuffer, shadowblurProgram, swapchain.width, swapchain.height, blurData, descriptors);
+				Image* shadowblurTarget = nullptr;
+				if (shadowblurTargetHandle.IsValid())
+				{
+					shadowblurTarget = resourceManager.GetTexture(shadowblurTargetHandle);
+					assert(shadowblurTarget);
+				}
+
+				uint32_t timestamp = 16;
+
+				// checkerboard rendering: we dispatch half as many columns and xform them to fill the screen
+				int shadowWidthCB = shadowCheckerboard ? (swapchain.width + 1) / 2 : swapchain.width;
+				int shadowCheckerboardF = shadowCheckerboard ? 1 : 0;
+
+				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
+				VkImageMemoryBarrier2 preshadowBarrier =
+				    imageBarrier(shadowTarget->image,
+				        0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+				        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+				pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &preshadowBarrier);
+
+				{
+					vkCmdBindPipeline(ctx.commandBuffer, shadowProgram.bindPoint, shadowQuality == 0 ? shadowlqPipeline : shadowhqPipeline);
+					DescriptorInfo descriptors[] = { { shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas, db.buffer, mb.buffer, mtb.buffer, vb.buffer, ib.buffer, textureSampler };
+
+					ShadowData shadowData = {};
+					shadowData.sunDirection = scene->sunDirection;
+					shadowData.sunJitter = shadowblurEnabled ? 1e-2f : 0;
+					shadowData.inverseViewProjection = inverse(projection * view);
+					shadowData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
+					shadowData.checkerboard = shadowCheckerboardF;
+
+					if (pushDescriptorSupported)
+					{
+						vkCmdBindDescriptorSets(ctx.commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+						dispatch(ctx.commandBuffer, shadowProgram, shadowWidthCB, swapchain.height, shadowData, descriptors);
+					}
+					else
+					{
+						vkUpdateDescriptorSetWithTemplateKHR(device, shadowProgram.descriptorSets[frameOffset], shadowProgram.updateTemplate, descriptors);
+						vkCmdBindDescriptorSets(ctx.commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 0, 1, &shadowProgram.descriptorSets[frameOffset], 0, nullptr);
+						vkCmdBindDescriptorSets(ctx.commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+						vkCmdPushConstants(ctx.commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(shadowData), &shadowData);
+						vkCmdDispatch(ctx.commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
+					}
+				}
+
+				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+
+				if (shadowCheckerboard)
+				{
+					VkImageMemoryBarrier2 fillBarrier = imageBarrier(shadowTarget->image,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+					pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &fillBarrier);
+
+					vkCmdBindPipeline(ctx.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowfillPipeline);
+
+					DescriptorInfo descriptors[] = { { shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+					vec4 fillData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
+
+					dispatch(ctx.commandBuffer, shadowfillProgram, shadowWidthCB, swapchain.height, fillData, descriptors);
+				}
+
+				for (int pass = 0; pass < (shadowblurEnabled ? 2 : 0); ++pass)
+				{
+					assert(shadowblurTarget);
+					const Image& blurFrom = pass == 0 ? *shadowTarget : *shadowblurTarget;
+					const Image& blurTo = pass == 0 ? *shadowblurTarget : *shadowTarget;
+
+					VkImageMemoryBarrier2 blurBarriers[] = {
+						imageBarrier(blurFrom.image,
+						    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+						    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL),
+						imageBarrier(blurTo.image,
+						    pass == 0 ? 0 : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, pass == 0 ? 0 : VK_ACCESS_SHADER_READ_BIT, pass == 0 ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+						    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
+					};
+
+					pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blurBarriers), blurBarriers);
+					vkCmdBindPipeline(ctx.commandBuffer, shadowblurProgram.bindPoint, shadowblurPipeline);
+					DescriptorInfo descriptors[] = { { blurTo.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, blurFrom.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+					vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, scene->camera.znear);
+
+					if (pushDescriptorSupported)
+					{
+						dispatch(ctx.commandBuffer, shadowblurProgram, swapchain.width, swapchain.height, blurData, descriptors);
+					}
+					else
+					{
+						vkUpdateDescriptorSetWithTemplateKHR(device, shadowblurSets[frameOffset][pass], shadowblurProgram.updateTemplate, descriptors);
+						vkCmdBindDescriptorSets(ctx.commandBuffer, shadowblurProgram.bindPoint, shadowblurProgram.layout, 0, 1, &shadowblurSets[frameOffset][pass], 0, nullptr);
+						vkCmdPushConstants(ctx.commandBuffer, shadowblurProgram.layout, shadowblurProgram.pushConstantStages, 0, sizeof(blurData), &blurData);
+						vkCmdDispatch(ctx.commandBuffer, getGroupCount(swapchain.width, shadowblurProgram.localSizeX), getGroupCount(swapchain.height, shadowblurProgram.localSizeY), 1);
+					}
+				}
+
+				VkImageMemoryBarrier2 postblurBarrier =
+				    imageBarrier(shadowTarget->image,
+				        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+				        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+				pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &postblurBarrier);
+
+				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
 			}
 			else
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, shadowblurSets[frameOffset][pass], shadowblurProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, shadowblurProgram.bindPoint, shadowblurProgram.layout, 0, 1, &shadowblurSets[frameOffset][pass], 0, nullptr);
-				vkCmdPushConstants(commandBuffer, shadowblurProgram.layout, shadowblurProgram.pushConstantStages, 0, sizeof(blurData), &blurData);
-				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, shadowblurProgram.localSizeX), getGroupCount(swapchain.height, shadowblurProgram.localSizeY), 1);
+				VkImageMemoryBarrier2 dummyBarrier =
+					imageBarrier(shadowTarget->image,
+						0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+				pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &dummyBarrier);
+
+				uint32_t timestamp = 16; // todo: we need an actual profiler
+				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
+				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
 			}
-		}
+		});
 
-		VkImageMemoryBarrier2 postblurBarrier =
-		    imageBarrier(shadowTarget->image,
-		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
-
-		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &postblurBarrier);
-
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
-	}
-	else
-	{
-		VkImageMemoryBarrier2 dummyBarrier =
-			imageBarrier(shadowTarget->image,
-				0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
-
-		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &dummyBarrier);
-
-		uint32_t timestamp = 16; // todo: we need an actual profiler
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
-	}
-
-	{
-		uint32_t timestamp = 19;
-
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
+	rg.addPass("Lighting Pass",
+		[&](RGPassBuilder& builder)
 		{
-			vkCmdBindPipeline(commandBuffer, finalProgram.bindPoint, finalPipeline);
+			builder.readTexture(gbufferTargetHandles[0]);
+			builder.readTexture(gbufferTargetHandles[1]);
+			builder.readTexture(depthTargetHandle);
+			builder.readTexture(shadowTargetHandle);
+			builder.writeExternalTexture("SwapchainColor", { RGLoadOp::DontCare, RGStoreOp::Store });
+		},
+		[&](RGPassContext& ctx)
+		{
+			Image* shadowTarget = ctx.resourceManager->GetTexture(shadowTargetHandle);
+			assert(shadowTarget);
 
-			DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL }, { readSampler, gbufferTargets[0]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, gbufferTargets[1]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, { readSampler, shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL } };
+			uint32_t timestamp = 19;
+
+			vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
+
+			vkCmdBindPipeline(ctx.commandBuffer, finalProgram.bindPoint, finalPipeline);
+
+			DescriptorInfo descriptors[] = {
+				{ swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL },
+				{ readSampler, gbufferTargets[0]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+				{ readSampler, gbufferTargets[1]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+				{ readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+				{ readSampler, shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }
+			};
 
 			ShadeData shadeData = {};
 			shadeData.cameraPosition = scene->camera.position;
@@ -1873,18 +1945,25 @@ bool VulkanContext::DrawFrame()
 
 			if (pushDescriptorSupported)
 			{
-				dispatch(commandBuffer, finalProgram, swapchain.width, swapchain.height, shadeData, descriptors);
+				dispatch(ctx.commandBuffer, finalProgram, swapchain.width, swapchain.height, shadeData, descriptors);
 			}
 			else
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, finalProgram.descriptorSets[frameOffset], finalProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, finalProgram.bindPoint, finalProgram.layout, 0, 1, &finalProgram.descriptorSets[frameOffset], 0, nullptr);
-				vkCmdPushConstants(commandBuffer, finalProgram.layout, finalProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
-				vkCmdDispatch(commandBuffer, getGroupCount(swapchain.width, finalProgram.localSizeX), getGroupCount(swapchain.height, finalProgram.localSizeY), 1);
+				vkCmdBindDescriptorSets(ctx.commandBuffer, finalProgram.bindPoint, finalProgram.layout, 0, 1, &finalProgram.descriptorSets[frameOffset], 0, nullptr);
+				vkCmdPushConstants(ctx.commandBuffer, finalProgram.layout, finalProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
+				vkCmdDispatch(ctx.commandBuffer, getGroupCount(swapchain.width, finalProgram.localSizeX), getGroupCount(swapchain.height, finalProgram.localSizeY), 1);
 			}
-		}
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
-	}
+
+			vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+		});
+
+
+	RGPassContext rgContext{};
+	rgContext.resourceManager = &resourceManager;
+	rgContext.commandBuffer = commandBuffer;
+	rgContext.frameIndex = frameIndex;
+	rg.execute(rgContext);
 
 	static double cullGPUTime = 0.0;
 	static double pyramidGPUTime = 0.0;
