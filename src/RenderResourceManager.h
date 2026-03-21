@@ -267,6 +267,16 @@ public:
 		return &m_texturePool[index].image;
 	}
 
+	const RGTextureDesc* GetTextureDesc(RGTextureHandle handle) const
+	{
+		if (!handle.IsValid())
+			return nullptr;
+		uint32_t index = handle.id - 1;
+		if (index >= m_texturePool.size())
+			return nullptr;
+		return &m_texturePool[index].desc;
+	}
+
 	void ReleaseTexture(RGTextureHandle handle)
 	{
 		if (!handle.IsValid())

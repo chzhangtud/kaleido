@@ -35,11 +35,54 @@ bool recordTouchesCycle(const RGResourceRecord& rec, const std::unordered_set<si
 	bool hasCons = std::any_of(rec.consumerPassIndices.begin(), rec.consumerPassIndices.end(), inCycle);
 	return hasProd && hasCons;
 }
+
+bool hasUsage(TextureUsage usage, TextureUsage bit)
+{
+	return (static_cast<uint32_t>(usage) & static_cast<uint32_t>(bit)) != 0;
+}
+
+ResourceState inferReadState(const RenderResourceManager& rm, RGTextureHandle handle)
+{
+	const RGTextureDesc* desc = rm.GetTextureDesc(handle);
+	if (!desc)
+		return ResourceState::ShaderRead;
+	if (hasUsage(desc->usage, TextureUsage::DepthStencil))
+		return ResourceState::DepthStencilRead;
+	if (hasUsage(desc->usage, TextureUsage::TransferSrc))
+		return ResourceState::CopySrc;
+	return ResourceState::ShaderRead;
+}
+
+ResourceState inferWriteState(const RenderResourceManager& rm, RGTextureHandle handle)
+{
+	const RGTextureDesc* desc = rm.GetTextureDesc(handle);
+	if (!desc)
+		return ResourceState::ShaderWrite;
+	if (hasUsage(desc->usage, TextureUsage::ColorAttachment))
+		return ResourceState::ColorAttachment;
+	if (hasUsage(desc->usage, TextureUsage::DepthStencil))
+		return ResourceState::DepthStencilWrite;
+	if (hasUsage(desc->usage, TextureUsage::TransferDst))
+		return ResourceState::CopyDst;
+	return ResourceState::ShaderWrite;
+}
+
+bool isReadState(ResourceState state)
+{
+	return state == ResourceState::ShaderRead || state == ResourceState::DepthStencilRead || state == ResourceState::CopySrc;
+}
 }  // namespace
 
 void RGPassBuilder::readTexture(RGTextureHandle handle)
 {
 	m_pass.readTextures.push_back(handle);
+	m_pass.readTextureStates.push_back(ResourceState::Undefined);
+}
+
+void RGPassBuilder::readTexture(RGTextureHandle handle, ResourceState state)
+{
+	m_pass.readTextures.push_back(handle);
+	m_pass.readTextureStates.push_back(state);
 }
 
 void RGPassBuilder::readTextureFromPreviousFrame(RGTextureHandle handle)
@@ -49,7 +92,12 @@ void RGPassBuilder::readTextureFromPreviousFrame(RGTextureHandle handle)
 
 void RGPassBuilder::writeTexture(RGTextureHandle handle, RGLoadStoreOp op)
 {
-	m_pass.writeTextures.push_back({ handle, op });
+	m_pass.writeTextures.push_back({ handle, op, ResourceState::Undefined });
+}
+
+void RGPassBuilder::writeTexture(RGTextureHandle handle, ResourceState state, RGLoadStoreOp op)
+{
+	m_pass.writeTextures.push_back({ handle, op, state });
 }
 
 void RGPassBuilder::readExternalTexture(const std::string& name)
@@ -57,9 +105,20 @@ void RGPassBuilder::readExternalTexture(const std::string& name)
 	m_pass.readExternalTextures.push_back(name);
 }
 
+void RGPassBuilder::readExternalTexture(const std::string& name, ResourceState state)
+{
+	(void)state;
+	m_pass.readExternalTextures.push_back(name);
+}
+
 void RGPassBuilder::writeExternalTexture(const std::string& name, RGLoadStoreOp op)
 {
-	m_pass.writeExternalTextures.push_back({ name, op });
+	m_pass.writeExternalTextures.push_back({ name, op, ResourceState::Undefined });
+}
+
+void RGPassBuilder::writeExternalTexture(const std::string& name, ResourceState state, RGLoadStoreOp op)
+{
+	m_pass.writeExternalTextures.push_back({ name, op, state });
 }
 
 void RenderGraph::clear()
@@ -232,6 +291,7 @@ std::vector<size_t> RenderGraph::getTopologicalOrder() const
 void RenderGraph::execute(RGPassContext& context) const
 {
 	std::vector<size_t> order = getTopologicalOrder();
+	std::vector<std::vector<RGImageBarrier>> barriersBeforePass(m_passes.size());
 
 	static bool s_orderLoggedOnce = false;
 	if (!s_orderLoggedOnce)
@@ -242,7 +302,102 @@ void RenderGraph::execute(RGPassContext& context) const
 			LOGI("  -> %s", m_passes[idx].name.c_str());
 	}
 
+	struct ResourcePassState
+	{
+		bool          touched = false;
+		ResourceState beginState = ResourceState::Undefined;
+		ResourceState endState = ResourceState::Undefined;
+	};
+
+	std::vector<std::unordered_map<uint32_t, ResourcePassState>> passStates(m_passes.size());
+	for (size_t passIdx : order)
+	{
+		const RGPass& pass = m_passes[passIdx];
+		auto& states = passStates[passIdx];
+
+		for (size_t i = 0; i < pass.readTextures.size(); ++i)
+		{
+			RGTextureHandle handle = pass.readTextures[i];
+			if (!handle.IsValid())
+				continue;
+
+			ResourceState state = ResourceState::Undefined;
+			if (i < pass.readTextureStates.size())
+				state = pass.readTextureStates[i];
+			if (state == ResourceState::Undefined && context.resourceManager)
+				state = inferReadState(*context.resourceManager, handle);
+
+			ResourcePassState& s = states[handle.id];
+			if (!s.touched)
+			{
+				s.touched = true;
+				s.beginState = state;
+				s.endState = state;
+			}
+			else
+			{
+				if (isReadState(s.endState))
+					s.endState = state;
+			}
+		}
+
+		for (const RGTextureWrite& w : pass.writeTextures)
+		{
+			if (!w.handle.IsValid())
+				continue;
+
+			ResourceState state = w.state;
+			if (state == ResourceState::Undefined && context.resourceManager)
+				state = inferWriteState(*context.resourceManager, w.handle);
+
+			ResourcePassState& s = states[w.handle.id];
+			if (!s.touched)
+			{
+				s.touched = true;
+				s.beginState = state;
+				s.endState = state;
+			}
+			else
+			{
+				s.endState = state;
+			}
+		}
+	}
+
+	std::unordered_map<uint32_t, ResourceState> lastKnownState;
+	for (size_t passIdx : order)
+	{
+		const auto& currStates = passStates[passIdx];
+		for (const auto& [resourceId, currState] : currStates)
+		{
+			if (!currState.touched)
+				continue;
+
+			ResourceState oldState = ResourceState::Undefined;
+			auto it = lastKnownState.find(resourceId);
+			if (it != lastKnownState.end())
+				oldState = it->second;
+
+			if (oldState != currState.beginState)
+			{
+				RGImageBarrier b{};
+				b.handle.id = resourceId;
+				b.oldState = oldState;
+				b.newState = currState.beginState;
+				barriersBeforePass[passIdx].push_back(b);
+			}
+
+			lastKnownState[resourceId] = currState.endState;
+		}
+	}
+
 	for (size_t idx : order)
+	{
+		const auto& barriers = barriersBeforePass[idx];
+		if (!barriers.empty() && context.insertImageBarriers)
+			context.insertImageBarriers(context.commandBuffer, barriers);
+
 		if (m_passes[idx].execute)
 			m_passes[idx].execute(context);
+	}
 }

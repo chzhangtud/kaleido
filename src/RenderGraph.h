@@ -33,12 +33,21 @@ struct RGTextureWrite
 {
 	RGTextureHandle handle{};
 	RGLoadStoreOp   op{};
+	ResourceState   state = ResourceState::Undefined;
 };
 
 struct RGExternalTextureWrite
 {
 	std::string  name;
 	RGLoadStoreOp op{};
+	ResourceState state = ResourceState::Undefined;
+};
+
+struct RGImageBarrier
+{
+	RGTextureHandle handle{};
+	ResourceState   oldState = ResourceState::Undefined;
+	ResourceState   newState = ResourceState::Undefined;
 };
 
 struct RGPassContext
@@ -46,12 +55,14 @@ struct RGPassContext
 	RenderResourceManager* resourceManager = nullptr;
 	VkCommandBuffer        commandBuffer = VK_NULL_HANDLE;
 	uint64_t               frameIndex = 0;
+	std::function<void(VkCommandBuffer, const std::vector<RGImageBarrier>&)> insertImageBarriers;
 };
 
 struct RGPass
 {
 	std::string                         name;
 	std::vector<RGTextureHandle>        readTextures;
+	std::vector<ResourceState>          readTextureStates;
 	std::vector<RGTextureHandle>        readTexturesFromPreviousFrame;  // No producer dependency
 	std::vector<RGTextureWrite>         writeTextures;
 	std::vector<std::string>            readExternalTextures;
@@ -68,10 +79,14 @@ public:
 	}
 
 	void readTexture(RGTextureHandle handle);
+	void readTexture(RGTextureHandle handle, ResourceState state);
 	void readTextureFromPreviousFrame(RGTextureHandle handle);  // Read from history, no producer dependency
 	void writeTexture(RGTextureHandle handle, RGLoadStoreOp op = {});
+	void writeTexture(RGTextureHandle handle, ResourceState state, RGLoadStoreOp op = {});
 	void readExternalTexture(const std::string& name);
+	void readExternalTexture(const std::string& name, ResourceState state);
 	void writeExternalTexture(const std::string& name, RGLoadStoreOp op = {});
+	void writeExternalTexture(const std::string& name, ResourceState state, RGLoadStoreOp op = {});
 
 private:
 	RGPass& m_pass;

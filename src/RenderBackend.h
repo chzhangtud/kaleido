@@ -74,6 +74,7 @@ enum class ResourceState : uint32_t
 	ShaderRead,
 	ShaderWrite,
 	ColorAttachment,
+	DepthStencil,
 	DepthStencilRead,
 	DepthStencilWrite,
 	CopySrc,
@@ -151,5 +152,12 @@ public:
 	// Submit work to GPU and optionally wait.
 	virtual void Submit(ICommandList* cmdList) = 0;
 	virtual void WaitIdle() = 0;
+
+	// Insert resource transitions for the active command stream.
+	virtual void InsertBarrier(ICommandList* cmdList,
+	                           const TextureBarrier* textureBarriers,
+	                           uint32_t textureBarrierCount,
+	                           const BufferBarrier* bufferBarriers,
+	                           uint32_t bufferBarrierCount) = 0;
 };
 

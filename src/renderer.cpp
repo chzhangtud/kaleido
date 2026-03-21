@@ -1607,17 +1607,10 @@ bool VulkanContext::DrawFrame()
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
 
-		VkImageMemoryBarrier2 depthBarriers[] = {
-			imageBarrier(depthTarget->image,
-			    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
-			    VK_IMAGE_ASPECT_DEPTH_BIT),
-			imageBarrier(depthPyramid->image,
-			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
-		};
-
-		pipelineBarrier(commandBuffer, 0, 0, nullptr, COUNTOF(depthBarriers), depthBarriers);
+		VkImageMemoryBarrier2 pyramidWriteBarrier = imageBarrier(depthPyramid->image,
+		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+		pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &pyramidWriteBarrier);
 		vkCmdBindPipeline(commandBuffer, depthreduceProgram.bindPoint, depthreducePipeline);
 
 		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
@@ -1649,12 +1642,6 @@ bool VulkanContext::DrawFrame()
 			    VK_IMAGE_ASPECT_COLOR_BIT, i, 1);
 			pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &reduceBarrier);
 		}
-
-		VkImageMemoryBarrier2 depthWriteBarrier = imageBarrier(depthTarget->image,
-		    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
-		    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-		    VK_IMAGE_ASPECT_DEPTH_BIT);
-		pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &depthWriteBarrier);
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 	};
@@ -1701,8 +1688,8 @@ bool VulkanContext::DrawFrame()
 	rg.addPass("Depth Pyramid",
 		[&](RGPassBuilder& builder)
 		{
-			builder.readTexture(depthTargetHandle);
-			builder.writeTexture(depthPyramidHandle, { RGLoadOp::DontCare, RGStoreOp::Store });
+			builder.readTexture(depthTargetHandle, ResourceState::DepthStencilRead);
+			builder.writeTexture(depthPyramidHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 		},
 		[&](RGPassContext&)
 		{
@@ -1712,10 +1699,10 @@ bool VulkanContext::DrawFrame()
 	rg.addPass("GBuffer Late",
 		[&](RGPassBuilder& builder)
 		{
-			builder.readTexture(depthPyramidHandle);
+			builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
 			for (uint32_t i = 0; i < gbufferCount; ++i)
-				builder.writeTexture(gbufferTargetHandles[i], { RGLoadOp::Load, RGStoreOp::Store });
-			builder.writeTexture(depthTargetHandle, { RGLoadOp::Load, RGStoreOp::Store });
+				builder.writeTexture(gbufferTargetHandles[i], ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
+			builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
 		},
 		[&](RGPassContext&)
 		{
@@ -1726,10 +1713,10 @@ bool VulkanContext::DrawFrame()
 	rg.addPass("GBuffer Post",
 		[&](RGPassBuilder& builder)
 		{
-			builder.readTexture(depthPyramidHandle);
+			builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
 			for (uint32_t i = 0; i < gbufferCount; ++i)
-				builder.writeTexture(gbufferTargetHandles[i], { RGLoadOp::Load, RGStoreOp::Store });
-			builder.writeTexture(depthTargetHandle, { RGLoadOp::Load, RGStoreOp::Store });
+				builder.writeTexture(gbufferTargetHandles[i], ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
+			builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
 		},
 		[&](RGPassContext&)
 		{
@@ -1743,8 +1730,11 @@ bool VulkanContext::DrawFrame()
 	rg.addPass("Shadow Pass",
 		[&](RGPassBuilder& builder)
 		{
-			builder.readTexture(depthTargetHandle);
-			builder.writeTexture(shadowTargetHandle, { RGLoadOp::DontCare, RGStoreOp::Store });
+			builder.readTexture(gbufferTargetHandles[0], ResourceState::ShaderRead);
+			builder.readTexture(gbufferTargetHandles[1], ResourceState::ShaderRead);
+			builder.readTexture(depthTargetHandle, ResourceState::ShaderRead);
+			builder.writeTexture(shadowTargetHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+			builder.writeExternalTexture("SwapchainColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 
 			if (shadowblurEnabled)
 			{
@@ -1756,7 +1746,7 @@ bool VulkanContext::DrawFrame()
 				shadowBlurDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
 
 				shadowblurTargetHandle = resourceManager.CreateTexture(shadowBlurDesc, /* transient= */ true);
-				builder.writeTexture(shadowblurTargetHandle, { RGLoadOp::DontCare, RGStoreOp::Store });
+				builder.writeTexture(shadowblurTargetHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 			}
 			else
 			{
@@ -1765,20 +1755,11 @@ bool VulkanContext::DrawFrame()
 		},
 		[&](RGPassContext& ctx)
 		{
-			VkImageMemoryBarrier2 shadingBarriers[2 + gbufferCount] = {
-				imageBarrier(swapchain.images[imageIndex],
-				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL),
-				imageBarrier(depthTarget->image,
-				    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-				    VK_IMAGE_ASPECT_DEPTH_BIT)
-			};
-			for (uint32_t i = 0; i < gbufferCount; ++i)
-				shadingBarriers[i + 2] = imageBarrier(gbufferTargets[i]->image,
-				    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-			pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(shadingBarriers), shadingBarriers);
+			VkImageMemoryBarrier2 swapchainToGeneral =
+			    imageBarrier(swapchain.images[imageIndex],
+			        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+			        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+			pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &swapchainToGeneral);
 
 			Image* shadowTarget = resourceManager.GetTexture(shadowTargetHandle);
 			assert(shadowTarget);
@@ -1799,13 +1780,6 @@ bool VulkanContext::DrawFrame()
 				int shadowCheckerboardF = shadowCheckerboard ? 1 : 0;
 
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
-				VkImageMemoryBarrier2 preshadowBarrier =
-				    imageBarrier(shadowTarget->image,
-				        0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-				        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
-
-				pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &preshadowBarrier);
-
 				{
 					vkCmdBindPipeline(ctx.commandBuffer, shadowProgram.bindPoint, shadowQuality == 0 ? shadowlqPipeline : shadowhqPipeline);
 					DescriptorInfo descriptors[] = { { shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, tlas, db.buffer, mb.buffer, mtb.buffer, vb.buffer, ib.buffer, textureSampler };
@@ -1894,13 +1868,6 @@ bool VulkanContext::DrawFrame()
 			}
 			else
 			{
-				VkImageMemoryBarrier2 dummyBarrier =
-					imageBarrier(shadowTarget->image,
-						0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
-
-				pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &dummyBarrier);
-
 				uint32_t timestamp = 16; // todo: we need an actual profiler
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
@@ -1911,11 +1878,11 @@ bool VulkanContext::DrawFrame()
 	rg.addPass("Lighting Pass",
 		[&](RGPassBuilder& builder)
 		{
-			builder.readTexture(gbufferTargetHandles[0]);
-			builder.readTexture(gbufferTargetHandles[1]);
-			builder.readTexture(depthTargetHandle);
-			builder.readTexture(shadowTargetHandle);
-			builder.writeExternalTexture("SwapchainColor", { RGLoadOp::DontCare, RGStoreOp::Store });
+			builder.readTexture(gbufferTargetHandles[0], ResourceState::ShaderRead);
+			builder.readTexture(gbufferTargetHandles[1], ResourceState::ShaderRead);
+			builder.readTexture(depthTargetHandle, ResourceState::ShaderRead);
+			builder.readTexture(shadowTargetHandle, ResourceState::ShaderRead);
+			builder.writeExternalTexture("SwapchainColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 		},
 		[&](RGPassContext& ctx)
 		{
@@ -1963,6 +1930,94 @@ bool VulkanContext::DrawFrame()
 	rgContext.resourceManager = &resourceManager;
 	rgContext.commandBuffer = commandBuffer;
 	rgContext.frameIndex = frameIndex;
+	rgContext.insertImageBarriers = [&](VkCommandBuffer cb, const std::vector<RGImageBarrier>& barriers)
+	{
+		if (barriers.empty())
+			return;
+
+		std::vector<VkImageMemoryBarrier2> vkBarriers;
+		vkBarriers.reserve(barriers.size());
+
+		auto mapState = [](ResourceState state, bool isDepth, bool preferGeneralRead, VkPipelineStageFlags2& stage, VkAccessFlags2& access, VkImageLayout& layout)
+		{
+			switch (state)
+			{
+			case ResourceState::ColorAttachment:
+				stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+				access = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+				layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+				break;
+			case ResourceState::DepthStencil:
+			case ResourceState::DepthStencilWrite:
+				stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+				access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+				layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+				break;
+			case ResourceState::DepthStencilRead:
+				stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				access = VK_ACCESS_SHADER_READ_BIT;
+				layout = isDepth ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				break;
+			case ResourceState::ShaderRead:
+				stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				access = VK_ACCESS_SHADER_READ_BIT;
+				layout = preferGeneralRead ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				break;
+			case ResourceState::ShaderWrite:
+				stage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+				layout = VK_IMAGE_LAYOUT_GENERAL;
+				break;
+			case ResourceState::CopySrc:
+				stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+				access = VK_ACCESS_TRANSFER_READ_BIT;
+				layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+				break;
+			case ResourceState::CopyDst:
+				stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+				access = VK_ACCESS_TRANSFER_WRITE_BIT;
+				layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+				break;
+			case ResourceState::Present:
+				stage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+				access = 0;
+				layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+				break;
+			default:
+				stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+				access = 0;
+				layout = VK_IMAGE_LAYOUT_UNDEFINED;
+				break;
+			}
+		};
+
+		for (const RGImageBarrier& b : barriers)
+		{
+			Image* image = resourceManager.GetTexture(b.handle);
+			const RGTextureDesc* desc = resourceManager.GetTextureDesc(b.handle);
+			if (!image || !desc)
+				continue;
+
+			const bool isDepth = desc->format == TextureFormat::D24S8 || desc->format == TextureFormat::D32_Float;
+			const VkImageAspectFlags aspect = isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+			const bool supportsStorage = (static_cast<uint32_t>(desc->usage) & static_cast<uint32_t>(TextureUsage::Storage)) != 0;
+
+			VkPipelineStageFlags2 srcStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+			VkAccessFlags2 srcAccess = 0;
+			VkImageLayout oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			mapState(b.oldState, isDepth, supportsStorage, srcStage, srcAccess, oldLayout);
+
+			VkPipelineStageFlags2 dstStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+			VkAccessFlags2 dstAccess = 0;
+			VkImageLayout newLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			mapState(b.newState, isDepth, supportsStorage, dstStage, dstAccess, newLayout);
+
+			vkBarriers.push_back(imageBarrier(image->image, srcStage, srcAccess, oldLayout, dstStage, dstAccess, newLayout, aspect));
+		}
+
+		if (!vkBarriers.empty())
+			pipelineBarrier(cb, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, vkBarriers.size(), vkBarriers.data());
+	};
 	rg.execute(rgContext);
 
 	static double cullGPUTime = 0.0;
