@@ -47,6 +47,22 @@ Currently users need to copy shaders and model assets into assets folder.
 kaleido.exe -h
 kaleido.exe xxx.gltf
 ```
+
+### RenderGraph barrier debug (cross-platform)
+You can print auto-generated RenderGraph barriers by setting `RG_BARRIER_DEBUG=1`.
+
+- Windows (PowerShell):
+```powershell
+$env:RG_BARRIER_DEBUG="1"
+.\build\Debug\kaleido.exe
+```
+- Linux/macOS (bash/zsh):
+```bash
+RG_BARRIER_DEBUG=1 ./build/kaleido
+```
+
+Set `RG_BARRIER_DEBUG=0` (or unset it) to disable logging.
+
 ## Android
 Launch app.
 

@@ -50,12 +50,21 @@ struct RGImageBarrier
 	ResourceState   newState = ResourceState::Undefined;
 };
 
+struct RGExternalImageBarrier
+{
+	std::string   name;
+	ResourceState oldState = ResourceState::Undefined;
+	ResourceState newState = ResourceState::Undefined;
+};
+
 struct RGPassContext
 {
 	RenderResourceManager* resourceManager = nullptr;
 	VkCommandBuffer        commandBuffer = VK_NULL_HANDLE;
 	uint64_t               frameIndex = 0;
+	bool                   enableBarrierDebugLog = false;
 	std::function<void(VkCommandBuffer, const std::vector<RGImageBarrier>&)> insertImageBarriers;
+	std::function<void(VkCommandBuffer, const std::vector<RGExternalImageBarrier>&)> insertExternalImageBarriers;
 };
 
 struct RGPass
@@ -66,6 +75,7 @@ struct RGPass
 	std::vector<RGTextureHandle>        readTexturesFromPreviousFrame;  // No producer dependency
 	std::vector<RGTextureWrite>         writeTextures;
 	std::vector<std::string>            readExternalTextures;
+	std::vector<ResourceState>          readExternalTextureStates;
 	std::vector<RGExternalTextureWrite> writeExternalTextures;
 	std::function<void(RGPassContext&)> execute;
 };

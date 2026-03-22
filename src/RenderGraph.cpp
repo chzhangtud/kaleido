@@ -71,6 +71,24 @@ bool isReadState(ResourceState state)
 {
 	return state == ResourceState::ShaderRead || state == ResourceState::DepthStencilRead || state == ResourceState::CopySrc;
 }
+
+const char* stateToString(ResourceState state)
+{
+	switch (state)
+	{
+	case ResourceState::Undefined:         return "Undefined";
+	case ResourceState::ShaderRead:        return "ShaderRead";
+	case ResourceState::ShaderWrite:       return "ShaderWrite";
+	case ResourceState::ColorAttachment:   return "ColorAttachment";
+	case ResourceState::DepthStencil:      return "DepthStencil";
+	case ResourceState::DepthStencilRead:  return "DepthStencilRead";
+	case ResourceState::DepthStencilWrite: return "DepthStencilWrite";
+	case ResourceState::CopySrc:           return "CopySrc";
+	case ResourceState::CopyDst:           return "CopyDst";
+	case ResourceState::Present:           return "Present";
+	default:                               return "Unknown";
+	}
+}
 }  // namespace
 
 void RGPassBuilder::readTexture(RGTextureHandle handle)
@@ -103,12 +121,13 @@ void RGPassBuilder::writeTexture(RGTextureHandle handle, ResourceState state, RG
 void RGPassBuilder::readExternalTexture(const std::string& name)
 {
 	m_pass.readExternalTextures.push_back(name);
+	m_pass.readExternalTextureStates.push_back(ResourceState::Undefined);
 }
 
 void RGPassBuilder::readExternalTexture(const std::string& name, ResourceState state)
 {
-	(void)state;
 	m_pass.readExternalTextures.push_back(name);
+	m_pass.readExternalTextureStates.push_back(state);
 }
 
 void RGPassBuilder::writeExternalTexture(const std::string& name, RGLoadStoreOp op)
@@ -292,6 +311,7 @@ void RenderGraph::execute(RGPassContext& context) const
 {
 	std::vector<size_t> order = getTopologicalOrder();
 	std::vector<std::vector<RGImageBarrier>> barriersBeforePass(m_passes.size());
+	std::vector<std::vector<RGExternalImageBarrier>> externalBarriersBeforePass(m_passes.size());
 
 	static bool s_orderLoggedOnce = false;
 	if (!s_orderLoggedOnce)
@@ -310,10 +330,12 @@ void RenderGraph::execute(RGPassContext& context) const
 	};
 
 	std::vector<std::unordered_map<uint32_t, ResourcePassState>> passStates(m_passes.size());
+	std::vector<std::unordered_map<std::string, ResourcePassState>> passExternalStates(m_passes.size());
 	for (size_t passIdx : order)
 	{
 		const RGPass& pass = m_passes[passIdx];
 		auto& states = passStates[passIdx];
+		auto& externalStates = passExternalStates[passIdx];
 
 		for (size_t i = 0; i < pass.readTextures.size(); ++i)
 		{
@@ -362,12 +384,60 @@ void RenderGraph::execute(RGPassContext& context) const
 				s.endState = state;
 			}
 		}
+
+		for (size_t i = 0; i < pass.readExternalTextures.size(); ++i)
+		{
+			const std::string& name = pass.readExternalTextures[i];
+			if (name.empty())
+				continue;
+
+			ResourceState state = (i < pass.readExternalTextureStates.size()) ? pass.readExternalTextureStates[i] : ResourceState::Undefined;
+			if (state == ResourceState::Undefined)
+				state = ResourceState::ShaderRead;
+
+			ResourcePassState& s = externalStates[name];
+			if (!s.touched)
+			{
+				s.touched = true;
+				s.beginState = state;
+				s.endState = state;
+			}
+			else
+			{
+				if (isReadState(s.endState))
+					s.endState = state;
+			}
+		}
+
+		for (const RGExternalTextureWrite& w : pass.writeExternalTextures)
+		{
+			if (w.name.empty())
+				continue;
+
+			ResourceState state = w.state;
+			if (state == ResourceState::Undefined)
+				state = ResourceState::ShaderWrite;
+
+			ResourcePassState& s = externalStates[w.name];
+			if (!s.touched)
+			{
+				s.touched = true;
+				s.beginState = state;
+				s.endState = state;
+			}
+			else
+			{
+				s.endState = state;
+			}
+		}
 	}
 
 	std::unordered_map<uint32_t, ResourceState> lastKnownState;
+	std::unordered_map<std::string, ResourceState> lastKnownExternalState;
 	for (size_t passIdx : order)
 	{
 		const auto& currStates = passStates[passIdx];
+		const auto& currExternalStates = passExternalStates[passIdx];
 		for (const auto& [resourceId, currState] : currStates)
 		{
 			if (!currState.touched)
@@ -389,13 +459,50 @@ void RenderGraph::execute(RGPassContext& context) const
 
 			lastKnownState[resourceId] = currState.endState;
 		}
+
+		for (const auto& [name, currState] : currExternalStates)
+		{
+			if (!currState.touched)
+				continue;
+
+			ResourceState oldState = ResourceState::Undefined;
+			auto it = lastKnownExternalState.find(name);
+			if (it != lastKnownExternalState.end())
+				oldState = it->second;
+
+			if (oldState != currState.beginState)
+			{
+				RGExternalImageBarrier b{};
+				b.name = name;
+				b.oldState = oldState;
+				b.newState = currState.beginState;
+				externalBarriersBeforePass[passIdx].push_back(std::move(b));
+			}
+
+			lastKnownExternalState[name] = currState.endState;
+		}
 	}
 
 	for (size_t idx : order)
 	{
 		const auto& barriers = barriersBeforePass[idx];
+		const auto& externalBarriers = externalBarriersBeforePass[idx];
+
+		if (context.enableBarrierDebugLog)
+		{
+			if (!barriers.empty() || !externalBarriers.empty())
+				LOGD("RG Barrier before pass '%s': %zu internal, %zu external",
+				    m_passes[idx].name.c_str(), barriers.size(), externalBarriers.size());
+			for (const RGImageBarrier& b : barriers)
+				LOGD("  internal tex:%u %s -> %s", b.handle.id, stateToString(b.oldState), stateToString(b.newState));
+			for (const RGExternalImageBarrier& b : externalBarriers)
+				LOGD("  external \"%s\" %s -> %s", b.name.c_str(), stateToString(b.oldState), stateToString(b.newState));
+		}
+
 		if (!barriers.empty() && context.insertImageBarriers)
 			context.insertImageBarriers(context.commandBuffer, barriers);
+		if (!externalBarriers.empty() && context.insertExternalImageBarriers)
+			context.insertExternalImageBarriers(context.commandBuffer, externalBarriers);
 
 		if (m_passes[idx].execute)
 			m_passes[idx].execute(context);

@@ -1755,12 +1755,6 @@ bool VulkanContext::DrawFrame()
 		},
 		[&](RGPassContext& ctx)
 		{
-			VkImageMemoryBarrier2 swapchainToGeneral =
-			    imageBarrier(swapchain.images[imageIndex],
-			        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-			        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
-			pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &swapchainToGeneral);
-
 			Image* shadowTarget = resourceManager.GetTexture(shadowTargetHandle);
 			assert(shadowTarget);
 
@@ -1930,6 +1924,34 @@ bool VulkanContext::DrawFrame()
 	rgContext.resourceManager = &resourceManager;
 	rgContext.commandBuffer = commandBuffer;
 	rgContext.frameIndex = frameIndex;
+	{
+		auto readEnvFlag = [](const char* name) -> bool
+		{
+#if defined(_WIN32)
+			char* value = nullptr;
+			size_t len = 0;
+			errno_t err = _dupenv_s(&value, &len, name);
+			if (err != 0 || value == nullptr)
+				return false;
+			const bool enabled = atoi(value) != 0;
+			free(value);
+			return enabled;
+#else
+			const char* value = getenv(name);
+			return value && atoi(value) != 0;
+#endif
+		};
+		rgContext.enableBarrierDebugLog = readEnvFlag("RG_BARRIER_DEBUG");
+	}
+	struct ExternalImageRegistryEntry
+	{
+		std::string name;
+		VkImage image = VK_NULL_HANDLE;
+		TextureFormat format = TextureFormat::Unknown;
+		TextureUsage usage = TextureUsage::Unknown;
+	};
+	std::vector<ExternalImageRegistryEntry> externalImageRegistry;
+	externalImageRegistry.push_back({ "SwapchainColor", swapchain.images[imageIndex], TextureFormat::RGBA8_UNorm, TextureUsage::Storage | TextureUsage::Sampled });
 	rgContext.insertImageBarriers = [&](VkCommandBuffer cb, const std::vector<RGImageBarrier>& barriers)
 	{
 		if (barriers.empty())
@@ -2013,6 +2035,104 @@ bool VulkanContext::DrawFrame()
 			mapState(b.newState, isDepth, supportsStorage, dstStage, dstAccess, newLayout);
 
 			vkBarriers.push_back(imageBarrier(image->image, srcStage, srcAccess, oldLayout, dstStage, dstAccess, newLayout, aspect));
+		}
+
+		if (!vkBarriers.empty())
+			pipelineBarrier(cb, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, vkBarriers.size(), vkBarriers.data());
+	};
+	rgContext.insertExternalImageBarriers = [&](VkCommandBuffer cb, const std::vector<RGExternalImageBarrier>& barriers)
+	{
+		if (barriers.empty())
+			return;
+
+		auto mapState = [](ResourceState state, bool isDepth, bool preferGeneralRead, VkPipelineStageFlags2& stage, VkAccessFlags2& access, VkImageLayout& layout)
+		{
+			switch (state)
+			{
+			case ResourceState::ColorAttachment:
+				stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+				access = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+				layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+				break;
+			case ResourceState::DepthStencil:
+			case ResourceState::DepthStencilWrite:
+				stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+				access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+				layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+				break;
+			case ResourceState::DepthStencilRead:
+				stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				access = VK_ACCESS_SHADER_READ_BIT;
+				layout = isDepth ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				break;
+			case ResourceState::ShaderRead:
+				stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				access = VK_ACCESS_SHADER_READ_BIT;
+				layout = preferGeneralRead ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				break;
+			case ResourceState::ShaderWrite:
+				stage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+				layout = VK_IMAGE_LAYOUT_GENERAL;
+				break;
+			case ResourceState::CopySrc:
+				stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+				access = VK_ACCESS_TRANSFER_READ_BIT;
+				layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+				break;
+			case ResourceState::CopyDst:
+				stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+				access = VK_ACCESS_TRANSFER_WRITE_BIT;
+				layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+				break;
+			case ResourceState::Present:
+				stage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+				access = 0;
+				layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+				break;
+			default:
+				stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+				access = 0;
+				layout = VK_IMAGE_LAYOUT_UNDEFINED;
+				break;
+			}
+		};
+
+		std::vector<VkImageMemoryBarrier2> vkBarriers;
+		vkBarriers.reserve(barriers.size());
+
+		for (const RGExternalImageBarrier& b : barriers)
+		{
+			const ExternalImageRegistryEntry* entry = nullptr;
+			for (const ExternalImageRegistryEntry& e : externalImageRegistry)
+			{
+				if (e.name == b.name)
+				{
+					entry = &e;
+					break;
+				}
+			}
+			if (!entry || entry->image == VK_NULL_HANDLE)
+				continue;
+
+			const bool isDepth = entry->format == TextureFormat::D24S8 || entry->format == TextureFormat::D32_Float;
+			const bool supportsStorage = (static_cast<uint32_t>(entry->usage) & static_cast<uint32_t>(TextureUsage::Storage)) != 0;
+			const VkImageAspectFlags aspect = isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+
+			VkPipelineStageFlags2 srcStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+			VkAccessFlags2 srcAccess = 0;
+			VkImageLayout oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			mapState(b.oldState, isDepth, supportsStorage, srcStage, srcAccess, oldLayout);
+
+			VkPipelineStageFlags2 dstStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+			VkAccessFlags2 dstAccess = 0;
+			VkImageLayout newLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			mapState(b.newState, isDepth, supportsStorage, dstStage, dstAccess, newLayout);
+
+			vkBarriers.push_back(imageBarrier(entry->image,
+			    srcStage, srcAccess, oldLayout,
+			    dstStage, dstAccess, newLayout,
+			    aspect));
 		}
 
 		if (!vkBarriers.empty())
