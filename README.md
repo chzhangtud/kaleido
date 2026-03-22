@@ -63,6 +63,8 @@ RG_BARRIER_DEBUG=1 ./build/kaleido
 
 Set `RG_BARRIER_DEBUG=0` (or unset it) to disable logging.
 
+To add more RenderGraph external textures (beyond the built-in swapchain registration), extend `VulkanContext::PrepareRenderGraphPassContext` (or call `ClearRenderGraphExternalImages()` then `RegisterRenderGraphExternalImage(name, vkImage, format, usage)` before `RenderGraph::execute`). The map key is `name`; the stored value is `{ image, format, usage }` only.
+
 ## Android
 Launch app.
 

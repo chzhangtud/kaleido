@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <unordered_map>
+
 #if defined(_WIN32)
 #include <iostream>
 #include <stdio.h>
@@ -194,6 +197,16 @@ void updateCamera();
 
 inline static const size_t gbufferCount = 2;
 
+struct RGPassContext;
+
+// External images referenced by RenderGraph (map key is the logical name).
+struct RGExternalImageRegistryEntry
+{
+	VkImage image = VK_NULL_HANDLE;
+	TextureFormat format = TextureFormat::Unknown;
+	TextureUsage usage = TextureUsage::Unknown;
+};
+
 class VulkanContext
 {
 public:
@@ -213,7 +226,13 @@ public:
 	bool DrawFrame();
 	void Release();
 
+	// Cleared each frame before registering externals used by the RenderGraph.
+	void ClearRenderGraphExternalImages();
+	void RegisterRenderGraphExternalImage(const std::string& name, VkImage image, TextureFormat format, TextureUsage usage);
+
 private:
+	void PrepareRenderGraphPassContext(RGPassContext& out, VkCommandBuffer commandBuffer, uint64_t frameIndex, uint32_t swapchainImageIndex);
+
 	inline static std::shared_ptr<VulkanContext> gInstance = nullptr;
 
 public:
@@ -255,6 +274,7 @@ public:
 	VkFormat gbufferFormats[gbufferCount] = {};
 	VkFormat depthFormat{ VK_FORMAT_D32_SFLOAT };
 	std::vector<VkImageView> swapchainImageViews;
+	std::unordered_map<std::string, RGExternalImageRegistryEntry> rgExternalImageRegistry;
 
 	VkDebugReportCallbackEXT debugCallback;
 
