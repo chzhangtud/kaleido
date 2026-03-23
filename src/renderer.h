@@ -36,6 +36,8 @@ static bool clusterOcclusionEnabled = true;
 static bool taskShadingEnabled = false;
 static bool shadowEnabled = true;
 static bool shadowblurEnabled = true;
+static bool taaEnabled = true;
+static float taaBlendAlpha = 0.1f;
 static bool shadowCheckerboard = false;
 static int shadowQuality = 1;
 static bool animationEnabled = false;
@@ -120,6 +122,13 @@ struct alignas(16) ShadeData
 	mat4 inverseViewProjection;
 
 	vec2 imageSize;
+};
+
+struct alignas(16) TaaData
+{
+	vec2 imageSize;
+	int historyValid;
+	float blendAlpha;
 };
 
 static bool mousePressed = false;
@@ -263,6 +272,8 @@ public:
 	RGTextureHandle depthTargetHandle{};
 	RGTextureHandle shadowTargetHandle{};
 	RGTextureHandle shadowblurTargetHandle{};
+	RGTextureHandle lightingTempHandle{};
+	RGTextureHandle taaHistoryHandles[2] = {};
 
 	RGTextureHandle depthPyramidHandle{};
 	VkImageView depthPyramidMips[16] = {};
@@ -303,6 +314,7 @@ public:
 	VkPipeline clusterPipeline = 0;
 	VkPipeline clusterpostPipeline = 0;
 	VkPipeline finalPipeline = 0;
+	VkPipeline taaPipeline = 0;
 	VkPipeline shadowlqPipeline = 0;
 	VkPipeline shadowhqPipeline = 0;
 	VkPipeline shadowfillPipeline = 0;
@@ -321,6 +333,7 @@ public:
 	Program meshtaskProgram{};
 	Program clusterProgram{};
 	Program finalProgram{};
+	Program taaProgram{};
 	Program shadowProgram{};
 	Program shadowfillProgram{};
 	Program shadowblurProgram{};
@@ -345,7 +358,7 @@ public:
 
 	//
 	VkQueryPool queryPoolsTimestamp[MAX_FRAMES]{};
-	uint64_t timestampResults[23];
+	uint64_t timestampResults[25];
 #if defined(WIN32)
 	VkQueryPool queryPoolsPipeline[MAX_FRAMES]{};
 	uint64_t pipelineResults[3];

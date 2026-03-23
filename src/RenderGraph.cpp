@@ -48,6 +48,10 @@ ResourceState inferReadState(const RenderResourceManager& rm, RGTextureHandle ha
 		return ResourceState::ShaderRead;
 	if (hasUsage(desc->usage, TextureUsage::DepthStencil))
 		return ResourceState::DepthStencilRead;
+	// Shader sampling / storage wins over TransferSrc: many images declare TransferSrc for occasional copies
+	// but are read in compute as GENERAL (e.g. depth pyramid).
+	if (hasUsage(desc->usage, TextureUsage::Sampled) || hasUsage(desc->usage, TextureUsage::Storage))
+		return ResourceState::ShaderRead;
 	if (hasUsage(desc->usage, TextureUsage::TransferSrc))
 		return ResourceState::CopySrc;
 	return ResourceState::ShaderRead;
@@ -347,6 +351,30 @@ void RenderGraph::execute(RGPassContext& context) const
 			if (i < pass.readTextureStates.size())
 				state = pass.readTextureStates[i];
 			if (state == ResourceState::Undefined && context.resourceManager)
+				state = inferReadState(*context.resourceManager, handle);
+
+			ResourcePassState& s = states[handle.id];
+			if (!s.touched)
+			{
+				s.touched = true;
+				s.beginState = state;
+				s.endState = state;
+			}
+			else
+			{
+				if (isReadState(s.endState))
+					s.endState = state;
+			}
+		}
+
+		// Cross-frame reads must still get layout barriers (same as readTexture).
+		for (RGTextureHandle handle : pass.readTexturesFromPreviousFrame)
+		{
+			if (!handle.IsValid())
+				continue;
+
+			ResourceState state = ResourceState::ShaderRead;
+			if (context.resourceManager)
 				state = inferReadState(*context.resourceManager, handle);
 
 			ResourcePassState& s = states[handle.id];

@@ -21,6 +21,55 @@ void dispatch(VkCommandBuffer commandBuffer, const Program& program, uint32_t th
 
 namespace
 {
+enum GpuTimestampSlot : uint32_t
+{
+	TS_FrameBegin = 0,
+	TS_FrameEnd = 1,
+	TS_CullBegin = 2,
+	TS_CullEnd = 3,
+	TS_RenderBegin = 4,
+	TS_RenderEnd = 5,
+	TS_PyramidBegin = 6,
+	TS_PyramidEnd = 7,
+	TS_CullLateBegin = 8,
+	TS_CullLateEnd = 9,
+	TS_RenderLateBegin = 10,
+	TS_RenderLateEnd = 11,
+	TS_CullPostBegin = 12,
+	TS_CullPostEnd = 13,
+	TS_RenderPostBegin = 14,
+	TS_RenderPostEnd = 15,
+	TS_ShadowBegin = 16,
+	TS_ShadowEnd = 17,
+	TS_ShadowBlurEnd = 18,
+	TS_ShadeBegin = 19,
+	TS_ShadeEnd = 20,
+	TS_TlasBegin = 21,
+	TS_TlasEnd = 22,
+	TS_TaaBegin = 23,
+	TS_TaaEnd = 24
+};
+
+double getTimestampDurationMs(const uint64_t* timestamps, uint32_t beginSlot, uint32_t endSlot, double timestampPeriodNs)
+{
+	return double(timestamps[endSlot] - timestamps[beginSlot]) * timestampPeriodNs * 1e-6;
+}
+
+// Halton low-discrepancy sequence in [0, 1) for subpixel jitter (bases 2 and 3).
+static float halton(uint32_t index, uint32_t base)
+{
+	float result = 0.f;
+	float f = 1.f / float(base);
+	uint32_t i = index;
+	while (i > 0)
+	{
+		result += f * float(i % base);
+		i /= base;
+		f /= float(base);
+	}
+	return result;
+}
+
 // Maps abstract RenderGraph ResourceState to Vulkan pipeline stage, access, and image layout.
 void mapResourceStateToVulkanLayout(ResourceState state, bool isDepth, bool preferGeneralRead,
     VkPipelineStageFlags2& stage, VkAccessFlags2& access, VkImageLayout& layout)
@@ -604,6 +653,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	}
 
 	finalProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["final.comp"] }, sizeof(ShadeData), pushDescriptorSupported, descriptorPool);
+	taaProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["taa.comp"] }, sizeof(TaaData), pushDescriptorSupported, descriptorPool);
 	shadowProgram = {};
 	shadowblurProgram = {};
 	if (raytracingSupported)
@@ -650,6 +700,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		}
 
 		replace(finalPipeline, createComputePipeline(device, pipelineCache, finalProgram));
+		replace(taaPipeline, createComputePipeline(device, pipelineCache, taaProgram));
 		if (raytracingSupported)
 		{
 			replace(shadowlqPipeline, createComputePipeline(device, pipelineCache, shadowProgram, { { /* QUALITY= */ int32_t(0) } }));
@@ -1041,7 +1092,15 @@ lastFrame = GetTimeInSeconds();
 bool VulkanContext::DrawFrame()
 {
 	static uint64_t frameIndex = 0;
+	static bool g_taaHistoryReady = false;
+	static bool previousTaaEnabled = taaEnabled;
 	double frameCPUBegin = GetTimeInSeconds();
+
+	if (previousTaaEnabled != taaEnabled)
+	{
+		g_taaHistoryReady = false;
+		previousTaaEnabled = taaEnabled;
+	}
 
 	resourceManager.BeginFrame();
 
@@ -1173,6 +1232,12 @@ bool VulkanContext::DrawFrame()
 			resourceManager.ReleaseTexture(shadowTargetHandle);
 		if (shadowblurTargetHandle.IsValid())
 			resourceManager.ReleaseTexture(shadowblurTargetHandle);
+		if (lightingTempHandle.IsValid())
+			resourceManager.ReleaseTexture(lightingTempHandle);
+
+		for (int ti = 0; ti < 2; ++ti)
+			if (taaHistoryHandles[ti].IsValid())
+				resourceManager.ReleaseTexture(taaHistoryHandles[ti]);
 
 		for (uint32_t i = 0; i < gbufferCount; ++i)
 		{
@@ -1218,7 +1283,25 @@ bool VulkanContext::DrawFrame()
 		shadowDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
 
 		shadowTargetHandle = resourceManager.CreateTexture(shadowDesc, /* transient= */ false);
-		shadowblurTargetHandle = {}; // created as a transient resource per-frame when needed
+		shadowblurTargetHandle = resourceManager.CreateTexture(shadowDesc, /* transient= */ false);
+
+		RGTextureDesc litDesc{};
+		litDesc.width = swapchain.width;
+		litDesc.height = swapchain.height;
+		litDesc.mipLevels = 1;
+		litDesc.format = TextureFormat::RGBA8_UNorm;
+		litDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
+		lightingTempHandle = resourceManager.CreateTexture(litDesc, /* transient= */ false);
+
+		RGTextureDesc taaDesc{};
+		taaDesc.width = swapchain.width;
+		taaDesc.height = swapchain.height;
+		taaDesc.mipLevels = 1;
+		taaDesc.format = TextureFormat::RGBA8_UNorm;
+		taaDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
+		taaHistoryHandles[0] = resourceManager.CreateTexture(taaDesc, false);
+		taaHistoryHandles[1] = resourceManager.CreateTexture(taaDesc, false);
+		g_taaHistoryReady = false;
 
 		// Note: previousPow2 makes sure all reductions are at most by 2x2 which makes sure they are consertive
 		depthPyramidWidth = previousPow2(swapchain.width);
@@ -1280,6 +1363,11 @@ bool VulkanContext::DrawFrame()
 	}
 	depthTarget = resourceManager.GetTexture(depthTargetHandle);
 	assert(depthTarget);
+	if (depthTarget->imageView == VK_NULL_HANDLE)
+	{
+		LOGW("Depth target view is null; recreate lazily (handle=%u image=%p)", depthTargetHandle.id, depthTarget->image);
+		depthTarget->imageView = resourceManager.CreateImageView(depthTarget->image, depthFormat, 0, 1);
+	}
 
 	// TODO: this code races the GPU reading the transforms from both TLAS and draw buffers, which can cause rendering issues
 	if (animationEnabled)
@@ -1323,6 +1411,27 @@ bool VulkanContext::DrawFrame()
 	}
 
 	uint8_t frameOffset = frameIndex % MAX_FRAMES;
+
+	if (!pushDescriptorSupported && depthPyramidLevels > 0 && depthreduceSets[frameOffset].empty())
+	{
+		LOGW("Depth-reduce descriptor sets missing on frame %u; allocating lazily (%u levels)",
+		    uint32_t(frameOffset), depthPyramidLevels);
+
+		for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
+		{
+			if (!depthreduceSets[ii].empty())
+				continue;
+
+			depthreduceSets[ii].resize(depthPyramidLevels);
+			std::vector<VkDescriptorSetLayout> layouts(depthPyramidLevels, depthreduceProgram.descriptorSetLayout);
+			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+			allocInfo.descriptorPool = descriptorPool;
+			allocInfo.descriptorSetCount = depthPyramidLevels;
+			allocInfo.pSetLayouts = layouts.data();
+			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, depthreduceSets[ii].data()));
+		}
+	}
+
 	VkCommandPool commandPool = commandPools[frameOffset];
 	VkCommandBuffer commandBuffer = commandBuffers[frameOffset];
 	VkSemaphore acquireSemaphore = acquireSemaphores[frameOffset];
@@ -1349,7 +1458,7 @@ bool VulkanContext::DrawFrame()
 	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
 	vkCmdResetQueryPool(commandBuffer, queryPoolTimestamp, 0, 128);
-	vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 0);
+	vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, TS_FrameBegin);
 
 	if (!dvbCleared)
 	{
@@ -1411,6 +1520,17 @@ bool VulkanContext::DrawFrame()
 	{
 		projection = perspectiveProjection(scene->camera.fovY, float(swapchain.width) / float(swapchain.height), scene->camera.znear);
 	}
+
+	mat4 projectionJittered = projection;
+	if (taaEnabled)
+	{
+		uint32_t jitterSample = uint32_t(frameIndex % 4) + 1u;
+		float jx = halton(jitterSample, 2u);
+		float jy = halton(jitterSample, 3u);
+		projectionJittered[2][0] += (jx - 0.5f) * (2.0f / float(swapchain.width));
+		projectionJittered[2][1] += (jy - 0.5f) * (2.0f / float(swapchain.height));
+	}
+
 	mat4 projectionT = transpose(projection);
 
 	vec4 frustumX = normalizePlane(projectionT[3] + projectionT[0]); // x + w < 0
@@ -1435,11 +1555,13 @@ bool VulkanContext::DrawFrame()
 	cullData.clusterOcclusionEnabled = occlusionEnabled && clusterOcclusionEnabled && meshShadingSupported && meshShadingEnabled;
 
 	Globals globals = {};
-	globals.projection = projection;
+	globals.projection = projectionJittered;
 	globals.cullData = cullData;
 
 	globals.screenWidth = float(swapchain.width);
 	globals.screenHeight = float(swapchain.height);
+
+	const mat4 inverseViewProjection = inverse(projectionJittered * view);
 
 	bool taskSubmit = meshShadingSupported && meshShadingEnabled; // TODO; refactor this to be false when taskShadingEnabled is false
 	bool clusterSubmit = meshShadingSupported && meshShadingEnabled && !taskShadingEnabled;
@@ -1788,11 +1910,12 @@ bool VulkanContext::DrawFrame()
 
 		for (uint32_t i = 0; i < depthPyramidLevels; ++i)
 		{
-			DescriptorInfo sourceDepth = (i == 0)
-			                                 ? DescriptorInfo(depthSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL)
-			                                 : DescriptorInfo(depthSampler, depthPyramidMips[i - 1], VK_IMAGE_LAYOUT_GENERAL);
-
-			DescriptorInfo descriptors[] = { { depthPyramidMips[i], VK_IMAGE_LAYOUT_GENERAL }, sourceDepth };
+			VkImageView sourceView = (i == 0) ? depthTarget->imageView : depthPyramidMips[i - 1];
+			VkImageLayout sourceLayout = (i == 0) ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+			DescriptorInfo descriptors[] = {
+				{ depthPyramidMips[i], VK_IMAGE_LAYOUT_GENERAL },
+				{ depthSampler, sourceView, sourceLayout }
+			};
 
 			uint32_t levelWidth = std::max(1u, depthPyramidWidth >> i);
 			uint32_t levelHeight = std::max(1u, depthPyramidHeight >> i);
@@ -1804,8 +1927,41 @@ bool VulkanContext::DrawFrame()
 			}
 			else
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, depthreduceSets[frameOffset][i], depthreduceProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, depthreduceProgram.bindPoint, depthreduceProgram.layout, 0, 1, &depthreduceSets[frameOffset][i], 0, nullptr);
+				VkDescriptorSet depthReduceSet = depthreduceProgram.descriptorSets[frameOffset];
+				if (depthReduceSet == VK_NULL_HANDLE)
+				{
+					LOGE("Depth-reduce descriptor set is null: frame=%u level=%u programSet=%p",
+					    uint32_t(frameOffset), i, depthreduceProgram.descriptorSets[frameOffset]);
+					continue;
+				}
+
+				VkDescriptorImageInfo outImageInfo = {};
+				outImageInfo.sampler = VK_NULL_HANDLE;
+				outImageInfo.imageView = depthPyramidMips[i];
+				outImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+				VkDescriptorImageInfo inImageInfo = {};
+				inImageInfo.sampler = depthSampler;
+				inImageInfo.imageView = sourceView;
+				inImageInfo.imageLayout = sourceLayout;
+
+				VkWriteDescriptorSet writes[2] = {};
+				writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				writes[0].dstSet = depthReduceSet;
+				writes[0].dstBinding = 0;
+				writes[0].descriptorCount = 1;
+				writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+				writes[0].pImageInfo = &outImageInfo;
+
+				writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				writes[1].dstSet = depthReduceSet;
+				writes[1].dstBinding = 1;
+				writes[1].descriptorCount = 1;
+				writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+				writes[1].pImageInfo = &inImageInfo;
+
+				vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+				vkCmdBindDescriptorSets(commandBuffer, depthreduceProgram.bindPoint, depthreduceProgram.layout, 0, 1, &depthReduceSet, 0, nullptr);
 				vkCmdPushConstants(commandBuffer, depthreduceProgram.layout, depthreduceProgram.pushConstantStages, 0, sizeof(reduceData), &reduceData);
 				vkCmdDispatch(commandBuffer, getGroupCount(levelWidth, depthreduceProgram.localSizeX), getGroupCount(levelHeight, depthreduceProgram.localSizeY), 1);
 			}
@@ -1911,19 +2067,7 @@ bool VulkanContext::DrawFrame()
 
 			if (shadowblurEnabled)
 			{
-				RGTextureDesc shadowBlurDesc{};
-				shadowBlurDesc.width = swapchain.width;
-				shadowBlurDesc.height = swapchain.height;
-				shadowBlurDesc.mipLevels = 1;
-				shadowBlurDesc.format = TextureFormat::R8_UNorm;
-				shadowBlurDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
-
-				shadowblurTargetHandle = resourceManager.CreateTexture(shadowBlurDesc, /* transient= */ true);
 				builder.writeTexture(shadowblurTargetHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-			}
-			else
-			{
-				shadowblurTargetHandle = {};
 			}
 		},
 		[&](RGPassContext& ctx)
@@ -1954,7 +2098,7 @@ bool VulkanContext::DrawFrame()
 					ShadowData shadowData = {};
 					shadowData.sunDirection = scene->sunDirection;
 					shadowData.sunJitter = shadowblurEnabled ? 1e-2f : 0;
-					shadowData.inverseViewProjection = inverse(projection * view);
+					shadowData.inverseViewProjection = inverseViewProjection;
 					shadowData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
 					shadowData.checkerboard = shadowCheckerboardF;
 
@@ -2049,21 +2193,27 @@ bool VulkanContext::DrawFrame()
 			builder.readTexture(gbufferTargetHandles[1], ResourceState::ShaderRead);
 			builder.readTexture(depthTargetHandle, ResourceState::ShaderRead);
 			builder.readTexture(shadowTargetHandle, ResourceState::ShaderRead);
-			builder.writeExternalTexture("SwapchainColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+			if (taaEnabled)
+				builder.writeTexture(lightingTempHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+			else
+				builder.writeExternalTexture("SwapchainColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 		},
 		[&](RGPassContext& ctx)
 		{
 			Image* shadowTarget = ctx.resourceManager->GetTexture(shadowTargetHandle);
 			assert(shadowTarget);
+			Image* lightingTemp = taaEnabled ? ctx.resourceManager->GetTexture(lightingTempHandle) : nullptr;
+			if (taaEnabled)
+				assert(lightingTemp);
 
-			uint32_t timestamp = 19;
+			uint32_t timestamp = TS_ShadeBegin;
 
 			vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 
 			vkCmdBindPipeline(ctx.commandBuffer, finalProgram.bindPoint, finalPipeline);
 
 			DescriptorInfo descriptors[] = {
-				{ swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL },
+				{ taaEnabled ? lightingTemp->imageView : swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL },
 				{ readSampler, gbufferTargets[0]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
 				{ readSampler, gbufferTargets[1]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
 				{ readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
@@ -2074,7 +2224,7 @@ bool VulkanContext::DrawFrame()
 			shadeData.cameraPosition = scene->camera.position;
 			shadeData.sunDirection = scene->sunDirection;
 			shadeData.shadowEnabled = shadowEnabled;
-			shadeData.inverseViewProjection = inverse(projection * view);
+			shadeData.inverseViewProjection = inverseViewProjection;
 			shadeData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
 
 			if (pushDescriptorSupported)
@@ -2092,6 +2242,61 @@ bool VulkanContext::DrawFrame()
 			vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
 		});
 
+	if (taaEnabled)
+	{
+		rg.addPass("TAA",
+			[&](RGPassBuilder& builder)
+			{
+				const bool readA = (frameIndex % 2) == 0;
+				RGTextureHandle historyRead = readA ? taaHistoryHandles[0] : taaHistoryHandles[1];
+				RGTextureHandle historyWrite = readA ? taaHistoryHandles[1] : taaHistoryHandles[0];
+				builder.readTexture(lightingTempHandle, ResourceState::ShaderRead);
+				builder.readTextureFromPreviousFrame(historyRead);
+				builder.writeTexture(historyWrite, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+				builder.writeExternalTexture("SwapchainColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+			},
+			[&](RGPassContext& ctx)
+			{
+				const uint32_t timestamp = TS_TaaBegin;
+				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
+
+				const bool readA = (frameIndex % 2) == 0;
+				Image* lightingTemp = ctx.resourceManager->GetTexture(lightingTempHandle);
+				Image* taaRead = ctx.resourceManager->GetTexture(readA ? taaHistoryHandles[0] : taaHistoryHandles[1]);
+				Image* taaWrite = ctx.resourceManager->GetTexture(readA ? taaHistoryHandles[1] : taaHistoryHandles[0]);
+				assert(lightingTemp && taaRead && taaWrite);
+
+				vkCmdBindPipeline(ctx.commandBuffer, taaProgram.bindPoint, taaPipeline);
+
+				DescriptorInfo descriptors[] = {
+					{ readSampler, lightingTemp->imageView, VK_IMAGE_LAYOUT_GENERAL },
+					{ readSampler, taaRead->imageView, VK_IMAGE_LAYOUT_GENERAL },
+					{ swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL },
+					{ taaWrite->imageView, VK_IMAGE_LAYOUT_GENERAL }
+				};
+
+				TaaData taaData = {};
+				taaData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
+				taaData.historyValid = g_taaHistoryReady ? 1 : 0;
+				taaData.blendAlpha = taaBlendAlpha;
+
+				if (pushDescriptorSupported)
+				{
+					dispatch(ctx.commandBuffer, taaProgram, swapchain.width, swapchain.height, taaData, descriptors);
+				}
+				else
+				{
+					vkUpdateDescriptorSetWithTemplateKHR(device, taaProgram.descriptorSets[frameOffset], taaProgram.updateTemplate, descriptors);
+					vkCmdBindDescriptorSets(ctx.commandBuffer, taaProgram.bindPoint, taaProgram.layout, 0, 1, &taaProgram.descriptorSets[frameOffset], 0, nullptr);
+					vkCmdPushConstants(ctx.commandBuffer, taaProgram.layout, taaProgram.pushConstantStages, 0, sizeof(taaData), &taaData);
+					vkCmdDispatch(ctx.commandBuffer, getGroupCount(swapchain.width, taaProgram.localSizeX), getGroupCount(swapchain.height, taaProgram.localSizeY), 1);
+				}
+
+				g_taaHistoryReady = true;
+				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+			});
+	}
+
 
 	RGPassContext rgContext{};
 	PrepareRenderGraphPassContext(rgContext, commandBuffer, frameIndex, imageIndex);
@@ -2107,6 +2312,7 @@ bool VulkanContext::DrawFrame()
 	static double shadowsGPUTime = 0.0;
 	static double shadowblurGPUTime = 0.0;
 	static double shadeGPUTime = 0.0;
+	static double taaGPUTime = 0.0;
 	static double tlasGPUTime = 0.0;
 
 	static double frameCPUAvg = 0.0;
@@ -2161,17 +2367,18 @@ bool VulkanContext::DrawFrame()
 		uint64_t triangleCount = 0;
 #endif
 
-		cullGPUTime = double(timestampResults[3] - timestampResults[2]) * props.limits.timestampPeriod * 1e-6;
-		renderGPUTime = double(timestampResults[5] - timestampResults[4]) * props.limits.timestampPeriod * 1e-6;
-		pyramidGPUTime = double(timestampResults[7] - timestampResults[6]) * props.limits.timestampPeriod * 1e-6;
-		culllateGPUTime = double(timestampResults[9] - timestampResults[8]) * props.limits.timestampPeriod * 1e-6;
-		renderlateGPUTime = double(timestampResults[11] - timestampResults[10]) * props.limits.timestampPeriod * 1e-6;
-		cullpostGPUTime = double(timestampResults[13] - timestampResults[12]) * props.limits.timestampPeriod * 1e-6;
-		renderpostGPUTime = double(timestampResults[15] - timestampResults[14]) * props.limits.timestampPeriod * 1e-6;
-		shadowsGPUTime = double(timestampResults[17] - timestampResults[16]) * props.limits.timestampPeriod * 1e-6;
-		shadowblurGPUTime = double(timestampResults[18] - timestampResults[17]) * props.limits.timestampPeriod * 1e-6;
-		shadeGPUTime = double(timestampResults[20] - timestampResults[19]) * props.limits.timestampPeriod * 1e-6;
-		tlasGPUTime = double(timestampResults[22] - timestampResults[21]) * props.limits.timestampPeriod * 1e-6;
+		cullGPUTime = getTimestampDurationMs(timestampResults, TS_CullBegin, TS_CullEnd, props.limits.timestampPeriod);
+		renderGPUTime = getTimestampDurationMs(timestampResults, TS_RenderBegin, TS_RenderEnd, props.limits.timestampPeriod);
+		pyramidGPUTime = getTimestampDurationMs(timestampResults, TS_PyramidBegin, TS_PyramidEnd, props.limits.timestampPeriod);
+		culllateGPUTime = getTimestampDurationMs(timestampResults, TS_CullLateBegin, TS_CullLateEnd, props.limits.timestampPeriod);
+		renderlateGPUTime = getTimestampDurationMs(timestampResults, TS_RenderLateBegin, TS_RenderLateEnd, props.limits.timestampPeriod);
+		cullpostGPUTime = getTimestampDurationMs(timestampResults, TS_CullPostBegin, TS_CullPostEnd, props.limits.timestampPeriod);
+		renderpostGPUTime = getTimestampDurationMs(timestampResults, TS_RenderPostBegin, TS_RenderPostEnd, props.limits.timestampPeriod);
+		shadowsGPUTime = getTimestampDurationMs(timestampResults, TS_ShadowBegin, TS_ShadowEnd, props.limits.timestampPeriod);
+		shadowblurGPUTime = getTimestampDurationMs(timestampResults, TS_ShadowEnd, TS_ShadowBlurEnd, props.limits.timestampPeriod);
+		shadeGPUTime = getTimestampDurationMs(timestampResults, TS_ShadeBegin, TS_ShadeEnd, props.limits.timestampPeriod);
+		taaGPUTime = taaEnabled ? getTimestampDurationMs(timestampResults, TS_TaaBegin, TS_TaaEnd, props.limits.timestampPeriod) : 0.0;
+		tlasGPUTime = getTimestampDurationMs(timestampResults, TS_TlasBegin, TS_TlasEnd, props.limits.timestampPeriod);
 
 		double trianglesPerSec = double(triangleCount) / double(frameGPUAvg * 1e-3);
 		double drawsPerSec = double(scene->draws.size()) / double(frameGPUAvg * 1e-3);
@@ -2190,8 +2397,8 @@ bool VulkanContext::DrawFrame()
 			debugtext(3, ~0u, "render breakdown: early %.2f ms, late %.2f ms, post %.2f ms",
 				    renderGPUTime, renderlateGPUTime, renderpostGPUTime);
 
-			debugtext(4, ~0u, "tlas: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms",
-				tlasGPUTime, shadowsGPUTime, shadowblurGPUTime);
+			debugtext(4, ~0u, "tlas: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms, taa: %.2f ms",
+				tlasGPUTime, shadowsGPUTime, shadowblurGPUTime, taaGPUTime);
 			debugtext(5, ~0u, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
 			    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, drawsPerSec * 1e-6);
 			debugtext(7, ~0u, "frustum culling %s, occlusion culling %s, level-of-detail %s",
@@ -2207,7 +2414,7 @@ bool VulkanContext::DrawFrame()
 		}
 	}
 
-	vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, 1);
+	vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, TS_FrameEnd);
 
 	static bool bDisplaySettings = true;
 	static bool bDisplayProfiling = true;
@@ -2234,6 +2441,12 @@ bool VulkanContext::DrawFrame()
 		ImGui::SliderInt("Shadow Quality (0=low, 1=high)", &shadowQuality, 0, 1);
 		ImGui::Checkbox("Enable Shadow Blurring", &shadowblurEnabled);
 		ImGui::Checkbox("Enable Shadow Checkerboard", &shadowCheckerboard);
+		ImGui::Checkbox("Enable TAA", &taaEnabled);
+		if (taaEnabled)
+		{
+			ImGui::SetNextItemWidth(200.f);
+			ImGui::SliderFloat("TAA Blend Alpha", &taaBlendAlpha, 0.01f, 1.0f, "%.2f");
+		}
 		ImGui::Checkbox("Enable LoD", &lodEnabled);
 		if (lodEnabled)
 		{
@@ -2391,6 +2604,23 @@ bool VulkanContext::DrawFrame()
 			ImGui::SameLine();
 			DisplayProfilingData("Depth Pyramid GPU Time(ms): ", pyramidGPUTime, 1.0, 2.0);
 		}
+		// TAA GPU time
+		{
+			static TimeSeriesPlot taaGpuPlot(100);
+			taaGpuPlot.addValue(taaGPUTime);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.8f, 0.6f, 0.2f, 1.0f));
+			ImGui::PlotLines("##TAA GPU Time",
+			    taaGpuPlot.data(),
+			    taaGpuPlot.size(),
+			    taaGpuPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("TAA GPU Time(ms): ", taaGPUTime, 1.0, 2.0);
+		}
 		// @TODO: add more profiling curves
 		ImGui::End();
 	}
@@ -2487,8 +2717,8 @@ bool VulkanContext::DrawFrame()
 #if defined(WIN32)
 		VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolsPipeline[waitIndex], 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT));
 #endif
-		double frameGPUBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
-		double frameGPUEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
+		double frameGPUBegin = double(timestampResults[TS_FrameBegin]) * props.limits.timestampPeriod * 1e-6;
+		double frameGPUEnd = double(timestampResults[TS_FrameEnd]) * props.limits.timestampPeriod * 1e-6;
 		frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
 	}
 	double frameCPUEnd = GetTimeInSeconds();
@@ -2536,6 +2766,11 @@ void VulkanContext::Release()
 		resourceManager.ReleaseTexture(shadowTargetHandle);
 	if (shadowblurTargetHandle.IsValid())
 		resourceManager.ReleaseTexture(shadowblurTargetHandle);
+	if (lightingTempHandle.IsValid())
+		resourceManager.ReleaseTexture(lightingTempHandle);
+	for (int ti = 0; ti < 2; ++ti)
+		if (taaHistoryHandles[ti].IsValid())
+			resourceManager.ReleaseTexture(taaHistoryHandles[ti]);
 
 	for (uint32_t i = 0; i < swapchain.imageCount; ++i)
 		if (swapchainImageViews[i])
@@ -2618,6 +2853,7 @@ void VulkanContext::Release()
 	destroyProgram(device, clustercullProgram, descriptorPool);
 	destroyProgram(device, clusterProgram, descriptorPool);
 	destroyProgram(device, depthreduceProgram, descriptorPool);
+	destroyProgram(device, taaProgram, descriptorPool);
 
 	if (raytracingSupported)
 	{
