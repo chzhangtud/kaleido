@@ -26,12 +26,13 @@ struct alignas(16) Material
 {
 	int albedoTexture;
 	int normalTexture;
-	int specularTexture;
+	int pbrTexture;
 	int emissiveTexture;
 
-	vec4 diffuseFactor;
-	vec4 specularFactor;
+	vec4 baseColorFactor;
+	vec4 pbrFactor; // MR: (unused, unused, metallic, roughness), SG: (specular.rgb, glossiness)
 	vec3 emissiveFactor;
+	int workflow;   // 0: default, 1: metallic-roughness, 2: specular-glossiness fallback
 };
 
 struct alignas(16) MeshDraw

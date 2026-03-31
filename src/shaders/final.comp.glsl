@@ -60,13 +60,12 @@ void main()
 	float NdotH = max(dot(normal, halfv), 0.0);
 	float VdotH = max(dot(view, halfv), 0.0);
 
-	// Read PBR parameters derived from the legacy spec-gloss model stored in the G-Buffer
+	// Read metallic-roughness parameters from the G-Buffer.
 	float roughness = clamp(gbuffer1.b, 0.045, 1.0);
+	float metallic = clamp(gbuffer1.a, 0.0, 1.0);
 	float alpha = roughness * roughness;
 
-	// Scalar F0 coming from the 4th channel of the G-Buffer
-	float f0Scalar = clamp(gbuffer1.a, 0.02, 0.98);
-	vec3  F0 = vec3(f0Scalar);
+	vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
 	// GGX normal distribution function
 	float a2 = alpha * alpha;
@@ -80,14 +79,19 @@ void main()
 	float Gl = NdotL / (NdotL * (1.0 - k) + k);
 	float G = Gv * Gl;
 
-	// Schlick Fresnel approximation
+	// Schlick Fresnel approximation.
 	vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - VdotH, 5.0);
 
 	vec3 specularBRDF = (D * G * F) / max(4.0 * NdotL * NdotV, 1e-4);
 
-	// Assume non-metallic surfaces by default (no explicit metalness), energy conservation: kd = 1 - F
-	vec3 kd = vec3(1.0) - F;
-	vec3 diffuseBRDF = kd * albedo / PI;
+	vec3 kd = (vec3(1.0) - F) * (1.0 - metallic);
+
+	// Disney Burley diffuse term (base lobe only).
+	float FD90 = 0.5 + 2.0 * roughness * VdotH * VdotH;
+	float FL = pow(1.0 - NdotL, 5.0);
+	float FV = pow(1.0 - NdotV, 5.0);
+	float disneyDiffuse = (1.0 + (FD90 - 1.0) * FL) * (1.0 + (FD90 - 1.0) * FV);
+	vec3 diffuseBRDF = kd * albedo * (disneyDiffuse / PI);
 
 	float shadow = 1.0;
 	if (shadeData.shadowsEnabled == 1)
@@ -98,7 +102,7 @@ void main()
 	float sunIntensity = 2.5;
 
 	vec3 directLighting = (diffuseBRDF + specularBRDF) * NdotL * min(shadow + shadowAmbient, 1.0) * sunIntensity;
-	vec3 ambientLighting = albedo * ambient;
+	vec3 ambientLighting = kd * albedo * ambient;
 
 	vec3 outputColor = directLighting + ambientLighting + emissive;
 	float deband = gradientNoise(vec2(pos)) * 2 - 1;

@@ -75,12 +75,13 @@ struct Material
 {
 	uint albedoTexture;
 	uint normalTexture;
-	uint specularTexture;
+	uint pbrTexture;
 	uint emissiveTexture;
 
-	vec4 diffuseFactor;
-	vec4 specularFactor;
+	vec4 baseColorFactor;
+	vec4 pbrFactor; // MR: (unused, unused, metallic, roughness), SG: (specular.rgb, glossiness)
 	vec3 emissiveFactor;
+	uint workflow;  // 0: default, 1: metallic-roughness, 2: specular-glossiness fallback
 };
 
 struct MeshDraw

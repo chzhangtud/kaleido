@@ -63,7 +63,9 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 
 	// material index 0 is always dummy
 	scene->materials.resize(1);
-	scene->materials[0].diffuseFactor = vec4(1);
+	scene->materials[0].baseColorFactor = vec4(1);
+	scene->materials[0].pbrFactor = vec4(1, 1, 0, 1);
+	scene->materials[0].workflow = 1;
 
 	//scene->camera.position = { 2.f, 0.f, 0.4f };
 	//scene->camera.orientation = glm::radians(glm::vec3(0.f, 80.f, 0.f));

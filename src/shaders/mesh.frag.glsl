@@ -60,7 +60,7 @@ void main()
 
 	float deband = gradientNoise(gl_FragCoord.xy) * 2 - 1;
 
-	vec4 albedo = material.diffuseFactor;
+	vec4 albedo = material.baseColorFactor;
 	if (material.albedoTexture > 0)
 		albedo *= fromsrgb(texture(SAMP(material.albedoTexture), uv));
 
@@ -68,9 +68,15 @@ void main()
 	if (material.normalTexture > 0)
 		nmap = texture(SAMP(material.normalTexture), uv).rgb * 2 - 1;
 
-	vec4 specgloss = material.specularFactor;
-	if (material.specularTexture > 0)
-		specgloss *= fromsrgb(texture(SAMP(material.specularTexture), uv));
+	vec4 pbrSample = vec4(1.0);
+	if (material.pbrTexture > 0)
+	{
+		// glTF metallic-roughness texture is authored in linear space.
+		if (material.workflow == 1u)
+			pbrSample = texture(SAMP(material.pbrTexture), uv);
+		else
+			pbrSample = fromsrgb(texture(SAMP(material.pbrTexture), uv));
+	}
 
 	vec3 emissive = material.emissiveFactor;
 	if (material.emissiveTexture > 0)
@@ -82,20 +88,30 @@ void main()
 
 	float emissivef = dot(emissive, vec3(0.3, 0.6, 0.1)) / (dot(albedo.rgb, vec3(0.3, 0.6, 0.1)) + 1e-3);
 
-	// Extract PBR-friendly parameters from legacy spec-gloss data:
-	// - Use gloss (specgloss.a) to derive roughness
-	// - Use specular brightness to estimate a scalar F0 for the BRDF
-	float gloss = clamp(specgloss.a, 0.0, 1.0);
-	float roughness = 1.0 - gloss;
-	roughness = clamp(roughness, 0.045, 1.0); // avoid noise from totally mirror-reflection
+	float roughness = 1.0;
+	float metallic = 0.0;
 
-	float f0Scalar = max(max(specgloss.r, specgloss.g), specgloss.b);
-	f0Scalar = clamp(f0Scalar, 0.02, 0.98);
+	if (material.workflow == 1u)
+	{
+		// glTF MR convention: G=roughness, B=metallic.
+		roughness = clamp(material.pbrFactor.w * pbrSample.g, 0.045, 1.0);
+		metallic = clamp(material.pbrFactor.z * pbrSample.b, 0.0, 1.0);
+	}
+	else
+	{
+		// Fallback for legacy specular-glossiness assets.
+		vec4 specgloss = material.pbrFactor * pbrSample;
+		float gloss = clamp(specgloss.a, 0.0, 1.0);
+		roughness = clamp(1.0 - gloss, 0.045, 1.0);
+
+		float f0Scalar = clamp(max(max(specgloss.r, specgloss.g), specgloss.b), 0.02, 0.98);
+		metallic = clamp((f0Scalar - 0.04) / 0.96, 0.0, 1.0);
+	}
 
 	vec2 encNormal = encodeOct(nrm) * 0.5 + 0.5 + deband * (0.5 / 1023);
 
 	gbuffer[0] = vec4(tosrgb(albedo).rgb, log2(1 + emissivef) / 5);
-	gbuffer[1] = vec4(encNormal, roughness, f0Scalar);
+	gbuffer[1] = vec4(encNormal, roughness, metallic);
 	if (POST && albedo.a < 0.5)
 		discard;
 
