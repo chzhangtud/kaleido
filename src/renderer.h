@@ -231,6 +231,8 @@ public:
 	void SetScene(const std::shared_ptr<Scene>& _scene);
 	const std::shared_ptr<Scene>& GetScene() const noexcept;
 	void InitResources();
+	void SetRuntimeUiEnabled(bool enabled);
+	bool IsRuntimeUiEnabled() const noexcept;
 
 	bool DrawFrame();
 	void Release();
@@ -241,6 +243,15 @@ public:
 
 private:
 	void PrepareRenderGraphPassContext(RGPassContext& out, VkCommandBuffer commandBuffer, uint64_t frameIndex, uint32_t swapchainImageIndex);
+	void BuildRuntimeUi(float deltaTime,
+		double frameCPUAvg,
+		double frameGPUAvg,
+		double cullGPUTime,
+		double pyramidGPUTime,
+		double culllateGPUTime,
+		double renderGPUTime,
+		double renderlateGPUTime,
+		double taaGPUTime);
 
 	inline static std::shared_ptr<VulkanContext> gInstance = nullptr;
 
@@ -407,6 +418,7 @@ public:
 	double lastFrame{ 0.0 };
 
 	std::shared_ptr<Scene> scene;
+	bool runtimeUiEnabled = true;
 };
 
 class Renderer

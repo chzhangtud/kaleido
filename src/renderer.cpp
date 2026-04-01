@@ -755,6 +755,16 @@ const std::shared_ptr<Scene>& VulkanContext::GetScene() const noexcept
 	return scene;
 }
 
+void VulkanContext::SetRuntimeUiEnabled(bool enabled)
+{
+	runtimeUiEnabled = enabled;
+}
+
+bool VulkanContext::IsRuntimeUiEnabled() const noexcept
+{
+	return runtimeUiEnabled;
+}
+
 void VulkanContext::ClearRenderGraphExternalImages()
 {
 	rgExternalImageRegistry.clear();
@@ -1105,12 +1115,16 @@ bool VulkanContext::DrawFrame()
 	resourceManager.BeginFrame();
 
 	const auto& guiRenderer = GuiRenderer::GetInstance();
+	const bool shouldRenderRuntimeUi = runtimeUiEnabled;
 #if defined(WIN32)
 	glfwPollEvents();
 #endif
-	guiRenderer->BeginFrame();
-	ImVec2 windowSize = ImVec2(800, 600);
-	ImGui::SetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
+	if (shouldRenderRuntimeUi)
+	{
+		guiRenderer->BeginFrame();
+		ImVec2 windowSize = ImVec2(800, 600);
+		ImGui::SetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
+	}
 
 	// update camera position
 	float currentFrame = GetTimeInSeconds();
@@ -1120,9 +1134,10 @@ bool VulkanContext::DrawFrame()
 	glm::vec3 front = scene->camera.orientation * glm::vec3(0.0f, 0.0f, -1.0f);
 	glm::vec3 right = scene->camera.orientation * glm::vec3(1.0f, 0.0f, 0.0f);
 	glm::vec3 up = glm::cross(right, front);
+	const bool blockCameraByUi = shouldRenderRuntimeUi && ImGui::GetIO().WantCaptureMouse;
 
 	// Apply virtual stick look (Android): right stick -> yaw/pitch.
-	if (g_lookX != 0.0f || g_lookY != 0.0f)
+	if (!blockCameraByUi && (g_lookX != 0.0f || g_lookY != 0.0f))
 	{
 		const float lookSpeedDegPerSec = 120.0f;
 		yaw += g_lookX * lookSpeedDegPerSec * deltaTime;
@@ -1131,7 +1146,7 @@ bool VulkanContext::DrawFrame()
 	}
 
 	// Apply virtual stick movement (Android): left stick -> move/strafe.
-	if (g_moveX != 0.0f || g_moveY != 0.0f)
+	if (!blockCameraByUi && (g_moveX != 0.0f || g_moveY != 0.0f))
 	{
 		const float moveSpeedScale = 1.2f; // slightly faster than keyboard
 		float velocity = cameraSpeed * moveSpeedScale * deltaTime;
@@ -2416,252 +2431,16 @@ bool VulkanContext::DrawFrame()
 
 	vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, TS_FrameEnd);
 
-	static bool bDisplaySettings = true;
-	static bool bDisplayProfiling = true;
-	static bool bDisplayScene = true;
-	if (ImGui::BeginMainMenuBar())
+	if (shouldRenderRuntimeUi)
 	{
-		ImGui::Dummy(ImVec2(50.f, 0.f));
-		ImGui::Checkbox("Settings", &bDisplaySettings);
-		ImGui::Checkbox("Profiling", &bDisplayProfiling);
-		ImGui::Checkbox("Scene", &bDisplayScene);
-		ImGui::EndMainMenuBar();
+		BuildRuntimeUi(deltaTime, frameCPUAvg, frameGPUAvg, cullGPUTime, pyramidGPUTime, culllateGPUTime, renderGPUTime, renderlateGPUTime, taaGPUTime);
+		guiRenderer->EndFrame();
+		VkImageMemoryBarrier2 uiBarrier = imageBarrier(swapchain.images[imageIndex],
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
+		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &uiBarrier);
+		guiRenderer->RenderDrawData(commandBuffer, swapchainImageViews[imageIndex], { swapchain.width, swapchain.height });
 	}
-
-	if (bDisplaySettings)
-	{
-		ImGui::Begin("Global Settings");
-		ImGui::Checkbox("Enable Mesh Shading", &meshShadingEnabled);
-		ImGui::Checkbox("Enable Task Shading", &taskShadingEnabled);
-		ImGui::Checkbox("Enable Culing", &cullingEnabled);
-		ImGui::Checkbox("Enable Occlusion Culling", &occlusionEnabled);
-		ImGui::Checkbox("Enable Cluster Occlusion Culling", &clusterOcclusionEnabled);
-		ImGui::Checkbox("Enable Shadow", &shadowEnabled);
-		ImGui::SetNextItemWidth(200.f);
-		ImGui::SliderInt("Shadow Quality (0=low, 1=high)", &shadowQuality, 0, 1);
-		ImGui::Checkbox("Enable Shadow Blurring", &shadowblurEnabled);
-		ImGui::Checkbox("Enable Shadow Checkerboard", &shadowCheckerboard);
-		ImGui::Checkbox("Enable TAA", &taaEnabled);
-		if (taaEnabled)
-		{
-			ImGui::SetNextItemWidth(200.f);
-			ImGui::SliderFloat("TAA Blend Alpha", &taaBlendAlpha, 0.01f, 1.0f, "%.2f");
-		}
-		ImGui::Checkbox("Enable LoD", &lodEnabled);
-		if (lodEnabled)
-		{
-			ImGui::SetNextItemWidth(100.f);
-			ImGui::DragInt("Level Index(LoD)", &debugLodStep, 1, 0, 9);
-		}
-		ImGui::Checkbox("Enable Reload Shaders", &reloadShaders);
-		ImGui::SetNextItemWidth(200.f);
-		ImGui::SliderInt("Debug Info Mode (0=off, 1=on, 2=verbose)", &debugGuiMode, 0, 2);
-		ImGui::Checkbox("Enable Animation", &animationEnabled);
-		ImGui::Text("Cluster Ray Tracing Enabled: %s", clusterRTEnabled ? "ON" : "OFF");
-		ImGui::Checkbox("Enable Debug Sleep", &debugSleep);
-
-		ImGui::End();
-	}
-
-	if (bDisplayProfiling)
-	{
-		ImGui::Begin("Performance Monitor");
-		// Frame Rate
-		{
-			static float framerate = 0.0f;
-			framerate = 0.9f * framerate + 0.1f * 1.0f / deltaTime;
-			static TimeSeriesPlot frPlot(100);
-			frPlot.addValue(framerate);
-			ImGui::SetNextItemWidth(400.f);
-			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-			ImGui::PlotLines("##Avg Frame Rate",
-			    frPlot.data(),
-			    frPlot.size(),
-			    frPlot.currentOffset(),
-			    nullptr,
-			    0.0f, 40.0f,
-			    ImVec2(0, 80));
-			ImGui::PopStyleColor();
-			ImGui::SameLine();
-			DisplayProfilingData("Avg Frame Rate: ", framerate, 60.f, 30.f, std::greater<float>());
-		}
-		// CPU time
-		{
-			static TimeSeriesPlot cpuPlot(100);
-			cpuPlot.addValue(frameCPUAvg);
-			ImGui::SetNextItemWidth(400.f);
-			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 1.0f, 1.0f));
-			ImGui::PlotLines("##Avg CPU Time",
-			    cpuPlot.data(),
-			    cpuPlot.size(),
-			    cpuPlot.currentOffset(),
-			    nullptr,
-			    0.0f, 40.0f,
-			    ImVec2(0, 80));
-			ImGui::PopStyleColor();
-			ImGui::SameLine();
-			DisplayProfilingData("Avg CPU Time(ms): ", frameCPUAvg, 16.7, 33.4);
-		}
-		// GPU time
-		{
-			static TimeSeriesPlot gpuPlot(100);
-			gpuPlot.addValue(frameGPUAvg);
-			ImGui::SetNextItemWidth(400.f);
-			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-			ImGui::PlotLines("##Avg GPU Time",
-			    gpuPlot.data(),
-			    gpuPlot.size(),
-			    gpuPlot.currentOffset(),
-			    nullptr,
-			    0.0f, 40.0f,
-			    ImVec2(0, 80));
-			ImGui::PopStyleColor();
-			ImGui::SameLine();
-			DisplayProfilingData("Avg GPU Time(ms): ", frameGPUAvg, 16.7, 33.4);
-		}
-		// GPU Culling time
-		{
-			static TimeSeriesPlot gpuCullPlot(100);
-			gpuCullPlot.addValue(cullGPUTime);
-			ImGui::SetNextItemWidth(400.f);
-			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 0.0f, 1.0f, 1.0f));
-			ImGui::PlotLines("##Culling GPU Time",
-			    gpuCullPlot.data(),
-			    gpuCullPlot.size(),
-			    gpuCullPlot.currentOffset(),
-			    nullptr,
-			    0.0f, 40.0f,
-			    ImVec2(0, 80));
-			ImGui::PopStyleColor();
-			ImGui::SameLine();
-			DisplayProfilingData("Culling GPU Time(ms): ", cullGPUTime, 1.0, 2.0);
-		}
-		// GPU Culling late time
-		{
-			static TimeSeriesPlot gpuCullLatePlot(100);
-			gpuCullLatePlot.addValue(culllateGPUTime);
-			ImGui::SetNextItemWidth(400.f);
-			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.5f, 1.0f, 0.0f, 1.0f));
-			ImGui::PlotLines("##Culling Late GPU Time",
-			    gpuCullLatePlot.data(),
-			    gpuCullLatePlot.size(),
-			    gpuCullLatePlot.currentOffset(),
-			    nullptr,
-			    0.0f, 40.0f,
-			    ImVec2(0, 80));
-			ImGui::PopStyleColor();
-			ImGui::SameLine();
-			DisplayProfilingData("Culling Late GPU Time(ms): ", culllateGPUTime, 1.0, 2.0);
-		}
-		// Rendering GPU time
-		{
-			static TimeSeriesPlot gpuRenderingPlot(100);
-			gpuRenderingPlot.addValue(renderGPUTime);
-			ImGui::SetNextItemWidth(400.f);
-			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.5f, 1.0f));
-			ImGui::PlotLines("##Rendering GPU Time",
-			    gpuRenderingPlot.data(),
-			    gpuRenderingPlot.size(),
-			    gpuRenderingPlot.currentOffset(),
-			    nullptr,
-			    0.0f, 40.0f,
-			    ImVec2(0, 80));
-			ImGui::PopStyleColor();
-			ImGui::SameLine();
-			DisplayProfilingData("Rendering GPU Time(ms): ", renderGPUTime, 4.0, 8.0);
-		}
-		// Rendering GPU late time
-		{
-			static TimeSeriesPlot gpuRenderingLatePlot(100);
-			gpuRenderingLatePlot.addValue(renderlateGPUTime);
-			ImGui::SetNextItemWidth(400.f);
-			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.3f, 0.5f, 0.3f, 1.0f));
-			ImGui::PlotLines("##Rendering Late GPU Time",
-			    gpuRenderingLatePlot.data(),
-			    gpuRenderingLatePlot.size(),
-			    gpuRenderingLatePlot.currentOffset(),
-			    nullptr,
-			    0.0f, 40.0f,
-			    ImVec2(0, 80));
-			ImGui::PopStyleColor();
-			ImGui::SameLine();
-			DisplayProfilingData("Rendering Late GPU Time(ms): ", renderlateGPUTime, 4.0, 8.0);
-		}
-		// Depth Pyramid GPU time
-		{
-			static TimeSeriesPlot depthPyramidPlot(100);
-			depthPyramidPlot.addValue(pyramidGPUTime);
-			ImGui::SetNextItemWidth(400.f);
-			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.5f, 0.0f, 0.3f, 1.0f));
-			ImGui::PlotLines("##Depth Pyramid GPU Time",
-			    depthPyramidPlot.data(),
-			    depthPyramidPlot.size(),
-			    depthPyramidPlot.currentOffset(),
-			    nullptr,
-			    0.0f, 40.0f,
-			    ImVec2(0, 80));
-			ImGui::PopStyleColor();
-			ImGui::SameLine();
-			DisplayProfilingData("Depth Pyramid GPU Time(ms): ", pyramidGPUTime, 1.0, 2.0);
-		}
-		// TAA GPU time
-		{
-			static TimeSeriesPlot taaGpuPlot(100);
-			taaGpuPlot.addValue(taaGPUTime);
-			ImGui::SetNextItemWidth(400.f);
-			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.8f, 0.6f, 0.2f, 1.0f));
-			ImGui::PlotLines("##TAA GPU Time",
-			    taaGpuPlot.data(),
-			    taaGpuPlot.size(),
-			    taaGpuPlot.currentOffset(),
-			    nullptr,
-			    0.0f, 40.0f,
-			    ImVec2(0, 80));
-			ImGui::PopStyleColor();
-			ImGui::SameLine();
-			DisplayProfilingData("TAA GPU Time(ms): ", taaGPUTime, 1.0, 2.0);
-		}
-		// @TODO: add more profiling curves
-		ImGui::End();
-	}
-
-	if (bDisplayScene)
-	{
-		ImGui::Begin("Scene");
-		if (ImGui::CollapsingHeader("Camera"))
-		{
-			ImGui::DragFloat3("Camera Position", (float*)(&scene->camera.position), 0.01f);
-			float rotations[3] = { pitch, yaw, roll };
-			if (ImGui::DragFloat3("Camera Rotation (Pitch, Yaw, Roll)", rotations, 0.01f))
-			{
-				pitch = rotations[0];
-				yaw = rotations[1];
-				roll = rotations[2];
-				cameraDirty = true;
-			}
-			ImGui::SetNextItemWidth(200.f);
-			ImGui::DragFloat("Camera Moving Speed", &cameraSpeed, 0.01f, 0.0f, 10.f);
-			if (ImGui::Checkbox("Enable Dolly Zoom", &enableDollyZoom))
-			{
-				// Update the camera origin for dolly zoom
-				cameraOriginForDolly = scene->camera.position;
-			}
-			if (enableDollyZoom)
-			{
-				ImGui::SetNextItemWidth(200.f);
-				ImGui::DragFloat("Dolly Zoom Ref Distance", &soRef, 0.01f, 1.0f, 100.f);
-			}
-		}
-		ImGui::End();
-	}
-
-	guiRenderer->EndFrame();
-	VkImageMemoryBarrier2 uiBarrier = imageBarrier(swapchain.images[imageIndex],
-		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-	    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
-
-	pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &uiBarrier);
-	guiRenderer->RenderDrawData(commandBuffer, swapchainImageViews[imageIndex], { swapchain.width, swapchain.height });
 
 	VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
 	    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
@@ -2737,6 +2516,245 @@ bool VulkanContext::DrawFrame()
 	resourceManager.EndFrame();
 
 	return true;
+}
+
+void VulkanContext::BuildRuntimeUi(float deltaTime,
+	double frameCPUAvg,
+	double frameGPUAvg,
+	double cullGPUTime,
+	double pyramidGPUTime,
+	double culllateGPUTime,
+	double renderGPUTime,
+	double renderlateGPUTime,
+	double taaGPUTime)
+{
+	static bool bDisplaySettings = true;
+	static bool bDisplayProfiling = true;
+	static bool bDisplayScene = true;
+	if (ImGui::BeginMainMenuBar())
+	{
+		ImGui::Dummy(ImVec2(50.f, 0.f));
+		ImGui::Checkbox("Settings", &bDisplaySettings);
+		ImGui::Checkbox("Profiling", &bDisplayProfiling);
+		ImGui::Checkbox("Scene", &bDisplayScene);
+		ImGui::EndMainMenuBar();
+	}
+
+	if (bDisplaySettings)
+	{
+		ImGui::Begin("Global Settings");
+		ImGui::Checkbox("Enable Mesh Shading", &meshShadingEnabled);
+		ImGui::Checkbox("Enable Task Shading", &taskShadingEnabled);
+		ImGui::Checkbox("Enable Culing", &cullingEnabled);
+		ImGui::Checkbox("Enable Occlusion Culling", &occlusionEnabled);
+		ImGui::Checkbox("Enable Cluster Occlusion Culling", &clusterOcclusionEnabled);
+		ImGui::Checkbox("Enable Shadow", &shadowEnabled);
+		ImGui::SetNextItemWidth(200.f);
+		ImGui::SliderInt("Shadow Quality (0=low, 1=high)", &shadowQuality, 0, 1);
+		ImGui::Checkbox("Enable Shadow Blurring", &shadowblurEnabled);
+		ImGui::Checkbox("Enable Shadow Checkerboard", &shadowCheckerboard);
+		ImGui::Checkbox("Enable TAA", &taaEnabled);
+		if (taaEnabled)
+		{
+			ImGui::SetNextItemWidth(200.f);
+			ImGui::SliderFloat("TAA Blend Alpha", &taaBlendAlpha, 0.01f, 1.0f, "%.2f");
+		}
+		ImGui::Checkbox("Enable LoD", &lodEnabled);
+		if (lodEnabled)
+		{
+			ImGui::SetNextItemWidth(100.f);
+			ImGui::DragInt("Level Index(LoD)", &debugLodStep, 1, 0, 9);
+		}
+		ImGui::Checkbox("Enable Reload Shaders", &reloadShaders);
+		ImGui::SetNextItemWidth(200.f);
+		ImGui::SliderInt("Debug Info Mode (0=off, 1=on, 2=verbose)", &debugGuiMode, 0, 2);
+		ImGui::Checkbox("Enable Animation", &animationEnabled);
+		ImGui::Text("Cluster Ray Tracing Enabled: %s", clusterRTEnabled ? "ON" : "OFF");
+		ImGui::Checkbox("Enable Debug Sleep", &debugSleep);
+		ImGui::End();
+	}
+
+	if (bDisplayProfiling)
+	{
+		ImGui::Begin("Performance Monitor");
+		{
+			static float framerate = 0.0f;
+			framerate = 0.9f * framerate + 0.1f * 1.0f / deltaTime;
+			static TimeSeriesPlot frPlot(100);
+			frPlot.addValue(framerate);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
+			ImGui::PlotLines("##Avg Frame Rate",
+			    frPlot.data(),
+			    frPlot.size(),
+			    frPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("Avg Frame Rate: ", framerate, 60.f, 30.f, std::greater<float>());
+		}
+		{
+			static TimeSeriesPlot cpuPlot(100);
+			cpuPlot.addValue(frameCPUAvg);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 1.0f, 1.0f));
+			ImGui::PlotLines("##Avg CPU Time",
+			    cpuPlot.data(),
+			    cpuPlot.size(),
+			    cpuPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("Avg CPU Time(ms): ", frameCPUAvg, 16.7, 33.4);
+		}
+		{
+			static TimeSeriesPlot gpuPlot(100);
+			gpuPlot.addValue(frameGPUAvg);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+			ImGui::PlotLines("##Avg GPU Time",
+			    gpuPlot.data(),
+			    gpuPlot.size(),
+			    gpuPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("Avg GPU Time(ms): ", frameGPUAvg, 16.7, 33.4);
+		}
+		{
+			static TimeSeriesPlot gpuCullPlot(100);
+			gpuCullPlot.addValue(cullGPUTime);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f, 0.0f, 1.0f, 1.0f));
+			ImGui::PlotLines("##Culling GPU Time",
+			    gpuCullPlot.data(),
+			    gpuCullPlot.size(),
+			    gpuCullPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("Culling GPU Time(ms): ", cullGPUTime, 1.0, 2.0);
+		}
+		{
+			static TimeSeriesPlot gpuCullLatePlot(100);
+			gpuCullLatePlot.addValue(culllateGPUTime);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.5f, 1.0f, 0.0f, 1.0f));
+			ImGui::PlotLines("##Culling Late GPU Time",
+			    gpuCullLatePlot.data(),
+			    gpuCullLatePlot.size(),
+			    gpuCullLatePlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("Culling Late GPU Time(ms): ", culllateGPUTime, 1.0, 2.0);
+		}
+		{
+			static TimeSeriesPlot gpuRenderingPlot(100);
+			gpuRenderingPlot.addValue(renderGPUTime);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.5f, 1.0f));
+			ImGui::PlotLines("##Rendering GPU Time",
+			    gpuRenderingPlot.data(),
+			    gpuRenderingPlot.size(),
+			    gpuRenderingPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("Rendering GPU Time(ms): ", renderGPUTime, 4.0, 8.0);
+		}
+		{
+			static TimeSeriesPlot gpuRenderingLatePlot(100);
+			gpuRenderingLatePlot.addValue(renderlateGPUTime);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.3f, 0.5f, 0.3f, 1.0f));
+			ImGui::PlotLines("##Rendering Late GPU Time",
+			    gpuRenderingLatePlot.data(),
+			    gpuRenderingLatePlot.size(),
+			    gpuRenderingLatePlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("Rendering Late GPU Time(ms): ", renderlateGPUTime, 4.0, 8.0);
+		}
+		{
+			static TimeSeriesPlot depthPyramidPlot(100);
+			depthPyramidPlot.addValue(pyramidGPUTime);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.5f, 0.0f, 0.3f, 1.0f));
+			ImGui::PlotLines("##Depth Pyramid GPU Time",
+			    depthPyramidPlot.data(),
+			    depthPyramidPlot.size(),
+			    depthPyramidPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("Depth Pyramid GPU Time(ms): ", pyramidGPUTime, 1.0, 2.0);
+		}
+		{
+			static TimeSeriesPlot taaGpuPlot(100);
+			taaGpuPlot.addValue(taaGPUTime);
+			ImGui::SetNextItemWidth(400.f);
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.8f, 0.6f, 0.2f, 1.0f));
+			ImGui::PlotLines("##TAA GPU Time",
+			    taaGpuPlot.data(),
+			    taaGpuPlot.size(),
+			    taaGpuPlot.currentOffset(),
+			    nullptr,
+			    0.0f, 40.0f,
+			    ImVec2(0, 80));
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+			DisplayProfilingData("TAA GPU Time(ms): ", taaGPUTime, 1.0, 2.0);
+		}
+		ImGui::End();
+	}
+
+	if (bDisplayScene)
+	{
+		ImGui::Begin("Scene");
+		if (ImGui::CollapsingHeader("Camera"))
+		{
+			ImGui::DragFloat3("Camera Position", (float*)(&scene->camera.position), 0.01f);
+			float rotations[3] = { pitch, yaw, roll };
+			if (ImGui::DragFloat3("Camera Rotation (Pitch, Yaw, Roll)", rotations, 0.01f))
+			{
+				pitch = rotations[0];
+				yaw = rotations[1];
+				roll = rotations[2];
+				cameraDirty = true;
+			}
+			ImGui::SetNextItemWidth(200.f);
+			ImGui::DragFloat("Camera Moving Speed", &cameraSpeed, 0.01f, 0.0f, 10.f);
+			if (ImGui::Checkbox("Enable Dolly Zoom", &enableDollyZoom))
+			{
+				// Update the camera origin for dolly zoom
+				cameraOriginForDolly = scene->camera.position;
+			}
+			if (enableDollyZoom)
+			{
+				ImGui::SetNextItemWidth(200.f);
+				ImGui::DragFloat("Dolly Zoom Ref Distance", &soRef, 0.01f, 1.0f, 100.f);
+			}
+		}
+		ImGui::End();
+	}
 }
 
 void VulkanContext::DestroyInstance()
