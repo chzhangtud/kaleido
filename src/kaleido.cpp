@@ -44,6 +44,13 @@ static RuntimeHostOptions ResolveRuntimeOptionsFromEnv()
 	return options;
 }
 
+static int InitializeRuntimeWithBridge(const RuntimeHostBridge& bridge)
+{
+	KaleidoLaunchConfig config = bridge.BuildLaunchConfig();
+	g_runtime = std::make_unique<KaleidoRuntime>();
+	return g_runtime->Initialize(config);
+}
+
 #if defined(WIN32)
 int init(int argc, const char** argv)
 #elif defined(__ANDROID__)
@@ -57,33 +64,63 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 		LOGE("Usage: %s [mesh list]", argv[0]);
 		return 1;
 	}
-
-	KaleidoLaunchConfig config{};
-	config.path = argv[0];
-	config.modelPath = argv[1];
-	config.loadSingleModel = (argc == 2);
-	if (!config.loadSingleModel)
+	class DesktopRuntimeHostBridge final : public RuntimeHostBridge
 	{
-		for (int i = 1; i < argc; ++i)
-			config.meshPaths.emplace_back(argv[i]);
-	}
+	public:
+		DesktopRuntimeHostBridge(int inArgc, const char** inArgv)
+		    : argc(inArgc), argv(inArgv)
+		{
+		}
 
-	config.hostOptions = ResolveRuntimeOptionsFromEnv();
+		KaleidoLaunchConfig BuildLaunchConfig() const override
+		{
+			KaleidoLaunchConfig config{};
+			config.path = argv[0];
+			config.modelPath = argv[1];
+			config.loadSingleModel = (argc == 2);
+			if (!config.loadSingleModel)
+			{
+				for (int i = 1; i < argc; ++i)
+					config.meshPaths.emplace_back(argv[i]);
+			}
+			config.hostOptions = ResolveRuntimeOptionsFromEnv();
+			return config;
+		}
 
-	g_runtime = std::make_unique<KaleidoRuntime>();
-	return g_runtime->Initialize(config);
+	private:
+		int argc;
+		const char** argv;
+	};
+
+	DesktopRuntimeHostBridge bridge(argc, argv);
+	return InitializeRuntimeWithBridge(bridge);
 #elif defined(__ANDROID__)
 	g_window = ANativeWindow_fromSurface(env, surface);
+	class AndroidRuntimeHostBridge final : public RuntimeHostBridge
+	{
+	public:
+		explicit AndroidRuntimeHostBridge(ANativeWindow* inWindow)
+		    : window(inWindow)
+		{
+		}
 
-	KaleidoLaunchConfig config{};
-	config.path = "";
-	config.modelPath = "afterRain/scene.gltf";
-	config.loadSingleModel = true;
-	config.hostOptions = ResolveRuntimeOptionsFromEnv();
-	config.nativeWindow = g_window;
+		KaleidoLaunchConfig BuildLaunchConfig() const override
+		{
+			KaleidoLaunchConfig config{};
+			config.path = "";
+			config.modelPath = "afterRain/scene.gltf";
+			config.loadSingleModel = true;
+			config.hostOptions = ResolveRuntimeOptionsFromEnv();
+			config.nativeWindow = window;
+			return config;
+		}
 
-	g_runtime = std::make_unique<KaleidoRuntime>();
-	int code = g_runtime->Initialize(config);
+	private:
+		ANativeWindow* window = nullptr;
+	};
+
+	AndroidRuntimeHostBridge bridge(g_window);
+	int code = InitializeRuntimeWithBridge(bridge);
 	if (code != 0)
 	{
 		LOGE("Failed to initialize runtime, code=%d", code);

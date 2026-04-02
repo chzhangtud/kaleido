@@ -1,4 +1,4 @@
-﻿#include "GuiRenderer.h"
+#include "GuiRenderer.h"
 #if defined(_WIN32)
 #include <GLFW/glfw3.h>
 #elif defined(__ANDROID__)

@@ -233,6 +233,8 @@ public:
 	void InitResources();
 	void SetRuntimeUiEnabled(bool enabled);
 	bool IsRuntimeUiEnabled() const noexcept;
+	void SetEditorViewportMode(bool enabled);
+	bool IsEditorViewportMode() const noexcept;
 
 	bool DrawFrame();
 	void Release();
@@ -419,6 +421,7 @@ public:
 
 	std::shared_ptr<Scene> scene;
 	bool runtimeUiEnabled = true;
+	bool editorViewportMode = false;
 };
 
 class Renderer

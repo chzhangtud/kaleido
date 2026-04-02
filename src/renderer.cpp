@@ -560,7 +560,8 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	volkLoadDevice(device);
 
 #if defined(WIN32)
-	window = glfwCreateWindow(1024, 768, "kaleido", 0, 0);
+	const char* windowTitle = editorViewportMode ? "kaleido editor" : "kaleido";
+	window = glfwCreateWindow(1024, 768, windowTitle, 0, 0);
 	assert(window);
 
 	glfwSetKeyCallback(window, keyCallback);
@@ -763,6 +764,16 @@ void VulkanContext::SetRuntimeUiEnabled(bool enabled)
 bool VulkanContext::IsRuntimeUiEnabled() const noexcept
 {
 	return runtimeUiEnabled;
+}
+
+void VulkanContext::SetEditorViewportMode(bool enabled)
+{
+	editorViewportMode = enabled;
+}
+
+bool VulkanContext::IsEditorViewportMode() const noexcept
+{
+	return editorViewportMode;
 }
 
 void VulkanContext::ClearRenderGraphExternalImages()
@@ -2442,8 +2453,11 @@ bool VulkanContext::DrawFrame()
 		guiRenderer->RenderDrawData(commandBuffer, swapchainImageViews[imageIndex], { swapchain.width, swapchain.height });
 	}
 
+	const VkPipelineStageFlags2 presentSrcStage = shouldRenderRuntimeUi ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+	const VkAccessFlags2 presentSrcAccess = shouldRenderRuntimeUi ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT : VK_ACCESS_SHADER_WRITE_BIT;
+	const VkImageLayout presentSrcLayout = shouldRenderRuntimeUi ? VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
 	VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
-	    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+	    presentSrcStage, presentSrcAccess, presentSrcLayout,
 	    VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
 	pipelineBarrier(commandBuffer, 0, 0, nullptr, 1, &presentBarrier);
@@ -2528,6 +2542,79 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 	double renderlateGPUTime,
 	double taaGPUTime)
 {
+	if (editorViewportMode)
+	{
+		const ImGuiViewport* viewport = ImGui::GetMainViewport();
+		const float dockWidth = 360.0f;
+		const ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove |
+			ImGuiWindowFlags_NoResize |
+			ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+		ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y), ImGuiCond_Always);
+		ImGui::SetNextWindowSize(ImVec2(dockWidth, viewport->WorkSize.y), ImGuiCond_Always);
+		ImGui::Begin("kaleido editor", nullptr, flags);
+
+		if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::Checkbox("Enable Mesh Shading", &meshShadingEnabled);
+			ImGui::Checkbox("Enable Task Shading", &taskShadingEnabled);
+			ImGui::Checkbox("Enable Culing", &cullingEnabled);
+			ImGui::Checkbox("Enable Occlusion Culling", &occlusionEnabled);
+			ImGui::Checkbox("Enable Cluster Occlusion Culling", &clusterOcclusionEnabled);
+			ImGui::Checkbox("Enable Shadow", &shadowEnabled);
+			ImGui::SetNextItemWidth(220.f);
+			ImGui::SliderInt("Shadow Quality (0=low, 1=high)", &shadowQuality, 0, 1);
+			ImGui::Checkbox("Enable Shadow Blurring", &shadowblurEnabled);
+			ImGui::Checkbox("Enable Shadow Checkerboard", &shadowCheckerboard);
+			ImGui::Checkbox("Enable TAA", &taaEnabled);
+			if (taaEnabled)
+			{
+				ImGui::SetNextItemWidth(220.f);
+				ImGui::SliderFloat("TAA Blend Alpha", &taaBlendAlpha, 0.01f, 1.0f, "%.2f");
+			}
+			ImGui::Checkbox("Enable LoD", &lodEnabled);
+			if (lodEnabled)
+			{
+				ImGui::SetNextItemWidth(120.f);
+				ImGui::DragInt("Level Index(LoD)", &debugLodStep, 1, 0, 9);
+			}
+			ImGui::Checkbox("Enable Animation", &animationEnabled);
+			ImGui::Checkbox("Enable Reload Shaders", &reloadShaders);
+			ImGui::SetNextItemWidth(220.f);
+			ImGui::SliderInt("Debug Info Mode (0=off, 1=on, 2=verbose)", &debugGuiMode, 0, 2);
+			ImGui::Checkbox("Enable Debug Sleep", &debugSleep);
+			ImGui::Text("Cluster Ray Tracing Enabled: %s", clusterRTEnabled ? "ON" : "OFF");
+		}
+
+		if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				ImGui::DragFloat3("Camera Position", (float*)(&scene->camera.position), 0.01f);
+				float rotations[3] = { pitch, yaw, roll };
+				if (ImGui::DragFloat3("Camera Rotation (Pitch, Yaw, Roll)", rotations, 0.01f))
+				{
+					pitch = rotations[0];
+					yaw = rotations[1];
+					roll = rotations[2];
+					cameraDirty = true;
+				}
+				ImGui::SetNextItemWidth(220.f);
+				ImGui::DragFloat("Camera Moving Speed", &cameraSpeed, 0.01f, 0.0f, 10.f);
+				if (ImGui::Checkbox("Enable Dolly Zoom", &enableDollyZoom))
+					cameraOriginForDolly = scene->camera.position;
+				if (enableDollyZoom)
+				{
+					ImGui::SetNextItemWidth(220.f);
+					ImGui::DragFloat("Dolly Zoom Ref Distance", &soRef, 0.01f, 1.0f, 100.f);
+				}
+			}
+		}
+
+		ImGui::End();
+		return;
+	}
+
 	static bool bDisplaySettings = true;
 	static bool bDisplayProfiling = true;
 	static bool bDisplayScene = true;

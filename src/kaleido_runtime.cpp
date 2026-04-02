@@ -18,6 +18,7 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 	auto vContext = VulkanContext::GetInstance();
 	vContext->SetScene(scene);
 	vContext->SetRuntimeUiEnabled(config.hostOptions.enableRuntimeUi);
+	vContext->SetEditorViewportMode(config.hostOptions.launchMode == RuntimeLaunchMode::EditorViewport);
 
 #if defined(WIN32)
 	vContext->InitVulkan();

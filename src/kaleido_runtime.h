@@ -32,6 +32,13 @@ struct KaleidoLaunchConfig
 #endif
 };
 
+class RuntimeHostBridge
+{
+public:
+	virtual ~RuntimeHostBridge() = default;
+	virtual KaleidoLaunchConfig BuildLaunchConfig() const = 0;
+};
+
 class KaleidoRuntime
 {
 public:
