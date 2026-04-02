@@ -15,7 +15,7 @@ import androidx.appcompat.app.AppCompatActivity;
 public class MainActivity extends AppCompatActivity {
 
     static {
-        System.loadLibrary("kaleido");
+        System.loadLibrary("kaleido_standalone");
     }
 
     private native void nativeSetAssetManager(android.content.res.AssetManager mgr);

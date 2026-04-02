@@ -23,8 +23,6 @@ add_subdirectory(external)
 file(GLOB GLSL_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.glsl")
 file(GLOB GLSL_HEADER_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.h")
 
-source_group("shaders" FILES ${GLSL_FILES} ${GLSL_HEADER_FILES})
-
 file(GLOB_RECURSE KALEIDO_ALL_CPP "src/*.cpp")
 file(GLOB_RECURSE KALEIDO_ALL_HEADERS "src/*.h")
 list(FILTER KALEIDO_ALL_CPP EXCLUDE REGEX "src/shaders/.*")
@@ -37,27 +35,29 @@ list(REMOVE_ITEM KALEIDO_RUNTIME_CORE_SOURCES ${KALEIDO_ENTRY_SOURCE})
 list(REMOVE_ITEM KALEIDO_RUNTIME_CORE_SOURCES ${KALEIDO_EDITOR_ENTRY_SOURCE})
 
 # Shared runtime core for standalone kaleido and future kaleido_editor launcher.
+# Shaders live here too (shared by all launchers); they are IDE-only sources, compiled by CompileShaders.
 add_library(kaleido_runtime_core OBJECT
     ${KALEIDO_RUNTIME_CORE_SOURCES}
     ${KALEIDO_ALL_HEADERS}
+    ${GLSL_FILES}
+    ${GLSL_HEADER_FILES}
 )
 
+set_source_files_properties(${GLSL_FILES} ${GLSL_HEADER_FILES} PROPERTIES HEADER_FILE_ONLY TRUE)
+
+source_group("shaders" FILES ${GLSL_FILES} ${GLSL_HEADER_FILES})
 source_group(TREE "${CMAKE_SOURCE_DIR}/src" PREFIX "src"
     FILES ${KALEIDO_RUNTIME_CORE_SOURCES} ${KALEIDO_ALL_HEADERS} ${KALEIDO_ENTRY_SOURCE} ${KALEIDO_EDITOR_ENTRY_SOURCE})
 
 if(WIN32)
-    add_executable(kaleido
+    add_executable(kaleido_standalone
         ${KALEIDO_ENTRY_SOURCE}
         $<TARGET_OBJECTS:kaleido_runtime_core>
-        ${GLSL_FILES}
-        ${GLSL_HEADER_FILES}
     )
 elseif(ANDROID)
-    add_library(kaleido SHARED
+    add_library(kaleido_standalone SHARED
         ${KALEIDO_ENTRY_SOURCE}
         $<TARGET_OBJECTS:kaleido_runtime_core>
-        ${GLSL_FILES}
-        ${GLSL_HEADER_FILES}
     )
 endif()
 
@@ -65,8 +65,6 @@ if(WIN32 AND BUILD_KALEIDO_EDITOR)
     add_executable(kaleido_editor
         ${KALEIDO_EDITOR_ENTRY_SOURCE}
         $<TARGET_OBJECTS:kaleido_runtime_core>
-        ${GLSL_FILES}
-        ${GLSL_HEADER_FILES}
     )
 endif()
 
@@ -101,9 +99,9 @@ if (WIN32)
     target_compile_definitions(kaleido_runtime_core PRIVATE VK_USE_PLATFORM_WIN32_KHR
                                                             GLFW_EXPOSE_NATIVE_WIN32
                                                             NOMINMAX)
-    target_compile_definitions(kaleido PRIVATE VK_USE_PLATFORM_WIN32_KHR
-                                               GLFW_EXPOSE_NATIVE_WIN32
-                                               NOMINMAX)
+    target_compile_definitions(kaleido_standalone PRIVATE VK_USE_PLATFORM_WIN32_KHR
+                                                          GLFW_EXPOSE_NATIVE_WIN32
+                                                          NOMINMAX)
     if(TARGET kaleido_editor)
         target_compile_definitions(kaleido_editor PRIVATE VK_USE_PLATFORM_WIN32_KHR
                                                           GLFW_EXPOSE_NATIVE_WIN32
@@ -111,7 +109,7 @@ if (WIN32)
     endif()
     message(STATUS "Windows platform detected: VK_USE_PLATFORM_WIN32_KHR defined.")
     target_include_directories(kaleido_runtime_core PRIVATE ${Vulkan_INCLUDE_DIRS}/spirv_cross)
-    target_include_directories(kaleido PRIVATE ${Vulkan_INCLUDE_DIRS}/spirv_cross)
+    target_include_directories(kaleido_standalone PRIVATE ${Vulkan_INCLUDE_DIRS}/spirv_cross)
     if(TARGET kaleido_editor)
         target_include_directories(kaleido_editor PRIVATE ${Vulkan_INCLUDE_DIRS}/spirv_cross)
     endif()
@@ -120,7 +118,7 @@ elseif(ANDROID)
         VK_USE_PLATFORM_ANDROID_KHR
         ANDROID
     )
-    target_compile_definitions(kaleido PRIVATE
+    target_compile_definitions(kaleido_standalone PRIVATE
         VK_USE_PLATFORM_ANDROID_KHR
         ANDROID
     )
@@ -130,13 +128,13 @@ endif()
 # ------------------ link libraries ------------------
 if (WIN32)
     target_link_libraries(kaleido_runtime_core PRIVATE glfw ${KALEIDO_LINK_LIBS})
-    target_link_libraries(kaleido PRIVATE glfw ${KALEIDO_LINK_LIBS})
+    target_link_libraries(kaleido_standalone PRIVATE glfw ${KALEIDO_LINK_LIBS})
     if(TARGET kaleido_editor)
         target_link_libraries(kaleido_editor PRIVATE glfw ${KALEIDO_LINK_LIBS})
     endif()
 elseif(ANDROID)
     target_link_libraries(kaleido_runtime_core PRIVATE ${KALEIDO_LINK_LIBS})
-    target_link_libraries(kaleido PRIVATE ${KALEIDO_LINK_LIBS})
+    target_link_libraries(kaleido_standalone PRIVATE ${KALEIDO_LINK_LIBS})
 endif()
 
 # ------------------ Build Type ------------------
@@ -146,14 +144,14 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(kaleido_runtime_core PRIVATE -D_DEBUG)
-    target_compile_definitions(kaleido PRIVATE -D_DEBUG)
+    target_compile_definitions(kaleido_standalone PRIVATE -D_DEBUG)
     if(TARGET kaleido_editor)
         target_compile_definitions(kaleido_editor PRIVATE -D_DEBUG)
     endif()
     message(STATUS "Debug mode enabled: assert is active.")
 else()
     target_compile_definitions(kaleido_runtime_core PRIVATE -DNDEBUG)
-    target_compile_definitions(kaleido PRIVATE -DNDEBUG)
+    target_compile_definitions(kaleido_standalone PRIVATE -DNDEBUG)
     if(TARGET kaleido_editor)
         target_compile_definitions(kaleido_editor PRIVATE -DNDEBUG)
     endif()
@@ -161,7 +159,7 @@ else()
 endif()
 
 target_compile_definitions(kaleido_runtime_core PRIVATE ${KALEIDO_COMMON_DEFINITIONS})
-target_compile_definitions(kaleido PRIVATE ${KALEIDO_COMMON_DEFINITIONS})
+target_compile_definitions(kaleido_standalone PRIVATE ${KALEIDO_COMMON_DEFINITIONS})
 if(TARGET kaleido_editor)
     target_compile_definitions(kaleido_editor PRIVATE ${KALEIDO_COMMON_DEFINITIONS})
 endif()
@@ -219,7 +217,4 @@ endforeach()
 
 add_custom_target(CompileShaders ALL DEPENDS ${SPV_FILES})
 
-add_dependencies(kaleido CompileShaders)
-if(TARGET kaleido_editor)
-    add_dependencies(kaleido_editor CompileShaders)
-endif()
+add_dependencies(kaleido_runtime_core CompileShaders)

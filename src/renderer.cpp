@@ -560,7 +560,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	volkLoadDevice(device);
 
 #if defined(WIN32)
-	const char* windowTitle = editorViewportMode ? "kaleido editor" : "kaleido";
+	const char* windowTitle = editorViewportMode ? "kaleido editor" : "kaleido_standalone";
 	window = glfwCreateWindow(1024, 768, windowTitle, 0, 0);
 	assert(window);
 
