@@ -17,7 +17,7 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 	scene = std::make_shared<Scene>(config.path.c_str());
 	auto vContext = VulkanContext::GetInstance();
 	vContext->SetScene(scene);
-	vContext->SetRuntimeUiEnabled(config.enableRuntimeUi);
+	vContext->SetRuntimeUiEnabled(config.hostOptions.enableRuntimeUi);
 
 #if defined(WIN32)
 	vContext->InitVulkan();

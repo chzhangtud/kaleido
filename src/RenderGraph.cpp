@@ -521,10 +521,6 @@ void RenderGraph::execute(RGPassContext& context) const
 			if (!barriers.empty() || !externalBarriers.empty())
 				LOGD("RG Barrier before pass '%s': %zu internal, %zu external",
 				    m_passes[idx].name.c_str(), barriers.size(), externalBarriers.size());
-			for (const RGImageBarrier& b : barriers)
-				LOGD("  internal tex:%u %s -> %s", b.handle.id, stateToString(b.oldState), stateToString(b.newState));
-			for (const RGExternalImageBarrier& b : externalBarriers)
-				LOGD("  external \"%s\" %s -> %s", b.name.c_str(), stateToString(b.oldState), stateToString(b.newState));
 		}
 
 		if (!barriers.empty() && context.insertImageBarriers)

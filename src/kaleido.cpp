@@ -29,15 +29,9 @@ Java_com_chzhang_kaleido_MainActivity_nativeSetAssetManager(JNIEnv* env, jobject
 
 static std::unique_ptr<KaleidoRuntime> g_runtime;
 
-struct RuntimeBootstrapOptions
+static RuntimeHostOptions ResolveRuntimeOptionsFromEnv()
 {
-	bool enableRuntimeUi = true;
-	RuntimeLaunchMode launchMode = RuntimeLaunchMode::Standalone;
-};
-
-static RuntimeBootstrapOptions ResolveRuntimeOptionsFromEnv()
-{
-	RuntimeBootstrapOptions options{};
+	RuntimeHostOptions options{};
 	options.enableRuntimeUi = !(getenv("KALEIDO_NO_RUNTIME_UI") && atoi(getenv("KALEIDO_NO_RUNTIME_UI")));
 
 	const char* mode = getenv("KALEIDO_SURFACE_MODE");
@@ -74,9 +68,7 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 			config.meshPaths.emplace_back(argv[i]);
 	}
 
-	const RuntimeBootstrapOptions renderOptions = ResolveRuntimeOptionsFromEnv();
-	config.enableRuntimeUi = renderOptions.enableRuntimeUi;
-	config.launchMode = renderOptions.launchMode;
+	config.hostOptions = ResolveRuntimeOptionsFromEnv();
 
 	g_runtime = std::make_unique<KaleidoRuntime>();
 	return g_runtime->Initialize(config);
@@ -87,9 +79,7 @@ Java_com_chzhang_kaleido_MainActivity_nativeInit(JNIEnv* env, jobject thiz, jobj
 	config.path = "";
 	config.modelPath = "afterRain/scene.gltf";
 	config.loadSingleModel = true;
-	const RuntimeBootstrapOptions renderOptions = ResolveRuntimeOptionsFromEnv();
-	config.enableRuntimeUi = renderOptions.enableRuntimeUi;
-	config.launchMode = renderOptions.launchMode;
+	config.hostOptions = ResolveRuntimeOptionsFromEnv();
 	config.nativeWindow = g_window;
 
 	g_runtime = std::make_unique<KaleidoRuntime>();

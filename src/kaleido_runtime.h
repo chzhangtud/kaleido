@@ -14,14 +14,19 @@ enum class RuntimeLaunchMode
 	EditorViewport
 };
 
+struct RuntimeHostOptions
+{
+	bool enableRuntimeUi = true;
+	RuntimeLaunchMode launchMode = RuntimeLaunchMode::Standalone;
+};
+
 struct KaleidoLaunchConfig
 {
 	std::string path;
 	std::string modelPath;
 	std::vector<std::string> meshPaths;
 	bool loadSingleModel = true;
-	bool enableRuntimeUi = true;
-	RuntimeLaunchMode launchMode = RuntimeLaunchMode::Standalone;
+	RuntimeHostOptions hostOptions{};
 #if defined(__ANDROID__)
 	ANativeWindow* nativeWindow = nullptr;
 #endif
