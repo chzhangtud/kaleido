@@ -45,4 +45,8 @@ public:
 	int Initialize(const KaleidoLaunchConfig& config);
 	bool RenderFrame();
 	void Shutdown();
+
+private:
+	KaleidoLaunchConfig activeConfig{};
+	bool initialized = false;
 };

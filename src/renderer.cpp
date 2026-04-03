@@ -3,6 +3,12 @@
 #include "RenderBackend.h"
 #include "RenderGraph.h"
 
+#include <filesystem>
+#if defined(WIN32)
+#include <windows.h>
+#include <commdlg.h>
+#endif
+
 template <typename PushConstants, size_t PushDescriptors>
 void dispatch(VkCommandBuffer commandBuffer, const Program& program, uint32_t threadCountX, uint32_t threadCountY, const PushConstants& pushConstants, const DescriptorInfo (&pushDescriptors)[PushDescriptors])
 {
@@ -54,6 +60,29 @@ double getTimestampDurationMs(const uint64_t* timestamps, uint32_t beginSlot, ui
 {
 	return double(timestamps[endSlot] - timestamps[beginSlot]) * timestampPeriodNs * 1e-6;
 }
+
+#if defined(WIN32)
+bool ShowOpenSceneDialog(std::string& outPath)
+{
+	char filePath[MAX_PATH] = "";
+	OPENFILENAMEA ofn{};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = nullptr;
+	ofn.lpstrFile = filePath;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = "glTF Scene (*.gltf;*.glb)\0*.gltf;*.glb\0All Files (*.*)\0*.*\0";
+	ofn.nFilterIndex = 1;
+	ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+
+	if (GetOpenFileNameA(&ofn) == TRUE)
+	{
+		outPath = filePath;
+		return true;
+	}
+
+	return false;
+}
+#endif
 
 // Halton low-discrepancy sequence in [0, 1) for subpixel jitter (bases 2 and 3).
 static float halton(uint32_t index, uint32_t base)
@@ -793,6 +822,93 @@ bool VulkanContext::IsEditorViewportMode() const noexcept
 	return editorViewportMode;
 }
 
+void VulkanContext::RequestEditorSceneLoad(const std::string& scenePath)
+{
+	if (scenePath.empty())
+		return;
+
+	editorSceneLoadRequestPath = scenePath;
+	editorSceneLoadRequested = true;
+}
+
+bool VulkanContext::ConsumeEditorSceneLoadRequest(std::string& outScenePath)
+{
+	if (!editorSceneLoadRequested)
+		return false;
+
+	editorSceneLoadRequested = false;
+	outScenePath = editorSceneLoadRequestPath;
+	editorSceneLoadRequestPath.clear();
+	return !outScenePath.empty();
+}
+
+void VulkanContext::ResetSceneResourcesForReload()
+{
+	VK_CHECK(vkDeviceWaitIdle(device));
+
+	if (raytracingSupported)
+	{
+		if (tlas != VK_NULL_HANDLE)
+			vkDestroyAccelerationStructureKHR(device, tlas, 0);
+		tlas = VK_NULL_HANDLE;
+		for (VkAccelerationStructureKHR as : blas)
+			if (as != VK_NULL_HANDLE)
+				vkDestroyAccelerationStructureKHR(device, as, 0);
+		blas.clear();
+		blasAddresses.clear();
+		resourceManager.DestroyBuffer(tlasBuffer);
+		resourceManager.DestroyBuffer(blasBuffer);
+		resourceManager.DestroyBuffer(tlasScratchBuffer);
+		resourceManager.DestroyBuffer(tlasInstanceBuffer);
+		tlasBuffer = {};
+		blasBuffer = {};
+		tlasScratchBuffer = {};
+		tlasInstanceBuffer = {};
+	}
+
+	resourceManager.DestroyBuffer(dccb);
+	resourceManager.DestroyBuffer(dcb);
+	resourceManager.DestroyBuffer(dvb);
+	resourceManager.DestroyBuffer(db);
+	resourceManager.DestroyBuffer(mb);
+	resourceManager.DestroyBuffer(mtb);
+	resourceManager.DestroyBuffer(mlb);
+	resourceManager.DestroyBuffer(mdb);
+	resourceManager.DestroyBuffer(mvb);
+	resourceManager.DestroyBuffer(cib);
+	resourceManager.DestroyBuffer(ccb);
+	resourceManager.DestroyBuffer(ib);
+	resourceManager.DestroyBuffer(vb);
+	dccb = {};
+	dcb = {};
+	dvb = {};
+	db = {};
+	mb = {};
+	mtb = {};
+	mlb = {};
+	mdb = {};
+	mvb = {};
+	cib = {};
+	ccb = {};
+	ib = {};
+	vb = {};
+
+	if (scene)
+	{
+		for (Image& image : scene->images)
+			resourceManager.DestroyImage(image);
+		scene->images.clear();
+		if (scene->textureSet.first != VK_NULL_HANDLE)
+			vkDestroyDescriptorPool(device, scene->textureSet.first, 0);
+		scene->textureSet = {};
+	}
+
+	tlasNeedsRebuild = true;
+	dvbCleared = false;
+	mvbCleared = false;
+	meshletVisibilityBytes = 0;
+}
+
 void VulkanContext::ClearRenderGraphExternalImages()
 {
 	rgExternalImageRegistry.clear();
@@ -1011,34 +1127,36 @@ void VulkanContext::InitResources()
 	initCommandPool = VK_NULL_HANDLE;
 	initCommandBuffer = VK_NULL_HANDLE;
 
-	swapchainImageViews.resize(swapchain.imageCount);
-
-	for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
+	if (!frameResourcesInitialized)
 	{
-		acquireSemaphores[ii] = createSemaphore(device);
-		frameFences[ii] = createFence(device);
-		assert(acquireSemaphores[ii] && frameFences[ii]);
-		releaseSemaphores[ii].resize(swapchain.imageCount);
-		for (uint32_t jj = 0; jj < swapchain.imageCount; ++jj)
+		swapchainImageViews.resize(swapchain.imageCount);
+
+		for (size_t ii = 0; ii < MAX_FRAMES; ++ii)
 		{
-			releaseSemaphores[ii][jj] = createSemaphore(device);
-			assert(releaseSemaphores[ii][jj]);
+			acquireSemaphores[ii] = createSemaphore(device);
+			frameFences[ii] = createFence(device);
+			assert(acquireSemaphores[ii] && frameFences[ii]);
+			releaseSemaphores[ii].resize(swapchain.imageCount);
+			for (uint32_t jj = 0; jj < swapchain.imageCount; ++jj)
+			{
+				releaseSemaphores[ii][jj] = createSemaphore(device);
+				assert(releaseSemaphores[ii][jj]);
+			}
 		}
-	}
 
 #if defined(WIN32)
-	glfwSetMouseButtonCallback(window, mouse_button_callback);
-	glfwSetCursorPosCallback(window, mouse_callback);
+		glfwSetMouseButtonCallback(window, mouse_button_callback);
+		glfwSetCursorPosCallback(window, mouse_callback);
 #endif
 
-	// Initialize GUI renderer
-	const auto& guiRenderer = GuiRenderer::GetInstance();
-	VkSurfaceCapabilitiesKHR surfaceCaps;
-	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
-	uint32_t imageCount = std::max(uint32_t(MAX_FRAMES), surfaceCaps.minImageCount); // using triple buffering
+		// Initialize GUI renderer
+		const auto& guiRenderer = GuiRenderer::GetInstance();
+		VkSurfaceCapabilitiesKHR surfaceCaps;
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps);
+		uint32_t imageCount = std::max(uint32_t(MAX_FRAMES), surfaceCaps.minImageCount); // using triple buffering
 
-	if (!pushDescriptorSupported)
-	{
+		if (!pushDescriptorSupported)
+		{
 		uint32_t setSize = MAX_FRAMES * DESCRIPTOR_SET_PER_FRAME;
 		// cull descriptor sets
 		{
@@ -1125,16 +1243,18 @@ void VulkanContext::InitResources()
 
 			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)shadowblurSets));
 		}
-	}
+		}
 
 VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
 renderingInfo.colorAttachmentCount = 1;
 renderingInfo.pColorAttachmentFormats = &swapchainFormat;
 renderingInfo.depthAttachmentFormat = depthFormat;
 
-guiRenderer->Initialize(window, API_VERSION, instance, physicalDevice, device, graphicsFamily, queue, renderingInfo, swapchainFormat, imageCount);
+		guiRenderer->Initialize(window, API_VERSION, instance, physicalDevice, device, graphicsFamily, queue, renderingInfo, swapchainFormat, imageCount);
 
-lastFrame = GetTimeInSeconds();
+		lastFrame = GetTimeInSeconds();
+		frameResourcesInitialized = true;
+	}
 }
 
 // Main frame path: scene + UI setup, then record rendering (RenderGraph + legacy barriers in-record).
@@ -2734,6 +2854,67 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			}
 		}
 
+		if (ImGui::CollapsingHeader("Assets", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			static char scenePathInput[512] = "";
+			static std::string assetLoadStatus;
+			static bool assetLoadStatusIsError = false;
+
+			ImGui::Text("Current scene path: %s", scene->path.empty() ? "<empty>" : scene->path.c_str());
+			ImGui::InputText("Scene Path", scenePathInput, sizeof(scenePathInput));
+#if defined(WIN32)
+			ImGui::SameLine();
+			if (ImGui::Button("Browse..."))
+			{
+				std::string selectedPath;
+				if (ShowOpenSceneDialog(selectedPath))
+				{
+					strncpy_s(scenePathInput, sizeof(scenePathInput), selectedPath.c_str(), _TRUNCATE);
+					assetLoadStatus = "Selected scene file.";
+					assetLoadStatusIsError = false;
+				}
+			}
+#endif
+			ImGui::Text("Supported formats: .gltf / .glb");
+
+			if (ImGui::Button("Load Scene"))
+			{
+				std::string requestPath = scenePathInput;
+				if (requestPath.empty())
+				{
+					assetLoadStatus = "Please input a scene path first.";
+					assetLoadStatusIsError = true;
+				}
+				else
+				{
+					const char* ext = strrchr(requestPath.c_str(), '.');
+					const bool supported = ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0);
+					if (!supported)
+					{
+						assetLoadStatus = "Unsupported scene format. Use .gltf or .glb.";
+						assetLoadStatusIsError = true;
+					}
+					else if (!std::filesystem::exists(requestPath))
+					{
+						assetLoadStatus = "Scene file does not exist.";
+						assetLoadStatusIsError = true;
+					}
+					else
+					{
+						RequestEditorSceneLoad(requestPath);
+						assetLoadStatus = "Scene load request submitted.";
+						assetLoadStatusIsError = false;
+					}
+				}
+			}
+
+			if (!assetLoadStatus.empty())
+			{
+				ImVec4 color = assetLoadStatusIsError ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f) : ImVec4(0.35f, 1.0f, 0.35f, 1.0f);
+				ImGui::TextColored(color, "%s", assetLoadStatus.c_str());
+			}
+		}
+
 		ImGui::End();
 
 		ImGui::SetNextWindowPos(ImVec2(mainViewport->WorkPos.x + panelWidth + panelGap, mainViewport->WorkPos.y), ImGuiCond_Always);
@@ -3181,6 +3362,7 @@ void VulkanContext::Release()
 	vkDestroyInstance(instance, 0);
 
 	volkFinalize();
+	frameResourcesInitialized = false;
 }
 
 Renderer::Renderer()

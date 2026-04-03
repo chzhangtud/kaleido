@@ -23,17 +23,26 @@ public:
 	{
 		KaleidoLaunchConfig config{};
 		config.path = argv[0];
-		config.loadSingleModel = true;
-
 		if (argc >= 2)
 		{
 			config.modelPath = argv[1];
+			config.loadSingleModel = true;
 		}
 		else
 		{
 			const char* editorModel = getenv("KALEIDO_EDITOR_MODEL");
-			config.modelPath = (editorModel && editorModel[0]) ? editorModel : "afterRain/scene.gltf";
-			LOGW("No glTF specified for kaleido_editor; using %s", config.modelPath.c_str());
+			if (editorModel && editorModel[0])
+			{
+				config.modelPath = editorModel;
+				config.loadSingleModel = true;
+				LOGI("No CLI scene specified for kaleido_editor; using KALEIDO_EDITOR_MODEL=%s", config.modelPath.c_str());
+			}
+			else
+			{
+				// Editor can boot without a startup scene (Unity-like empty scene entry).
+				config.loadSingleModel = false;
+				LOGI("No startup scene specified for kaleido_editor; launching with an empty scene.");
+			}
 		}
 
 		config.hostOptions.enableRuntimeUi = true;

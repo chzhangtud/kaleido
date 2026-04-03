@@ -235,6 +235,9 @@ public:
 	bool IsRuntimeUiEnabled() const noexcept;
 	void SetEditorViewportMode(bool enabled);
 	bool IsEditorViewportMode() const noexcept;
+	void RequestEditorSceneLoad(const std::string& scenePath);
+	bool ConsumeEditorSceneLoadRequest(std::string& outScenePath);
+	void ResetSceneResourcesForReload();
 
 	bool DrawFrame();
 	void Release();
@@ -435,6 +438,9 @@ public:
 	};
 	std::vector<PendingViewportDescriptorRelease> pendingViewportDescriptorReleases;
 	uint64_t pendingTexturePoolPurgeAfterFrame = 0;
+	bool editorSceneLoadRequested = false;
+	std::string editorSceneLoadRequestPath;
+	bool frameResourcesInitialized = false;
 };
 
 class Renderer
