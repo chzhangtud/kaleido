@@ -224,7 +224,7 @@ public:
 		for (size_t i = 0; i < m_texturePool.size(); ++i)
 		{
 			auto& record = m_texturePool[i];
-			if (!record.inUse && record.desc == desc)
+			if (!record.inUse && record.image.image != VK_NULL_HANDLE && record.desc == desc)
 			{
 				record.inUse = true;
 				if (record.handle.id == 0)
@@ -233,6 +233,26 @@ public:
 				}
 				if (transient)
 					m_frameTempTextures.push_back(record.handle);
+				return record.handle;
+			}
+		}
+
+		// Reuse an empty slot if available.
+		for (size_t i = 0; i < m_texturePool.size(); ++i)
+		{
+			auto& record = m_texturePool[i];
+			if (!record.inUse && record.image.image == VK_NULL_HANDLE)
+			{
+				VkFormat vkFormat = ToVkFormat(desc.format);
+				VkBufferUsageFlags usageFlags = ToVkUsageFlags(desc.usage);
+				createImage(record.image, m_device, m_memoryProperties, desc.width, desc.height, desc.mipLevels, vkFormat, usageFlags);
+				record.desc = desc;
+				record.inUse = true;
+				if (record.handle.id == 0)
+					record.handle.id = static_cast<uint32_t>(i + 1);
+				if (transient)
+					m_frameTempTextures.push_back(record.handle);
+				LOGI("RG: Reused empty texture slot handle %u for %ux%u", record.handle.id, desc.width, desc.height);
 				return record.handle;
 			}
 		}
@@ -285,6 +305,22 @@ public:
 		if (index >= m_texturePool.size())
 			return;
 		m_texturePool[index].inUse = false;
+	}
+
+	uint32_t PurgeUnusedTextures()
+	{
+		uint32_t purged = 0;
+		for (auto& record : m_texturePool)
+		{
+			if (!record.inUse && record.image.image != VK_NULL_HANDLE)
+			{
+				destroyImage(record.image, m_device);
+				record.image = {};
+				record.desc = {};
+				++purged;
+			}
+		}
+		return purged;
 	}
 
 	RGBufferHandle CreateBuffer(const RGBufferDesc& desc, bool transient = false)

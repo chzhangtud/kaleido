@@ -233,8 +233,25 @@ float halfToFloat(uint16_t v)
 }
 
 // Platform-independent pointer helpers used for camera orientation.
+static bool g_editorViewportInputMode = false;
+static bool g_editorViewportRectValid = false;
+static ImVec2 g_editorViewportRectMin = ImVec2(0.f, 0.f);
+static ImVec2 g_editorViewportRectMax = ImVec2(0.f, 0.f);
+
+static bool IsPointInsideEditorViewport(float x, float y)
+{
+	if (!g_editorViewportInputMode || !g_editorViewportRectValid)
+		return false;
+
+	return x >= g_editorViewportRectMin.x && x <= g_editorViewportRectMax.x &&
+	       y >= g_editorViewportRectMin.y && y <= g_editorViewportRectMax.y;
+}
+
 void OnPointerDown(float x, float y)
 {
+	if (g_editorViewportInputMode && !IsPointInsideEditorViewport(x, y))
+		return;
+
 	mousePressed = true;
 	firstMouse = true;
 	lastX = x;
@@ -246,7 +263,7 @@ void OnPointerMove(float x, float y)
 	if (!mousePressed)
 		return;
 
-	if (ImGui::GetIO().WantCaptureMouse)
+	if (ImGui::GetIO().WantCaptureMouse && !IsPointInsideEditorViewport(x, y))
 		return;
 
 	static const float sensitivity = 0.1f;
@@ -795,7 +812,18 @@ void VulkanContext::PrepareRenderGraphPassContext(RGPassContext& out, VkCommandB
 	out.enableBarrierDebugLog = readProcessEnvFlag("RG_BARRIER_DEBUG");
 
 	ClearRenderGraphExternalImages();
-	RegisterRenderGraphExternalImage("SwapchainColor", swapchain.images[swapchainImageIndex], TextureFormat::RGBA8_UNorm, TextureUsage::Storage | TextureUsage::Sampled);
+	if (editorViewportMode && editorViewportTargetHandle.IsValid())
+	{
+		Image* editorTarget = resourceManager.GetTexture(editorViewportTargetHandle);
+		if (editorTarget)
+		{
+			RegisterRenderGraphExternalImage("FinalColor", editorTarget->image, TextureFormat::RGBA8_UNorm, TextureUsage::Storage | TextureUsage::Sampled);
+		}
+	}
+	else
+	{
+		RegisterRenderGraphExternalImage("FinalColor", swapchain.images[swapchainImageIndex], TextureFormat::RGBA8_UNorm, TextureUsage::Storage | TextureUsage::Sampled);
+	}
 
 	out.insertImageBarriers = [this](VkCommandBuffer cb, const std::vector<RGImageBarrier>& barriers)
 	{
@@ -1127,6 +1155,9 @@ bool VulkanContext::DrawFrame()
 
 	const auto& guiRenderer = GuiRenderer::GetInstance();
 	const bool shouldRenderRuntimeUi = runtimeUiEnabled;
+	g_editorViewportInputMode = editorViewportMode;
+	if (!editorViewportMode)
+		g_editorViewportRectValid = false;
 #if defined(WIN32)
 	glfwPollEvents();
 #endif
@@ -1234,9 +1265,24 @@ bool VulkanContext::DrawFrame()
 	if (swapchainStatus == Swapchain_NotReady)
 		return true;
 
+	if (!editorViewportMode && editorViewportDescriptorSet != VK_NULL_HANDLE)
+	{
+		pendingViewportDescriptorReleases.push_back({ editorViewportDescriptorSet, frameIndex + uint64_t(MAX_FRAMES) + 1ull });
+		editorViewportDescriptorSet = VK_NULL_HANDLE;
+	}
+	if (!editorViewportMode && editorViewportTargetHandle.IsValid())
+	{
+		resourceManager.ReleaseTexture(editorViewportTargetHandle);
+		editorViewportTargetHandle = {};
+	}
+
+	const uint32_t desiredRenderWidth = (editorViewportMode && editorViewportWidth > 0) ? editorViewportWidth : uint32_t(swapchain.width);
+	const uint32_t desiredRenderHeight = (editorViewportMode && editorViewportHeight > 0) ? editorViewportHeight : uint32_t(swapchain.height);
+
 	Image* depthTarget = resourceManager.GetTexture(depthTargetHandle);
 
-	if (swapchainStatus == Swapchain_Resized || !depthTarget)
+	if (swapchainStatus == Swapchain_Resized || !depthTarget ||
+	    (currentRenderWidth != desiredRenderWidth || currentRenderHeight != desiredRenderHeight))
 	{
 		for (uint32_t i = 0; i < gbufferCount; ++i)
 			if (gbufferTargetHandles[i].IsValid())
@@ -1265,11 +1311,22 @@ bool VulkanContext::DrawFrame()
 			if (taaHistoryHandles[ti].IsValid())
 				resourceManager.ReleaseTexture(taaHistoryHandles[ti]);
 
+		if (editorViewportTargetHandle.IsValid())
+		{
+			if (editorViewportDescriptorSet != VK_NULL_HANDLE)
+			{
+				pendingViewportDescriptorReleases.push_back({ editorViewportDescriptorSet, frameIndex + uint64_t(MAX_FRAMES) + 1ull });
+				editorViewportDescriptorSet = VK_NULL_HANDLE;
+			}
+			resourceManager.ReleaseTexture(editorViewportTargetHandle);
+			editorViewportTargetHandle = {};
+		}
+
 		for (uint32_t i = 0; i < gbufferCount; ++i)
 		{
 			RGTextureDesc gbufDesc{};
-			gbufDesc.width = swapchain.width;
-			gbufDesc.height = swapchain.height;
+			gbufDesc.width = desiredRenderWidth;
+			gbufDesc.height = desiredRenderHeight;
 			gbufDesc.mipLevels = 1;
 			gbufDesc.usage = TextureUsage::ColorAttachment | TextureUsage::Sampled;
 
@@ -1291,8 +1348,8 @@ bool VulkanContext::DrawFrame()
 		}
 
 		RGTextureDesc depthDesc{};
-		depthDesc.width = swapchain.width;
-		depthDesc.height = swapchain.height;
+		depthDesc.width = desiredRenderWidth;
+		depthDesc.height = desiredRenderHeight;
 		depthDesc.mipLevels = 1;
 		depthDesc.format = TextureFormat::D32_Float;
 		depthDesc.usage = TextureUsage::DepthStencil | TextureUsage::Sampled;
@@ -1302,8 +1359,8 @@ bool VulkanContext::DrawFrame()
 		assert(depthTarget);
 
 		RGTextureDesc shadowDesc{};
-		shadowDesc.width = swapchain.width;
-		shadowDesc.height = swapchain.height;
+		shadowDesc.width = desiredRenderWidth;
+		shadowDesc.height = desiredRenderHeight;
 		shadowDesc.mipLevels = 1;
 		shadowDesc.format = TextureFormat::R8_UNorm;
 		shadowDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
@@ -1312,16 +1369,16 @@ bool VulkanContext::DrawFrame()
 		shadowblurTargetHandle = resourceManager.CreateTexture(shadowDesc, /* transient= */ false);
 
 		RGTextureDesc litDesc{};
-		litDesc.width = swapchain.width;
-		litDesc.height = swapchain.height;
+		litDesc.width = desiredRenderWidth;
+		litDesc.height = desiredRenderHeight;
 		litDesc.mipLevels = 1;
 		litDesc.format = TextureFormat::RGBA8_UNorm;
 		litDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
 		lightingTempHandle = resourceManager.CreateTexture(litDesc, /* transient= */ false);
 
 		RGTextureDesc taaDesc{};
-		taaDesc.width = swapchain.width;
-		taaDesc.height = swapchain.height;
+		taaDesc.width = desiredRenderWidth;
+		taaDesc.height = desiredRenderHeight;
 		taaDesc.mipLevels = 1;
 		taaDesc.format = TextureFormat::RGBA8_UNorm;
 		taaDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
@@ -1330,8 +1387,8 @@ bool VulkanContext::DrawFrame()
 		g_taaHistoryReady = false;
 
 		// Note: previousPow2 makes sure all reductions are at most by 2x2 which makes sure they are consertive
-		depthPyramidWidth = previousPow2(swapchain.width);
-		depthPyramidHeight = previousPow2(swapchain.height);
+		depthPyramidWidth = previousPow2(desiredRenderWidth);
+		depthPyramidHeight = previousPow2(desiredRenderHeight);
 		depthPyramidLevels = getImageMipLevels(depthPyramidWidth, depthPyramidHeight);
 
 		RGTextureDesc depthPyramidDesc{};
@@ -1379,6 +1436,24 @@ bool VulkanContext::DrawFrame()
 				VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, depthreduceSets[ii].data()));
 			}
 		}
+
+		if (editorViewportMode)
+		{
+			RGTextureDesc viewportDesc{};
+			viewportDesc.width = desiredRenderWidth;
+			viewportDesc.height = desiredRenderHeight;
+			viewportDesc.mipLevels = 1;
+			viewportDesc.format = TextureFormat::RGBA8_UNorm;
+			viewportDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
+			editorViewportTargetHandle = resourceManager.CreateTexture(viewportDesc, /* transient= */ false);
+		}
+
+		const uint64_t safePurgeFrame = frameIndex + uint64_t(MAX_FRAMES) + 1ull;
+		if (pendingTexturePoolPurgeAfterFrame < safePurgeFrame)
+			pendingTexturePoolPurgeAfterFrame = safePurgeFrame;
+
+		currentRenderWidth = desiredRenderWidth;
+		currentRenderHeight = desiredRenderHeight;
 	}
 
 	Image* gbufferTargets[gbufferCount] = {};
@@ -1394,6 +1469,9 @@ bool VulkanContext::DrawFrame()
 		LOGW("Depth target view is null; recreate lazily (handle=%u image=%p)", depthTargetHandle.id, depthTarget->image);
 		depthTarget->imageView = resourceManager.CreateImageView(depthTarget->image, depthFormat, 0, 1);
 	}
+
+	const uint32_t renderWidth = currentRenderWidth;
+	const uint32_t renderHeight = currentRenderHeight;
 
 	// TODO: this code races the GPU reading the transforms from both TLAS and draw buffers, which can cause rendering issues
 	if (animationEnabled)
@@ -1471,6 +1549,9 @@ bool VulkanContext::DrawFrame()
 	VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, acquireSemaphore, VK_NULL_HANDLE, &imageIndex);
 
 	VkSemaphore releaseSemaphore = releaseSemaphores[frameOffset][imageIndex];
+	Image* finalOutputImage = (editorViewportMode && editorViewportTargetHandle.IsValid()) ? resourceManager.GetTexture(editorViewportTargetHandle) : nullptr;
+	VkImage finalOutputVkImage = finalOutputImage ? finalOutputImage->image : swapchain.images[imageIndex];
+	VkImageView finalOutputImageView = finalOutputImage ? finalOutputImage->imageView : swapchainImageViews[imageIndex];
 
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
 		return true; // attempting to render to an out-of-date swapchain would break semaphore synchronization
@@ -1540,11 +1621,11 @@ bool VulkanContext::DrawFrame()
 	if (enableDollyZoom)
 	{
 		float so = soRef - glm::abs(glm::dot(glm::normalize(front), scene->camera.position - cameraOriginForDolly));
-		projection = perspectiveProjectionDollyZoom(scene->camera.fovY, float(swapchain.width) / float(swapchain.height), scene->camera.znear, so, soRef);
+		projection = perspectiveProjectionDollyZoom(scene->camera.fovY, float(renderWidth) / float(renderHeight), scene->camera.znear, so, soRef);
 	}
 	else
 	{
-		projection = perspectiveProjection(scene->camera.fovY, float(swapchain.width) / float(swapchain.height), scene->camera.znear);
+		projection = perspectiveProjection(scene->camera.fovY, float(renderWidth) / float(renderHeight), scene->camera.znear);
 	}
 
 	mat4 projectionJittered = projection;
@@ -1553,8 +1634,8 @@ bool VulkanContext::DrawFrame()
 		uint32_t jitterSample = uint32_t(frameIndex % 4) + 1u;
 		float jx = halton(jitterSample, 2u);
 		float jy = halton(jitterSample, 3u);
-		projectionJittered[2][0] += (jx - 0.5f) * (2.0f / float(swapchain.width));
-		projectionJittered[2][1] += (jy - 0.5f) * (2.0f / float(swapchain.height));
+		projectionJittered[2][0] += (jx - 0.5f) * (2.0f / float(renderWidth));
+		projectionJittered[2][1] += (jy - 0.5f) * (2.0f / float(renderHeight));
 	}
 
 	mat4 projectionT = transpose(projection);
@@ -1576,7 +1657,7 @@ bool VulkanContext::DrawFrame()
 	cullData.cullingEnabled = int(cullingEnabled);
 	cullData.lodEnabled = int(lodEnabled);
 	cullData.occlusionEnabled = int(occlusionEnabled);
-	cullData.lodTarget = (2 / cullData.P11) * (1.f / float(swapchain.height)) * (1 << debugLodStep); // 1px
+	cullData.lodTarget = (2 / cullData.P11) * (1.f / float(renderHeight)) * (1 << debugLodStep); // 1px
 	cullData.pyramidWidth = float(depthPyramidWidth);
 	cullData.clusterOcclusionEnabled = occlusionEnabled && clusterOcclusionEnabled && meshShadingSupported && meshShadingEnabled;
 
@@ -1584,8 +1665,8 @@ bool VulkanContext::DrawFrame()
 	globals.projection = projectionJittered;
 	globals.cullData = cullData;
 
-	globals.screenWidth = float(swapchain.width);
-	globals.screenHeight = float(swapchain.height);
+	globals.screenWidth = float(renderWidth);
+	globals.screenHeight = float(renderHeight);
 
 	const mat4 inverseViewProjection = inverse(projectionJittered * view);
 
@@ -1816,8 +1897,8 @@ bool VulkanContext::DrawFrame()
 		depthAttachment.clearValue.depthStencil = depthClear;
 
 		VkRenderingInfo passInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO };
-		passInfo.renderArea.extent.width = swapchain.width;
-		passInfo.renderArea.extent.height = swapchain.height;
+		passInfo.renderArea.extent.width = renderWidth;
+		passInfo.renderArea.extent.height = renderHeight;
 		passInfo.layerCount = 1;
 		passInfo.colorAttachmentCount = gbufferCount;
 		passInfo.pColorAttachments = gbufferAttachments;
@@ -1825,8 +1906,8 @@ bool VulkanContext::DrawFrame()
 
 		vkCmdBeginRendering(commandBuffer, &passInfo);
 
-		VkViewport viewport = { 0, float(swapchain.height), float(swapchain.width), -float(swapchain.height), 0, 1 };
-		VkRect2D scissor = { { 0, 0 }, { uint32_t(swapchain.width), uint32_t(swapchain.height) } };
+		VkViewport viewport = { 0, float(renderHeight), float(renderWidth), -float(renderHeight), 0, 1 };
+		VkRect2D scissor = { { 0, 0 }, { renderWidth, renderHeight } };
 
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
@@ -2089,7 +2170,7 @@ bool VulkanContext::DrawFrame()
 			builder.readTexture(gbufferTargetHandles[1], ResourceState::ShaderRead);
 			builder.readTexture(depthTargetHandle, ResourceState::ShaderRead);
 			builder.writeTexture(shadowTargetHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-			builder.writeExternalTexture("SwapchainColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+			builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 
 			if (shadowblurEnabled)
 			{
@@ -2113,7 +2194,7 @@ bool VulkanContext::DrawFrame()
 				uint32_t timestamp = 16;
 
 				// checkerboard rendering: we dispatch half as many columns and xform them to fill the screen
-				int shadowWidthCB = shadowCheckerboard ? (swapchain.width + 1) / 2 : swapchain.width;
+				int shadowWidthCB = shadowCheckerboard ? (renderWidth + 1) / 2 : renderWidth;
 				int shadowCheckerboardF = shadowCheckerboard ? 1 : 0;
 
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
@@ -2125,13 +2206,13 @@ bool VulkanContext::DrawFrame()
 					shadowData.sunDirection = scene->sunDirection;
 					shadowData.sunJitter = shadowblurEnabled ? 1e-2f : 0;
 					shadowData.inverseViewProjection = inverseViewProjection;
-					shadowData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
+					shadowData.imageSize = vec2(float(renderWidth), float(renderHeight));
 					shadowData.checkerboard = shadowCheckerboardF;
 
 					if (pushDescriptorSupported)
 					{
 						vkCmdBindDescriptorSets(ctx.commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
-						dispatch(ctx.commandBuffer, shadowProgram, shadowWidthCB, swapchain.height, shadowData, descriptors);
+						dispatch(ctx.commandBuffer, shadowProgram, shadowWidthCB, renderHeight, shadowData, descriptors);
 					}
 					else
 					{
@@ -2139,7 +2220,7 @@ bool VulkanContext::DrawFrame()
 						vkCmdBindDescriptorSets(ctx.commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 0, 1, &shadowProgram.descriptorSets[frameOffset], 0, nullptr);
 						vkCmdBindDescriptorSets(ctx.commandBuffer, shadowProgram.bindPoint, shadowProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 						vkCmdPushConstants(ctx.commandBuffer, shadowProgram.layout, shadowProgram.pushConstantStages, 0, sizeof(shadowData), &shadowData);
-						vkCmdDispatch(ctx.commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(swapchain.height, shadowProgram.localSizeY), 1);
+						vkCmdDispatch(ctx.commandBuffer, getGroupCount(shadowWidthCB, shadowProgram.localSizeX), getGroupCount(renderHeight, shadowProgram.localSizeY), 1);
 					}
 				}
 
@@ -2156,9 +2237,9 @@ bool VulkanContext::DrawFrame()
 					vkCmdBindPipeline(ctx.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shadowfillPipeline);
 
 					DescriptorInfo descriptors[] = { { shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
-					vec4 fillData = vec4(float(swapchain.width), float(swapchain.height), 0, 0);
+					vec4 fillData = vec4(float(renderWidth), float(renderHeight), 0, 0);
 
-					dispatch(ctx.commandBuffer, shadowfillProgram, shadowWidthCB, swapchain.height, fillData, descriptors);
+					dispatch(ctx.commandBuffer, shadowfillProgram, shadowWidthCB, renderHeight, fillData, descriptors);
 				}
 
 				for (int pass = 0; pass < (shadowblurEnabled ? 2 : 0); ++pass)
@@ -2179,18 +2260,18 @@ bool VulkanContext::DrawFrame()
 					pipelineBarrier(ctx.commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(blurBarriers), blurBarriers);
 					vkCmdBindPipeline(ctx.commandBuffer, shadowblurProgram.bindPoint, shadowblurPipeline);
 					DescriptorInfo descriptors[] = { { blurTo.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, blurFrom.imageView, VK_IMAGE_LAYOUT_GENERAL }, { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
-					vec4 blurData = vec4(float(swapchain.width), float(swapchain.height), pass == 0 ? 1 : 0, scene->camera.znear);
+					vec4 blurData = vec4(float(renderWidth), float(renderHeight), pass == 0 ? 1 : 0, scene->camera.znear);
 
 					if (pushDescriptorSupported)
 					{
-						dispatch(ctx.commandBuffer, shadowblurProgram, swapchain.width, swapchain.height, blurData, descriptors);
+						dispatch(ctx.commandBuffer, shadowblurProgram, renderWidth, renderHeight, blurData, descriptors);
 					}
 					else
 					{
 						vkUpdateDescriptorSetWithTemplateKHR(device, shadowblurSets[frameOffset][pass], shadowblurProgram.updateTemplate, descriptors);
 						vkCmdBindDescriptorSets(ctx.commandBuffer, shadowblurProgram.bindPoint, shadowblurProgram.layout, 0, 1, &shadowblurSets[frameOffset][pass], 0, nullptr);
 						vkCmdPushConstants(ctx.commandBuffer, shadowblurProgram.layout, shadowblurProgram.pushConstantStages, 0, sizeof(blurData), &blurData);
-						vkCmdDispatch(ctx.commandBuffer, getGroupCount(swapchain.width, shadowblurProgram.localSizeX), getGroupCount(swapchain.height, shadowblurProgram.localSizeY), 1);
+						vkCmdDispatch(ctx.commandBuffer, getGroupCount(renderWidth, shadowblurProgram.localSizeX), getGroupCount(renderHeight, shadowblurProgram.localSizeY), 1);
 					}
 				}
 
@@ -2222,7 +2303,7 @@ bool VulkanContext::DrawFrame()
 			if (taaEnabled)
 				builder.writeTexture(lightingTempHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 			else
-				builder.writeExternalTexture("SwapchainColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+				builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 		},
 		[&](RGPassContext& ctx)
 		{
@@ -2239,7 +2320,7 @@ bool VulkanContext::DrawFrame()
 			vkCmdBindPipeline(ctx.commandBuffer, finalProgram.bindPoint, finalPipeline);
 
 			DescriptorInfo descriptors[] = {
-				{ taaEnabled ? lightingTemp->imageView : swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL },
+				{ taaEnabled ? lightingTemp->imageView : finalOutputImageView, VK_IMAGE_LAYOUT_GENERAL },
 				{ readSampler, gbufferTargets[0]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
 				{ readSampler, gbufferTargets[1]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
 				{ readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
@@ -2251,18 +2332,18 @@ bool VulkanContext::DrawFrame()
 			shadeData.sunDirection = scene->sunDirection;
 			shadeData.shadowEnabled = shadowEnabled;
 			shadeData.inverseViewProjection = inverseViewProjection;
-			shadeData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
+			shadeData.imageSize = vec2(float(renderWidth), float(renderHeight));
 
 			if (pushDescriptorSupported)
 			{
-				dispatch(ctx.commandBuffer, finalProgram, swapchain.width, swapchain.height, shadeData, descriptors);
+				dispatch(ctx.commandBuffer, finalProgram, renderWidth, renderHeight, shadeData, descriptors);
 			}
 			else
 			{
 				vkUpdateDescriptorSetWithTemplateKHR(device, finalProgram.descriptorSets[frameOffset], finalProgram.updateTemplate, descriptors);
 				vkCmdBindDescriptorSets(ctx.commandBuffer, finalProgram.bindPoint, finalProgram.layout, 0, 1, &finalProgram.descriptorSets[frameOffset], 0, nullptr);
 				vkCmdPushConstants(ctx.commandBuffer, finalProgram.layout, finalProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
-				vkCmdDispatch(ctx.commandBuffer, getGroupCount(swapchain.width, finalProgram.localSizeX), getGroupCount(swapchain.height, finalProgram.localSizeY), 1);
+				vkCmdDispatch(ctx.commandBuffer, getGroupCount(renderWidth, finalProgram.localSizeX), getGroupCount(renderHeight, finalProgram.localSizeY), 1);
 			}
 
 			vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
@@ -2279,7 +2360,7 @@ bool VulkanContext::DrawFrame()
 				builder.readTexture(lightingTempHandle, ResourceState::ShaderRead);
 				builder.readTextureFromPreviousFrame(historyRead);
 				builder.writeTexture(historyWrite, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-				builder.writeExternalTexture("SwapchainColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+				builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 			},
 			[&](RGPassContext& ctx)
 			{
@@ -2297,25 +2378,25 @@ bool VulkanContext::DrawFrame()
 				DescriptorInfo descriptors[] = {
 					{ readSampler, lightingTemp->imageView, VK_IMAGE_LAYOUT_GENERAL },
 					{ readSampler, taaRead->imageView, VK_IMAGE_LAYOUT_GENERAL },
-					{ swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL },
+					{ finalOutputImageView, VK_IMAGE_LAYOUT_GENERAL },
 					{ taaWrite->imageView, VK_IMAGE_LAYOUT_GENERAL }
 				};
 
 				TaaData taaData = {};
-				taaData.imageSize = vec2(float(swapchain.width), float(swapchain.height));
+				taaData.imageSize = vec2(float(renderWidth), float(renderHeight));
 				taaData.historyValid = g_taaHistoryReady ? 1 : 0;
 				taaData.blendAlpha = taaBlendAlpha;
 
 				if (pushDescriptorSupported)
 				{
-					dispatch(ctx.commandBuffer, taaProgram, swapchain.width, swapchain.height, taaData, descriptors);
+					dispatch(ctx.commandBuffer, taaProgram, renderWidth, renderHeight, taaData, descriptors);
 				}
 				else
 				{
 					vkUpdateDescriptorSetWithTemplateKHR(device, taaProgram.descriptorSets[frameOffset], taaProgram.updateTemplate, descriptors);
 					vkCmdBindDescriptorSets(ctx.commandBuffer, taaProgram.bindPoint, taaProgram.layout, 0, 1, &taaProgram.descriptorSets[frameOffset], 0, nullptr);
 					vkCmdPushConstants(ctx.commandBuffer, taaProgram.layout, taaProgram.pushConstantStages, 0, sizeof(taaData), &taaData);
-					vkCmdDispatch(ctx.commandBuffer, getGroupCount(swapchain.width, taaProgram.localSizeX), getGroupCount(swapchain.height, taaProgram.localSizeY), 1);
+					vkCmdDispatch(ctx.commandBuffer, getGroupCount(renderWidth, taaProgram.localSizeX), getGroupCount(renderHeight, taaProgram.localSizeY), 1);
 				}
 
 				g_taaHistoryReady = true;
@@ -2364,7 +2445,7 @@ bool VulkanContext::DrawFrame()
 		};
 
 		VkImageMemoryBarrier2 textBarrier =
-		    imageBarrier(swapchain.images[imageIndex],
+		    imageBarrier(finalOutputVkImage,
 		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 		        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
 
@@ -2372,7 +2453,7 @@ bool VulkanContext::DrawFrame()
 
 		vkCmdBindPipeline(commandBuffer, debugtextProgram.bindPoint, debugtextPipeline);
 
-		DescriptorInfo descriptors[] = { { swapchainImageViews[imageIndex], VK_IMAGE_LAYOUT_GENERAL } };
+		DescriptorInfo descriptors[] = { { finalOutputImageView, VK_IMAGE_LAYOUT_GENERAL } };
 
 #if defined(WIN32)
 		if (pushDescriptorSupported)
@@ -2442,20 +2523,43 @@ bool VulkanContext::DrawFrame()
 
 	vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, TS_FrameEnd);
 
+	const bool sceneRenderedToSwapchain = !editorViewportMode;
 	if (shouldRenderRuntimeUi)
 	{
+		if (editorViewportMode && finalOutputImage)
+		{
+			if (editorViewportDescriptorSet == VK_NULL_HANDLE)
+			{
+				editorViewportDescriptorSet = ImGui_ImplVulkan_AddTexture(readSampler, finalOutputImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			}
+
+			VkImageMemoryBarrier2 viewportSampleBarrier = imageBarrier(finalOutputImage->image,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+			    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &viewportSampleBarrier);
+		}
+
 		BuildRuntimeUi(deltaTime, frameCPUAvg, frameGPUAvg, cullGPUTime, pyramidGPUTime, culllateGPUTime, renderGPUTime, renderlateGPUTime, taaGPUTime);
 		guiRenderer->EndFrame();
+		const VkPipelineStageFlags2 uiSrcStage = sceneRenderedToSwapchain ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+		const VkAccessFlags2 uiSrcAccess = sceneRenderedToSwapchain ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_2_NONE;
+		const VkImageLayout uiSrcLayout = sceneRenderedToSwapchain ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
 		VkImageMemoryBarrier2 uiBarrier = imageBarrier(swapchain.images[imageIndex],
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
+			uiSrcStage, uiSrcAccess, uiSrcLayout,
+		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &uiBarrier);
-		guiRenderer->RenderDrawData(commandBuffer, swapchainImageViews[imageIndex], { swapchain.width, swapchain.height });
+		guiRenderer->RenderDrawData(commandBuffer, swapchainImageViews[imageIndex], { uint32_t(swapchain.width), uint32_t(swapchain.height) }, editorViewportMode);
 	}
 
-	const VkPipelineStageFlags2 presentSrcStage = shouldRenderRuntimeUi ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-	const VkAccessFlags2 presentSrcAccess = shouldRenderRuntimeUi ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT : VK_ACCESS_SHADER_WRITE_BIT;
-	const VkImageLayout presentSrcLayout = shouldRenderRuntimeUi ? VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+	const VkPipelineStageFlags2 presentSrcStage = shouldRenderRuntimeUi
+	    ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+	    : (sceneRenderedToSwapchain ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
+	const VkAccessFlags2 presentSrcAccess = shouldRenderRuntimeUi
+	    ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+	    : (sceneRenderedToSwapchain ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_2_NONE);
+	const VkImageLayout presentSrcLayout = shouldRenderRuntimeUi
+	    ? VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL
+	    : (sceneRenderedToSwapchain ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED);
 	VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
 	    presentSrcStage, presentSrcAccess, presentSrcLayout,
 	    VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -2514,6 +2618,24 @@ bool VulkanContext::DrawFrame()
 		double frameGPUEnd = double(timestampResults[TS_FrameEnd]) * props.limits.timestampPeriod * 1e-6;
 		frameGPUAvg = frameGPUAvg * 0.9 + (frameGPUEnd - frameGPUBegin) * 0.1;
 	}
+
+	for (size_t i = 0; i < pendingViewportDescriptorReleases.size();)
+	{
+		if (frameIndex >= pendingViewportDescriptorReleases[i].safeAfterFrame && pendingViewportDescriptorReleases[i].descriptorSet != VK_NULL_HANDLE)
+		{
+			ImGui_ImplVulkan_RemoveTexture(pendingViewportDescriptorReleases[i].descriptorSet);
+			pendingViewportDescriptorReleases.erase(pendingViewportDescriptorReleases.begin() + i);
+		}
+		else
+		{
+			++i;
+		}
+	}
+	if (pendingTexturePoolPurgeAfterFrame != 0 && frameIndex >= pendingTexturePoolPurgeAfterFrame)
+	{
+		resourceManager.PurgeUnusedTextures();
+		pendingTexturePoolPurgeAfterFrame = 0;
+	}
 	double frameCPUEnd = GetTimeInSeconds();
 
 	frameCPUAvg = frameCPUAvg * 0.9 + (frameCPUEnd - frameCPUBegin) * 0.1;
@@ -2544,15 +2666,16 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 {
 	if (editorViewportMode)
 	{
-		const ImGuiViewport* viewport = ImGui::GetMainViewport();
-		const float dockWidth = 360.0f;
-		const ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove |
-			ImGuiWindowFlags_NoResize |
-			ImGuiWindowFlags_NoBringToFrontOnFocus;
+		const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+		const float panelWidth = 360.0f;
+		const float panelGap = 20.0f;
+		const float viewportWidth = std::max(1.0f, mainViewport->WorkSize.x - panelWidth - panelGap);
+		const float viewportHeight = std::max(1.0f, mainViewport->WorkSize.y);
 
-		ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y), ImGuiCond_Always);
-		ImGui::SetNextWindowSize(ImVec2(dockWidth, viewport->WorkSize.y), ImGuiCond_Always);
-		ImGui::Begin("kaleido editor", nullptr, flags);
+		// Keep editor UI windows synced with the host window size.
+		ImGui::SetNextWindowPos(ImVec2(mainViewport->WorkPos.x, mainViewport->WorkPos.y), ImGuiCond_Always);
+		ImGui::SetNextWindowSize(ImVec2(panelWidth, viewportHeight), ImGuiCond_Always);
+		ImGui::Begin("kaleido editor");
 
 		if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
 		{
@@ -2611,6 +2734,34 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			}
 		}
 
+		ImGui::End();
+
+		ImGui::SetNextWindowPos(ImVec2(mainViewport->WorkPos.x + panelWidth + panelGap, mainViewport->WorkPos.y), ImGuiCond_Always);
+		ImGui::SetNextWindowSize(ImVec2(viewportWidth, viewportHeight), ImGuiCond_Always);
+		ImGui::Begin("viewport");
+		const ImVec2 windowPos = ImGui::GetWindowPos();
+		const ImVec2 contentMin = ImGui::GetWindowContentRegionMin();
+		const ImVec2 contentMax = ImGui::GetWindowContentRegionMax();
+		g_editorViewportRectMin = ImVec2(windowPos.x + contentMin.x, windowPos.y + contentMin.y);
+		g_editorViewportRectMax = ImVec2(windowPos.x + contentMax.x, windowPos.y + contentMax.y);
+		g_editorViewportRectValid = true;
+		const ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+		const uint32_t nextWidth = uint32_t(std::max(1.0f, viewportSize.x));
+		const uint32_t nextHeight = uint32_t(std::max(1.0f, viewportSize.y));
+		if (nextWidth != editorViewportWidth || nextHeight != editorViewportHeight)
+		{
+			editorViewportWidth = nextWidth;
+			editorViewportHeight = nextHeight;
+		}
+
+		if (editorViewportDescriptorSet != VK_NULL_HANDLE)
+		{
+			ImGui::Image((ImTextureID)editorViewportDescriptorSet, viewportSize, ImVec2(0, 0), ImVec2(1, 1));
+		}
+		else
+		{
+			ImGui::Text("Viewport rendering target is preparing...");
+		}
 		ImGui::End();
 		return;
 	}
@@ -2876,6 +3027,29 @@ void VulkanContext::Release()
 	for (int ti = 0; ti < 2; ++ti)
 		if (taaHistoryHandles[ti].IsValid())
 			resourceManager.ReleaseTexture(taaHistoryHandles[ti]);
+	if (editorViewportDescriptorSet != VK_NULL_HANDLE)
+	{
+		ImGui_ImplVulkan_RemoveTexture(editorViewportDescriptorSet);
+		editorViewportDescriptorSet = VK_NULL_HANDLE;
+	}
+	for (const PendingViewportDescriptorRelease& pending : pendingViewportDescriptorReleases)
+	{
+		if (pending.descriptorSet != VK_NULL_HANDLE)
+			ImGui_ImplVulkan_RemoveTexture(pending.descriptorSet);
+	}
+	pendingViewportDescriptorReleases.clear();
+	if (pendingTexturePoolPurgeAfterFrame != 0)
+	{
+		resourceManager.PurgeUnusedTextures();
+		pendingTexturePoolPurgeAfterFrame = 0;
+	}
+	if (editorViewportTargetHandle.IsValid())
+	{
+		resourceManager.ReleaseTexture(editorViewportTargetHandle);
+		editorViewportTargetHandle = {};
+	}
+	currentRenderWidth = 0;
+	currentRenderHeight = 0;
 
 	for (uint32_t i = 0; i < swapchain.imageCount; ++i)
 		if (swapchainImageViews[i])

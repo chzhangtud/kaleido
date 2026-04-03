@@ -60,7 +60,7 @@ public:
 
 	void BeginFrame();
 	void EndFrame();
-	void RenderDrawData(VkCommandBuffer cmdBuf, VkImageView targetView, VkExtent2D extent);
+	void RenderDrawData(VkCommandBuffer cmdBuf, VkImageView targetView, VkExtent2D extent, bool clearTarget = false);
 
 	void Shutdown(VkDevice device);
 

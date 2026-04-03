@@ -101,7 +101,7 @@ void GuiRenderer::EndFrame()
 	ImGui::Render();
 }
 
-void GuiRenderer::RenderDrawData(VkCommandBuffer cmdBuf, VkImageView targetView, VkExtent2D extent)
+void GuiRenderer::RenderDrawData(VkCommandBuffer cmdBuf, VkImageView targetView, VkExtent2D extent, bool clearTarget)
 {
 	ImDrawData* drawData = ImGui::GetDrawData();
 	if (!drawData || drawData->TotalVtxCount == 0)
@@ -111,8 +111,9 @@ void GuiRenderer::RenderDrawData(VkCommandBuffer cmdBuf, VkImageView targetView,
 	colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
 	colorAttachment.imageView = targetView;
 	colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+	colorAttachment.loadOp = clearTarget ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
 	colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	colorAttachment.clearValue = { { 0.08f, 0.08f, 0.1f, 1.0f } };
 
 	VkRenderingInfo renderingInfo = {};
 	renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;

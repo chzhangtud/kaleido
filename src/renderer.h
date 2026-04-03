@@ -422,6 +422,19 @@ public:
 	std::shared_ptr<Scene> scene;
 	bool runtimeUiEnabled = true;
 	bool editorViewportMode = false;
+	uint32_t currentRenderWidth = 0;
+	uint32_t currentRenderHeight = 0;
+	uint32_t editorViewportWidth = 0;
+	uint32_t editorViewportHeight = 0;
+	RGTextureHandle editorViewportTargetHandle{};
+	VkDescriptorSet editorViewportDescriptorSet = VK_NULL_HANDLE;
+	struct PendingViewportDescriptorRelease
+	{
+		VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+		uint64_t safeAfterFrame = 0;
+	};
+	std::vector<PendingViewportDescriptorRelease> pendingViewportDescriptorReleases;
+	uint64_t pendingTexturePoolPurgeAfterFrame = 0;
 };
 
 class Renderer
