@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 namespace
 {
@@ -48,10 +49,8 @@ void BootstrapEditorEmptyScene(const std::shared_ptr<Scene>& scene)
 bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::shared_ptr<Scene>& targetScene, VulkanContext* vContext)
 {
 	// material index 0 is always dummy
-	targetScene->materials.resize(1);
-	targetScene->materials[0].baseColorFactor = vec4(1);
-	targetScene->materials[0].pbrFactor = vec4(1, 1, 0, 1);
-	targetScene->materials[0].workflow = 1;
+	targetScene->materialDb.Clear();
+	targetScene->materialDb.Add(std::make_unique<PBRMaterial>(PBRMaterial::CreateDefault()));
 
 	targetScene->camera.position = { 14.5f, 3.f, 10.f };
 	targetScene->camera.orientation = glm::radians(glm::vec3(-5.f, -220.f, 0.f));
@@ -72,7 +71,7 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
 		{
 			glm::vec3 euler(0.f);
-			if (!loadScene(targetScene->geometry, targetScene->materials, targetScene->draws, targetScene->texturePaths, targetScene->animations, targetScene->camera, targetScene->sunDirection, config.modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled))
+			if (!loadScene(targetScene->geometry, targetScene->materialDb, targetScene->draws, targetScene->texturePaths, targetScene->animations, targetScene->camera, targetScene->sunDirection, config.modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled))
 			{
 				LOGE("Error: scene %s failed to load", config.modelPath.c_str());
 				return false;
@@ -192,6 +191,9 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 	}
 
 	targetScene->drawDistance = 2000.f;
+
+	SortSceneDrawsByMaterialKey(*targetScene);
+
 	targetScene->meshletVisibilityCount = 0;
 	targetScene->meshPostPasses = 0;
 	for (size_t i = 0; i < targetScene->draws.size(); ++i)
@@ -208,6 +210,8 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 		targetScene->meshletVisibilityCount += meshletCount;
 		targetScene->meshPostPasses |= 1 << draw.postPass;
 	}
+
+	RebuildMaterialDrawBatches(*targetScene);
 
 	return true;
 }

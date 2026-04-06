@@ -6,9 +6,40 @@
 #include <cgltf.h>
 #include <meshoptimizer.h>
 #include <time.h>
+#include <algorithm>
 #include <filesystem>
 
 namespace fs = std::filesystem;
+
+PBRMaterial PBRMaterial::CreateDefault()
+{
+	PBRMaterial material{};
+	material.data.baseColorFactor = vec4(1);
+	material.data.pbrFactor = vec4(1, 1, 0, 1);
+	material.data.workflow = 1;
+	return material;
+}
+
+void MaterialDatabase::Clear()
+{
+	entries.clear();
+	gpuMaterials.clear();
+	materialKeys.clear();
+}
+
+uint32_t MaterialDatabase::Add(std::unique_ptr<MaterialClass> material)
+{
+	assert(material);
+	materialKeys.push_back(material->GetMaterialKey());
+	gpuMaterials.push_back(material->ToGpuMaterial());
+	entries.push_back(std::move(material));
+	return uint32_t(gpuMaterials.size() - 1);
+}
+
+size_t MaterialDatabase::Size() const
+{
+	return gpuMaterials.size();
+}
 
 static void appendMeshlet(Geometry& result, const meshopt_Meshlet& meshlet, const std::vector<vec3>& vertices, const std::vector<unsigned int>& meshlet_vertices, const std::vector<unsigned char>& meshlet_triangles, uint32_t baseVertex, bool lod0)
 {
@@ -382,7 +413,63 @@ static void loadVertices(std::vector<Vertex>& vertices, const cgltf_primitive& p
 	}
 }
 
-bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast, bool clrt)
+static MaterialKey BuildPbrMaterialKey(const cgltf_material& material, int workflow)
+{
+	uint32_t alpha = (uint32_t)material.alpha_mode;
+	if (alpha > (uint32_t)cgltf_alpha_mode_blend)
+		alpha = (uint32_t)cgltf_alpha_mode_opaque;
+
+	uint32_t wf = (uint32_t)workflow & 0xFu;
+
+	return MaterialKey::Pack(MaterialType::PBR, wf, alpha & 3u, material.double_sided ? 1u : 0u, material.has_transmission ? 1u : 0u);
+}
+
+static PBRMaterial BuildPbrMaterial(const cgltf_data* data, const cgltf_material& material, int textureOffset)
+{
+	PBRMaterial result = PBRMaterial::CreateDefault();
+	Material& mat = result.data;
+
+	if (material.has_pbr_specular_glossiness)
+	{
+		if (material.pbr_specular_glossiness.diffuse_texture.texture)
+			mat.albedoTexture = textureOffset + int(cgltf_texture_index(data, material.pbr_specular_glossiness.diffuse_texture.texture));
+
+		mat.baseColorFactor = vec4(material.pbr_specular_glossiness.diffuse_factor[0], material.pbr_specular_glossiness.diffuse_factor[1], material.pbr_specular_glossiness.diffuse_factor[2], material.pbr_specular_glossiness.diffuse_factor[3]);
+
+		if (material.pbr_specular_glossiness.specular_glossiness_texture.texture)
+			mat.pbrTexture = textureOffset + int(cgltf_texture_index(data, material.pbr_specular_glossiness.specular_glossiness_texture.texture));
+
+		mat.pbrFactor = vec4(material.pbr_specular_glossiness.specular_factor[0], material.pbr_specular_glossiness.specular_factor[1], material.pbr_specular_glossiness.specular_factor[2], material.pbr_specular_glossiness.glossiness_factor);
+		mat.workflow = 2;
+	}
+	else if (material.has_pbr_metallic_roughness)
+	{
+		if (material.pbr_metallic_roughness.base_color_texture.texture)
+			mat.albedoTexture = textureOffset + int(cgltf_texture_index(data, material.pbr_metallic_roughness.base_color_texture.texture));
+
+		mat.baseColorFactor = vec4(material.pbr_metallic_roughness.base_color_factor[0], material.pbr_metallic_roughness.base_color_factor[1], material.pbr_metallic_roughness.base_color_factor[2], material.pbr_metallic_roughness.base_color_factor[3]);
+
+		if (material.pbr_metallic_roughness.metallic_roughness_texture.texture)
+			mat.pbrTexture = textureOffset + int(cgltf_texture_index(data, material.pbr_metallic_roughness.metallic_roughness_texture.texture));
+
+		mat.pbrFactor = vec4(1, 1, material.pbr_metallic_roughness.metallic_factor, material.pbr_metallic_roughness.roughness_factor);
+		mat.workflow = 1;
+	}
+
+	if (material.normal_texture.texture)
+		mat.normalTexture = textureOffset + int(cgltf_texture_index(data, material.normal_texture.texture));
+
+	if (material.emissive_texture.texture)
+		mat.emissiveTexture = textureOffset + int(cgltf_texture_index(data, material.emissive_texture.texture));
+
+	mat.emissiveFactor = vec3(material.emissive_factor[0], material.emissive_factor[1], material.emissive_factor[2]);
+
+	result.key = BuildPbrMaterialKey(material, mat.workflow);
+
+	return result;
+}
+
+bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast, bool clrt)
 {
 	clock_t timer = clock();
 
@@ -514,7 +601,7 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 
 	std::vector<int> nodeDraws(data->nodes_count, -1); // for animations
 
-	size_t materialOffset = materials.size();
+	size_t materialOffset = materialDb.Size();
 	assert(materialOffset > 0); // index 0 = dummy materials
 
 	for (size_t i = 0; i < data->nodes_count; ++i)
@@ -590,48 +677,8 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 	for (size_t i = 0; i < data->materials_count; ++i)
 	{
 		cgltf_material* material = &data->materials[i];
-		Material mat = {};
-
-		mat.baseColorFactor = vec4(1);
-		mat.pbrFactor = vec4(1, 1, 0, 1);
-		mat.workflow = 1;
-
-		if (material->has_pbr_specular_glossiness)
-		{
-			if (material->pbr_specular_glossiness.diffuse_texture.texture)
-				mat.albedoTexture = textureOffset + int(cgltf_texture_index(data, material->pbr_specular_glossiness.diffuse_texture.texture));
-
-			mat.baseColorFactor = vec4(material->pbr_specular_glossiness.diffuse_factor[0], material->pbr_specular_glossiness.diffuse_factor[1], material->pbr_specular_glossiness.diffuse_factor[2], material->pbr_specular_glossiness.diffuse_factor[3]);
-
-			if (material->pbr_specular_glossiness.specular_glossiness_texture.texture)
-				mat.pbrTexture = textureOffset + int(cgltf_texture_index(data, material->pbr_specular_glossiness.specular_glossiness_texture.texture));
-
-			mat.pbrFactor = vec4(material->pbr_specular_glossiness.specular_factor[0], material->pbr_specular_glossiness.specular_factor[1], material->pbr_specular_glossiness.specular_factor[2], material->pbr_specular_glossiness.glossiness_factor);
-			mat.workflow = 2;
-		}
-		else if (material->has_pbr_metallic_roughness)
-		{
-			if (material->pbr_metallic_roughness.base_color_texture.texture)
-				mat.albedoTexture = textureOffset + int(cgltf_texture_index(data, material->pbr_metallic_roughness.base_color_texture.texture));
-
-			mat.baseColorFactor = vec4(material->pbr_metallic_roughness.base_color_factor[0], material->pbr_metallic_roughness.base_color_factor[1], material->pbr_metallic_roughness.base_color_factor[2], material->pbr_metallic_roughness.base_color_factor[3]);
-
-			if (material->pbr_metallic_roughness.metallic_roughness_texture.texture)
-				mat.pbrTexture = textureOffset + int(cgltf_texture_index(data, material->pbr_metallic_roughness.metallic_roughness_texture.texture));
-
-			mat.pbrFactor = vec4(1, 1, material->pbr_metallic_roughness.metallic_factor, material->pbr_metallic_roughness.roughness_factor);
-			mat.workflow = 1;
-		}
-
-		if (material->normal_texture.texture)
-			mat.normalTexture = textureOffset + int(cgltf_texture_index(data, material->normal_texture.texture));
-
-		if (material->emissive_texture.texture)
-			mat.emissiveTexture = textureOffset + int(cgltf_texture_index(data, material->emissive_texture.texture));
-
-		mat.emissiveFactor = vec3(material->emissive_factor[0], material->emissive_factor[1], material->emissive_factor[2]);
-
-		materials.push_back(mat);
+		PBRMaterial pbrMaterial = BuildPbrMaterial(data, *material, textureOffset);
+		materialDb.Add(std::make_unique<PBRMaterial>(std::move(pbrMaterial)));
 	}
 
 	for (size_t i = 0; i < data->textures_count; ++i)
@@ -808,6 +855,83 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 	}
 
 	return true;
+}
+
+void SortSceneDrawsByMaterialKey(Scene& scene)
+{
+	std::vector<MeshDraw>& draws = scene.draws;
+	const std::vector<MaterialKey>& keys = scene.materialDb.materialKeys;
+	const size_t n = draws.size();
+	if (n <= 1)
+		return;
+
+	auto materialKeyForDraw = [&](uint32_t materialIndex) -> MaterialKey {
+		if (materialIndex >= keys.size())
+			return MaterialKey::DefaultPbrOpaque();
+		return keys[materialIndex];
+	};
+
+	std::vector<uint32_t> order(n);
+	for (size_t i = 0; i < n; ++i)
+		order[i] = uint32_t(i);
+
+	std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+		return materialKeyForDraw(draws[a].materialIndex) < materialKeyForDraw(draws[b].materialIndex);
+	});
+
+	std::vector<MeshDraw> sorted(n);
+	std::vector<uint32_t> oldToNew(n);
+	for (size_t k = 0; k < n; ++k)
+	{
+		const uint32_t oldIdx = order[k];
+		sorted[k] = draws[oldIdx];
+		oldToNew[oldIdx] = uint32_t(k);
+	}
+	draws.swap(sorted);
+
+	for (Animation& anim : scene.animations)
+	{
+		if (anim.drawIndex < oldToNew.size())
+			anim.drawIndex = oldToNew[anim.drawIndex];
+		else
+			LOGW("Animation drawIndex %u out of range after material sort; skipped remap", anim.drawIndex);
+	}
+}
+
+void RebuildMaterialDrawBatches(Scene& scene)
+{
+	std::vector<MeshDraw>& draws = scene.draws;
+	const std::vector<MaterialKey>& keys = scene.materialDb.materialKeys;
+
+	scene.drawBatches.clear();
+
+	if (draws.empty())
+		return;
+
+	auto materialKeyForDraw = [&](uint32_t materialIndex) -> MaterialKey {
+		if (materialIndex >= keys.size())
+			return MaterialKey::DefaultPbrOpaque();
+		return keys[materialIndex];
+	};
+
+	size_t batchStart = 0;
+	while (batchStart < draws.size())
+	{
+		const MaterialKey key = materialKeyForDraw(draws[batchStart].materialIndex);
+		size_t batchEnd = batchStart + 1;
+		while (batchEnd < draws.size() && materialKeyForDraw(draws[batchEnd].materialIndex) == key)
+			++batchEnd;
+
+		DrawBatch batch{};
+		batch.materialKey = key;
+		batch.firstDraw = uint32_t(batchStart);
+		batch.drawCount = uint32_t(batchEnd - batchStart);
+		scene.drawBatches.push_back(batch);
+
+		batchStart = batchEnd;
+	}
+
+	LOGI("Material draw batches: %d batches for %d draws", int(scene.drawBatches.size()), int(draws.size()));
 }
 
 Scene::Scene(const char* _path)

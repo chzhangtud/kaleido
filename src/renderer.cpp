@@ -1029,7 +1029,7 @@ void VulkanContext::InitResources()
 
 	resourceManager.CreateBuffer(mb, scene->geometry.meshes.size() * sizeof(Mesh), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	resourceManager.CreateBuffer(mtb, scene->materials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(mtb, scene->materialDb.gpuMaterials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	resourceManager.CreateBuffer(vb, scene->geometry.vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	resourceManager.CreateBuffer(ib, scene->geometry.indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT  | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -1044,7 +1044,7 @@ void VulkanContext::InitResources()
 	VkCommandBuffer initCommandBuffer = commandBuffers[0];
 
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mb, scratch, scene->geometry.meshes.data(), scene->geometry.meshes.size() * sizeof(Mesh));
-	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mtb, scratch, scene->materials.data(), scene->materials.size() * sizeof(Material));
+	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mtb, scratch, scene->materialDb.gpuMaterials.data(), scene->materialDb.gpuMaterials.size() * sizeof(Material));
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, vb, scratch, scene->geometry.vertices.data(), scene->geometry.vertices.size() * sizeof(Vertex));
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, ib, scratch, scene->geometry.indices.data(), scene->geometry.indices.size() * sizeof(uint32_t));
 
