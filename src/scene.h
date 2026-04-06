@@ -23,18 +23,28 @@ struct alignas(16) Meshlet
 	uint8_t padding;
 };
 
+// Must match `struct Material` in shaders/mesh.h (std430 SSBO layout).
 struct alignas(16) Material
 {
-	int albedoTexture;
-	int normalTexture;
-	int pbrTexture;
-	int emissiveTexture;
+	int32_t albedoTexture;
+	int32_t normalTexture;
+	int32_t pbrTexture;
+	int32_t emissiveTexture;
+	int32_t occlusionTexture;
+	int32_t texturePad[3];
 
 	vec4 baseColorFactor;
 	vec4 pbrFactor; // MR: (unused, unused, metallic, roughness), SG: (specular.rgb, glossiness)
-	vec3 emissiveFactor;
-	int workflow;   // 0: default, 1: metallic-roughness, 2: specular-glossiness fallback
+	float emissiveFactor[3];
+	int32_t workflow; // 0: default, 1: metallic-roughness, 2: specular-glossiness fallback
+
+	// x: glTF normal texture scale, y: occlusion strength, z: alpha cutoff (MASK), w: emissive strength (KHR)
+	vec4 shadingParams;
+	int32_t alphaMode; // 0 opaque, 1 mask, 2 blend (cgltf_alpha_mode)
+	int32_t trailingPad[3];
 };
+
+static_assert(sizeof(Material) == 112, "Material size must match GLSL std430 (see shaders/mesh.h)");
 
 enum class MaterialType : uint32_t
 {
@@ -197,6 +207,13 @@ struct Animation
 	std::vector<Keyframe> keyframes;
 };
 
+// glTF textures: file path / data URI in path, or embedded PNG-JPEG bytes (GLB bufferView) in embedded.
+struct SceneTextureSource
+{
+	std::string path;
+	std::vector<uint8_t> embedded;
+};
+
 struct Scene
 {
 	Scene(const char* _path);
@@ -205,7 +222,7 @@ struct Scene
 	std::vector<MeshDraw> draws;
 	std::vector<DrawBatch> drawBatches;
 	std::vector<Animation> animations;
-	std::vector<std::string> texturePaths;
+	std::vector<SceneTextureSource> sceneTextures;
 	vec3 sunDirection{ 1.0f };
 	uint32_t meshletVisibilityCount{ 0u };
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet{};
@@ -219,7 +236,7 @@ struct Scene
 };
 
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false, bool clrt = false);
-bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false, bool clrt = false);
+bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<SceneTextureSource>& sceneTextures, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false, bool clrt = false);
 
 void SortSceneDrawsByMaterialKey(Scene& scene);
 void RebuildMaterialDrawBatches(Scene& scene);

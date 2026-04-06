@@ -668,6 +668,39 @@ bool loadUncompressedImage(
 	return true;
 }
 
+bool loadImageFromMemory(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const Buffer& scratch, const void* data, size_t size)
+{
+	(void)physicalDevice;
+
+	if (!data || size == 0)
+	{
+		LOGE("loadImageFromMemory: empty buffer");
+		return false;
+	}
+
+	int texWidth, texHeight, texChannels;
+	stbi_uc* pixels = stbi_load_from_memory(static_cast<const stbi_uc*>(data), static_cast<int>(size), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
+	if (!pixels)
+	{
+		LOGE("Failed to load image from memory: %s", stbi_failure_reason());
+		return false;
+	}
+
+	size_t imageSize = static_cast<size_t>(texWidth) * static_cast<size_t>(texHeight) * 4u;
+	if (scratch.size < imageSize)
+	{
+		LOGE("Scratch buffer too small");
+		stbi_image_free(pixels);
+		return false;
+	}
+
+	memcpy(scratch.data, pixels, imageSize);
+	stbi_image_free(pixels);
+
+	return loadUncompressedImage(image, device, commandPool, commandBuffer, queue, memoryProperties, scratch, texWidth, texHeight, texChannels);
+}
+
 bool loadImage(Image& image, VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties, const Buffer& scratch, const char* path)
 {
 	const char* prefix_png = "data:image/png;base64,";

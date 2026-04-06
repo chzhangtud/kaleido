@@ -77,11 +77,17 @@ struct Material
 	uint normalTexture;
 	uint pbrTexture;
 	uint emissiveTexture;
+	uint occlusionTexture;
+	uint texturePad[3];
 
 	vec4 baseColorFactor;
 	vec4 pbrFactor; // MR: (unused, unused, metallic, roughness), SG: (specular.rgb, glossiness)
 	vec3 emissiveFactor;
-	uint workflow;  // 0: default, 1: metallic-roughness, 2: specular-glossiness fallback
+	uint workflow; // 0: default, 1: metallic-roughness, 2: specular-glossiness fallback
+
+	vec4 shadingParams; // x: normal scale, y: occlusion strength, z: alpha cutoff, w: emissive strength
+	uint alphaMode;     // 0 opaque, 1 mask, 2 blend
+	uint trailingPad[3];
 };
 
 struct MeshDraw

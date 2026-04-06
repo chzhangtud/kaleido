@@ -17,6 +17,8 @@ PBRMaterial PBRMaterial::CreateDefault()
 	material.data.baseColorFactor = vec4(1);
 	material.data.pbrFactor = vec4(1, 1, 0, 1);
 	material.data.workflow = 1;
+	material.data.shadingParams = vec4(1.f, 1.f, 0.5f, 1.f);
+	material.data.alphaMode = 0;
 	return material;
 }
 
@@ -462,14 +464,26 @@ static PBRMaterial BuildPbrMaterial(const cgltf_data* data, const cgltf_material
 	if (material.emissive_texture.texture)
 		mat.emissiveTexture = textureOffset + int(cgltf_texture_index(data, material.emissive_texture.texture));
 
-	mat.emissiveFactor = vec3(material.emissive_factor[0], material.emissive_factor[1], material.emissive_factor[2]);
+	if (material.occlusion_texture.texture)
+		mat.occlusionTexture = textureOffset + int(cgltf_texture_index(data, material.occlusion_texture.texture));
+
+	mat.emissiveFactor[0] = material.emissive_factor[0];
+	mat.emissiveFactor[1] = material.emissive_factor[1];
+	mat.emissiveFactor[2] = material.emissive_factor[2];
+
+	const float emissiveStrength = material.has_emissive_strength ? material.emissive_strength.emissive_strength : 1.f;
+	mat.shadingParams = vec4(material.normal_texture.scale,
+	    material.occlusion_texture.texture ? material.occlusion_texture.scale : 1.f,
+	    material.alpha_cutoff,
+	    emissiveStrength);
+	mat.alphaMode = int32_t(material.alpha_mode);
 
 	result.key = BuildPbrMaterialKey(material, mat.workflow);
 
 	return result;
 }
 
-bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<std::string>& texturePaths, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast, bool clrt)
+bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<SceneTextureSource>& sceneTextures, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast, bool clrt)
 {
 	clock_t timer = clock();
 
@@ -672,7 +686,7 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 		}
 	}
 
-	int textureOffset = 1 + int(texturePaths.size());
+	int textureOffset = 1 + int(sceneTextures.size());
 
 	for (size_t i = 0; i < data->materials_count; ++i)
 	{
@@ -686,29 +700,52 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 		cgltf_texture* texture = &data->textures[i];
 		assert(texture->image);
 
-		// TODO: the following may cause crash when buffer view is used instead of uri.
 		cgltf_image* image = texture->image;
-		assert(image->uri);
+		SceneTextureSource tex;
 
-		fs::path scenePath = fs::path(path);
-		fs::path basePath = scenePath.parent_path();
-
-		std::string uri = image->uri;
-
-		const char* prefix_png = "data:image/png;base64,";
-		const char* prefix_jpg = "data:image/jpeg;base64,";
-		if (strncmp(uri.c_str(), prefix_png, strlen(prefix_png)) == 0 || strncmp(uri.c_str(), prefix_jpg, strlen(prefix_jpg)) == 0)
+		if (image->buffer_view)
 		{
-			texturePaths.emplace_back(uri);
+			const uint8_t* ptr = cgltf_buffer_view_data(image->buffer_view);
+			const cgltf_size sz = image->buffer_view->size;
+			if (!ptr || sz == 0)
+			{
+				LOGE("glTF texture %zu: image bufferView has no data (scene %s)", i, path);
+			}
+			else
+			{
+				tex.embedded.assign(ptr, ptr + sz);
+			}
+			tex.path = std::string(path) + " [embedded image " + std::to_string(i) + "]";
+		}
+		else if (image->uri)
+		{
+			fs::path scenePath = fs::path(path);
+			fs::path basePath = scenePath.parent_path();
+
+			std::string uri = image->uri;
+
+			const char* prefix_png = "data:image/png;base64,";
+			const char* prefix_jpg = "data:image/jpeg;base64,";
+			if (strncmp(uri.c_str(), prefix_png, strlen(prefix_png)) == 0 || strncmp(uri.c_str(), prefix_jpg, strlen(prefix_jpg)) == 0)
+			{
+				tex.path = std::move(uri);
+			}
+			else
+			{
+				uri.resize(cgltf_decode_uri(&uri[0]));
+				fs::path fullPath = basePath / uri;
+				std::string texturePath = fullPath.string();
+				std::replace(texturePath.begin(), texturePath.end(), '\\', '/');
+				tex.path = std::move(texturePath);
+			}
 		}
 		else
 		{
-			uri.resize(cgltf_decode_uri(&uri[0]));
-			fs::path fullPath = basePath / uri;
-			std::string texturePath = fullPath.string();
-			std::replace(texturePath.begin(), texturePath.end(), '\\', '/');
-			texturePaths.emplace_back(texturePath);
+			LOGE("glTF texture %zu: image has neither uri nor bufferView (scene %s)", i, path);
+			tex.path = std::string(path) + " [invalid image " + std::to_string(i) + "]";
 		}
+
+		sceneTextures.emplace_back(std::move(tex));
 	}
 
 	std::vector<cgltf_animation_sampler*> samplersT(data->nodes_count);

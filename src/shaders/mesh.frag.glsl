@@ -64,9 +64,16 @@ void main()
 	if (material.albedoTexture > 0)
 		albedo *= fromsrgb(texture(SAMP(material.albedoTexture), uv));
 
+	if (material.occlusionTexture > 0)
+	{
+		float occ = texture(SAMP(material.occlusionTexture), uv).r;
+		albedo.rgb *= mix(1.0, occ, material.shadingParams.y);
+	}
+
 	vec3 nmap = vec3(0, 0, 1);
 	if (material.normalTexture > 0)
 		nmap = texture(SAMP(material.normalTexture), uv).rgb * 2 - 1;
+	nmap.xy *= material.shadingParams.x;
 
 	vec4 pbrSample = vec4(1.0);
 	if (material.pbrTexture > 0)
@@ -78,7 +85,7 @@ void main()
 			pbrSample = fromsrgb(texture(SAMP(material.pbrTexture), uv));
 	}
 
-	vec3 emissive = material.emissiveFactor;
+	vec3 emissive = material.emissiveFactor * material.shadingParams.w;
 	if (material.emissiveTexture > 0)
 		emissive *= fromsrgb(texture(SAMP(material.emissiveTexture), uv).rgb);
 
@@ -112,8 +119,19 @@ void main()
 
 	gbuffer[0] = vec4(tosrgb(albedo).rgb, log2(1 + emissivef) / 5);
 	gbuffer[1] = vec4(encNormal, roughness, metallic);
-	if (POST && albedo.a < 0.5)
-		discard;
+	if (POST)
+	{
+		if (material.alphaMode == 1u)
+		{
+			if (albedo.a < material.shadingParams.z)
+				discard;
+		}
+		else if (material.alphaMode == 2u)
+		{
+			if (albedo.a < 0.5)
+				discard;
+		}
+	}
 
 #if DEBUG
 	uint mhash = hash(drawId);

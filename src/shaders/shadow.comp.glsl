@@ -103,7 +103,8 @@ bool shadowTraceTransparent(vec3 wpos, vec3 dir, uint rayflags)
 		if (material.albedoTexture > 0)
 			alpha = textureLod(SAMP(material.albedoTexture), uv, 0).a;
 
-		if (alpha >= 0.5)
+		float alphaTest = (material.alphaMode == 1u) ? material.shadingParams.z : 0.5;
+		if (alpha >= alphaTest)
 			rayQueryConfirmIntersectionEXT(rq);
 	}
 	return rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT;

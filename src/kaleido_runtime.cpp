@@ -71,7 +71,7 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
 		{
 			glm::vec3 euler(0.f);
-			if (!loadScene(targetScene->geometry, targetScene->materialDb, targetScene->draws, targetScene->texturePaths, targetScene->animations, targetScene->camera, targetScene->sunDirection, config.modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled))
+			if (!loadScene(targetScene->geometry, targetScene->materialDb, targetScene->draws, targetScene->sceneTextures, targetScene->animations, targetScene->camera, targetScene->sunDirection, config.modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled))
 			{
 				LOGE("Error: scene %s failed to load", config.modelPath.c_str());
 				return false;
@@ -89,12 +89,16 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 	double imageTimer = glfwGetTime();
 #endif
 
-	for (size_t i = 0; i < targetScene->texturePaths.size(); ++i)
+	for (size_t i = 0; i < targetScene->sceneTextures.size(); ++i)
 	{
+		const SceneTextureSource& tex = targetScene->sceneTextures[i];
 		Image image;
-		if (!loadImage(image, vContext->device, vContext->physicalDevice, vContext->commandPools[0], vContext->commandBuffers[0], vContext->queue, vContext->memoryProperties, vContext->scratch, targetScene->texturePaths[i].c_str()))
+		const bool ok = tex.embedded.empty()
+		    ? loadImage(image, vContext->device, vContext->physicalDevice, vContext->commandPools[0], vContext->commandBuffers[0], vContext->queue, vContext->memoryProperties, vContext->scratch, tex.path.c_str())
+		    : loadImageFromMemory(image, vContext->device, vContext->physicalDevice, vContext->commandPools[0], vContext->commandBuffers[0], vContext->queue, vContext->memoryProperties, vContext->scratch, tex.embedded.data(), tex.embedded.size());
+		if (!ok)
 		{
-			LOGE("Error: image %s failed to load", targetScene->texturePaths[i].c_str());
+			LOGE("Error: texture %zu (%s) failed to load", i, tex.path.c_str());
 			return false;
 		}
 
@@ -108,10 +112,10 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 	LOGI("Loaded %d textures (%.2f MB) in %.2f sec", int(targetScene->images.size()), double(imageMemory) / 1e6, glfwGetTime() - imageTimer);
 #endif
 
-	uint32_t descriptorCount = uint32_t(targetScene->texturePaths.size() + 1);
+	uint32_t descriptorCount = uint32_t(targetScene->sceneTextures.size() + 1);
 	targetScene->textureSet = createDescriptorArray(vContext->device, vContext->textureSetLayout, descriptorCount);
 
-	for (size_t i = 0; i < targetScene->texturePaths.size(); ++i)
+	for (size_t i = 0; i < targetScene->sceneTextures.size(); ++i)
 	{
 		VkDescriptorImageInfo imageInfo = {};
 		imageInfo.imageView = targetScene->images[i].imageView;
