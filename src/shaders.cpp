@@ -1,4 +1,4 @@
-﻿#include "shaders.h"
+#include "shaders.h"
 #include "config.h"
 #include <stdio.h>
 #include <filesystem>
@@ -627,7 +627,7 @@ std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice devi
 	return std::make_pair(pool, set);
 }
 
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, std::vector<PushConst> pushconstants)
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, std::vector<PushConst> pushconstants, VkPolygonMode polygonMode)
 {
 	VkGraphicsPipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
 
@@ -702,10 +702,9 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 
 	VkPipelineRasterizationStateCreateInfo rasterizationState = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
 	rasterizationState.lineWidth = 1.f;
-	//rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
+	rasterizationState.polygonMode = polygonMode;
 	rasterizationState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-	// rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
-	rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
+	rasterizationState.cullMode = polygonMode == VK_POLYGON_MODE_LINE ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
 	rasterizationState.depthBiasEnable = true;
 	createInfo.pRasterizationState = &rasterizationState;
 

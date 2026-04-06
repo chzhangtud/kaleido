@@ -483,9 +483,56 @@ static PBRMaterial BuildPbrMaterial(const cgltf_data* data, const cgltf_material
 	return result;
 }
 
-bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<SceneTextureSource>& sceneTextures, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast, bool clrt)
+static void FillGltfDocumentOutline(cgltf_data* data, GltfDocumentOutline& out)
+{
+	out = GltfDocumentOutline{};
+	out.loaded = true;
+
+	out.nodes.resize(data->nodes_count);
+	for (cgltf_size i = 0; i < data->nodes_count; ++i)
+	{
+		const cgltf_node& n = data->nodes[i];
+		GltfNodeOutline& node = out.nodes[i];
+		node.name = (n.name && n.name[0]) ? n.name : ("Node " + std::to_string(i));
+		if (n.mesh)
+			node.meshIndex = int32_t(cgltf_mesh_index(data, n.mesh));
+		node.children.reserve(n.children_count);
+		for (cgltf_size c = 0; c < n.children_count; ++c)
+			node.children.push_back(uint32_t(cgltf_node_index(data, n.children[c])));
+	}
+
+	out.scenes.resize(data->scenes_count);
+	for (cgltf_size s = 0; s < data->scenes_count; ++s)
+	{
+		const cgltf_scene& sc = data->scenes[s];
+		GltfSceneOutline& sceneOut = out.scenes[s];
+		sceneOut.name = (sc.name && sc.name[0]) ? sc.name : ("Scene " + std::to_string(s));
+		sceneOut.rootNodes.reserve(sc.nodes_count);
+		for (cgltf_size r = 0; r < sc.nodes_count; ++r)
+			sceneOut.rootNodes.push_back(uint32_t(cgltf_node_index(data, sc.nodes[r])));
+	}
+
+	if (data->scene)
+		out.defaultSceneIndex = int32_t(cgltf_scene_index(data, data->scene));
+	else if (data->scenes_count > 0)
+		out.defaultSceneIndex = 0;
+	else
+		out.defaultSceneIndex = -1;
+
+	out.meshNames.resize(data->meshes_count);
+	for (cgltf_size i = 0; i < data->meshes_count; ++i)
+	{
+		const cgltf_mesh& m = data->meshes[i];
+		out.meshNames[i] = (m.name && m.name[0]) ? m.name : ("Mesh " + std::to_string(i));
+	}
+}
+
+bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<SceneTextureSource>& sceneTextures, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast, bool clrt, GltfDocumentOutline* outGltfDocument)
 {
 	clock_t timer = clock();
+
+	if (outGltfDocument)
+		*outGltfDocument = GltfDocumentOutline{};
 
 #if defined(__ANDROID__)
 	// define Android callback
@@ -648,11 +695,10 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 
 				draw.materialIndex = material ? materialOffset + int(cgltf_material_index(data, material)) : 0;
 
-				if (material && material->alpha_mode != cgltf_alpha_mode_opaque)
+				// postPass must match renderer cull/render passes: only 0 (opaque) and 1 (GBuffer Post) are implemented.
+				// Transmission (e.g. glass spheres) was previously 2 and never passed drawcull (drawData.postPass != cullData.postPass).
+				if (material && (material->alpha_mode != cgltf_alpha_mode_opaque || material->has_transmission))
 					draw.postPass = 1;
-
-				if (material && material->has_transmission)
-					draw.postPass = 2;
 
 				nodeDraws[i] = int(draws.size());
 
@@ -890,6 +936,9 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 
 		LOGI("Meshlets: %d meshlets, %d triangles, %d vertex refs", int(geometry.meshlets.size()), int(meshletTris), int(meshletVtxs));
 	}
+
+	if (outGltfDocument)
+		FillGltfDocumentOutline(data, *outGltfDocument);
 
 	return true;
 }

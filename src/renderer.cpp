@@ -84,6 +84,81 @@ bool ShowOpenSceneDialog(std::string& outPath)
 }
 #endif
 
+static std::string BuildGltfNodeLabel(const GltfDocumentOutline& doc, const GltfNodeOutline& node)
+{
+	std::string label = node.name;
+	if (node.meshIndex >= 0)
+	{
+		label += " [mesh ";
+		label += std::to_string(node.meshIndex);
+		if (size_t(node.meshIndex) < doc.meshNames.size())
+		{
+			label += ": ";
+			label += doc.meshNames[size_t(node.meshIndex)];
+		}
+		label += "]";
+	}
+	return label;
+}
+
+static void DrawGltfOutlineNode(const GltfDocumentOutline& doc, uint32_t nodeIdx)
+{
+	if (size_t(nodeIdx) >= doc.nodes.size())
+		return;
+	const GltfNodeOutline& node = doc.nodes[nodeIdx];
+	const std::string label = BuildGltfNodeLabel(doc, node);
+
+	ImGui::PushID(int(nodeIdx));
+	if (node.children.empty())
+		ImGui::BulletText("%s", label.c_str());
+	else if (ImGui::TreeNodeEx("gnode", ImGuiTreeNodeFlags_None, "%s", label.c_str()))
+	{
+		for (uint32_t c : node.children)
+			DrawGltfOutlineNode(doc, c);
+		ImGui::TreePop();
+	}
+	ImGui::PopID();
+}
+
+static void DrawGltfDocumentTree(const GltfDocumentOutline& doc)
+{
+	if (!doc.loaded)
+	{
+		ImGui::TextDisabled("(Load a .gltf / .glb to view the asset hierarchy.)");
+		return;
+	}
+
+	if (ImGui::TreeNode("gltf_root", "glTF asset"))
+	{
+		if (!doc.scenes.empty())
+		{
+			if (ImGui::TreeNode("gltf_scenes", "Scenes (%d)", int(doc.scenes.size())))
+			{
+				for (size_t si = 0; si < doc.scenes.size(); ++si)
+				{
+					const GltfSceneOutline& sc = doc.scenes[si];
+					ImGui::PushID(int(si));
+					std::string scLabel = sc.name;
+					if (int(si) == doc.defaultSceneIndex)
+						scLabel += " (default)";
+					if (ImGui::TreeNodeEx("gsc", ImGuiTreeNodeFlags_None, "%s", scLabel.c_str()))
+					{
+						for (uint32_t root : sc.rootNodes)
+							DrawGltfOutlineNode(doc, root);
+						ImGui::TreePop();
+					}
+					ImGui::PopID();
+				}
+				ImGui::TreePop();
+			}
+		}
+		else
+			ImGui::TextDisabled("No scenes in file.");
+
+		ImGui::TreePop();
+	}
+}
+
 // Halton low-discrepancy sequence in [0, 1) for subpixel jitter (bases 2 and 3).
 static float halton(uint32_t index, uint32_t base)
 {
@@ -600,6 +675,12 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	graphicsFamily = getGraphicsFamilyIndex(physicalDevice);
 	assert(graphicsFamily != VK_QUEUE_FAMILY_IGNORED);
 
+	{
+		VkPhysicalDeviceFeatures pdf{};
+		vkGetPhysicalDeviceFeatures(physicalDevice, &pdf);
+		wireframeDebugSupported = (pdf.fillModeNonSolid == VK_TRUE);
+	}
+
 	device = createDevice(instance, physicalDevice, graphicsFamily, pushDescriptorSupported, meshShadingEnabled, raytracingSupported, clusterrtSupported);
 	assert(device);
 
@@ -737,6 +818,14 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		replace(meshPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram));
 		replace(meshpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }));
 
+		if (wireframeDebugSupported)
+		{
+			replace(meshWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
+			    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+			replace(meshpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
+			    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+		}
+
 		if (meshShadingSupported)
 		{
 			replace(meshtaskPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_TRUE } }));
@@ -744,6 +833,20 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 			replace(meshtaskpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram, { { /* LATE= */ VK_TRUE }, { /* TASK= */ VK_TRUE }, { /* POST= */ VK_TRUE } }));
 			replace(clusterPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram));
 			replace(clusterpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }));
+
+			if (wireframeDebugSupported)
+			{
+				replace(meshtaskWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
+				    { { VK_FALSE }, { VK_TRUE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				replace(meshtasklateWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
+				    { { VK_TRUE }, { VK_TRUE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				replace(meshtaskpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
+				    { { VK_TRUE }, { VK_TRUE }, { VK_TRUE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				replace(clusterWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram,
+				    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				replace(clusterpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram,
+				    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+			}
 		}
 
 		replace(finalPipeline, createComputePipeline(device, pipelineCache, finalProgram));
@@ -2032,7 +2135,9 @@ bool VulkanContext::DrawFrame()
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-		vkCmdSetCullMode(commandBuffer, postPass == 0 ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+		const bool useDebugWireframe = debugWireframeMode && wireframeDebugSupported;
+		const VkCullModeFlags passCull = (postPass == 0 && !useDebugWireframe) ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+		vkCmdSetCullMode(commandBuffer, passCull);
 		vkCmdSetDepthBias(commandBuffer, postPass == 0 ? 0 : 16, 0, postPass == 0 ? 0 : 1);
 
 		Globals passGlobals = globals;
@@ -2040,7 +2145,9 @@ bool VulkanContext::DrawFrame()
 
 		if (clusterSubmit)
 		{
-			vkCmdBindPipeline(commandBuffer, clusterProgram.bindPoint, postPass >= 1 ? clusterpostPipeline : clusterPipeline);
+			const VkPipeline clusterPl = postPass >= 1 ? (useDebugWireframe ? clusterpostWirePipeline : clusterpostPipeline)
+			                                              : (useDebugWireframe ? clusterWirePipeline : clusterPipeline);
+			vkCmdBindPipeline(commandBuffer, clusterProgram.bindPoint, clusterPl);
 
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid->imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mdb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
@@ -2064,8 +2171,10 @@ bool VulkanContext::DrawFrame()
 		}
 		else if (taskSubmit)
 		{
-			vkCmdBindPipeline(commandBuffer, meshtaskProgram.bindPoint, postPass >= 1 ? meshtaskpostPipeline : late ? meshtasklatePipeline
-			                                                                                                        : meshtaskPipeline);
+			const VkPipeline taskPl = postPass >= 1 ? (useDebugWireframe ? meshtaskpostWirePipeline : meshtaskpostPipeline)
+			                                          : late ? (useDebugWireframe ? meshtasklateWirePipeline : meshtasklatePipeline)
+			                                                 : (useDebugWireframe ? meshtaskWirePipeline : meshtaskPipeline);
+			vkCmdBindPipeline(commandBuffer, meshtaskProgram.bindPoint, taskPl);
 
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid->imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mdb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
@@ -2090,7 +2199,9 @@ bool VulkanContext::DrawFrame()
 		}
 		else
 		{
-			vkCmdBindPipeline(commandBuffer, meshProgram.bindPoint, postPass >= 1 ? meshpostPipeline : meshPipeline);
+			const VkPipeline meshPl = postPass >= 1 ? (useDebugWireframe ? meshpostWirePipeline : meshpostPipeline)
+			                                        : (useDebugWireframe ? meshWirePipeline : meshPipeline);
+			vkCmdBindPipeline(commandBuffer, meshProgram.bindPoint, meshPl);
 
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), textureSampler, mtb.buffer };
 
@@ -2826,6 +2937,17 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			ImGui::SetNextItemWidth(220.f);
 			ImGui::SliderInt("Debug Info Mode (0=off, 1=on, 2=verbose)", &debugGuiMode, 0, 2);
 			ImGui::Checkbox("Enable Debug Sleep", &debugSleep);
+			if (!wireframeDebugSupported)
+			{
+				debugWireframeMode = false;
+				ImGui::BeginDisabled();
+			}
+			ImGui::Checkbox("Debug wireframe (black mesh edges)", &debugWireframeMode);
+			if (!wireframeDebugSupported)
+			{
+				ImGui::EndDisabled();
+				ImGui::TextDisabled("Wireframe requires GPU fillModeNonSolid.");
+			}
 			ImGui::Text("Cluster Ray Tracing Enabled: %s", clusterRTEnabled ? "ON" : "OFF");
 		}
 
@@ -2913,6 +3035,12 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 				ImVec4 color = assetLoadStatusIsError ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f) : ImVec4(0.35f, 1.0f, 0.35f, 1.0f);
 				ImGui::TextColored(color, "%s", assetLoadStatus.c_str());
 			}
+
+			ImGui::Spacing();
+			ImGui::Separator();
+			ImGui::Spacing();
+			if (scene)
+				DrawGltfDocumentTree(scene->gltfDocument);
 		}
 
 		ImGui::End();
@@ -2990,6 +3118,17 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 		ImGui::Checkbox("Enable Animation", &animationEnabled);
 		ImGui::Text("Cluster Ray Tracing Enabled: %s", clusterRTEnabled ? "ON" : "OFF");
 		ImGui::Checkbox("Enable Debug Sleep", &debugSleep);
+		if (!wireframeDebugSupported)
+		{
+			debugWireframeMode = false;
+			ImGui::BeginDisabled();
+		}
+		ImGui::Checkbox("Debug wireframe (black mesh edges)", &debugWireframeMode);
+		if (!wireframeDebugSupported)
+		{
+			ImGui::EndDisabled();
+			ImGui::TextDisabled("Wireframe requires GPU fillModeNonSolid.");
+		}
 		ImGui::End();
 	}
 

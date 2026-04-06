@@ -214,6 +214,29 @@ struct SceneTextureSource
 	std::vector<uint8_t> embedded;
 };
 
+// Captured from cgltf for editor UI (scene node tree + mesh names for labels).
+struct GltfNodeOutline
+{
+	std::string name;
+	int32_t meshIndex = -1;
+	std::vector<uint32_t> children;
+};
+
+struct GltfSceneOutline
+{
+	std::string name;
+	std::vector<uint32_t> rootNodes;
+};
+
+struct GltfDocumentOutline
+{
+	bool loaded = false;
+	std::vector<GltfSceneOutline> scenes;
+	int32_t defaultSceneIndex = -1;
+	std::vector<GltfNodeOutline> nodes;
+	std::vector<std::string> meshNames;
+};
+
 struct Scene
 {
 	Scene(const char* _path);
@@ -223,6 +246,7 @@ struct Scene
 	std::vector<DrawBatch> drawBatches;
 	std::vector<Animation> animations;
 	std::vector<SceneTextureSource> sceneTextures;
+	GltfDocumentOutline gltfDocument;
 	vec3 sunDirection{ 1.0f };
 	uint32_t meshletVisibilityCount{ 0u };
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet{};
@@ -236,7 +260,7 @@ struct Scene
 };
 
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false, bool clrt = false);
-bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<SceneTextureSource>& sceneTextures, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false, bool clrt = false);
+bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<SceneTextureSource>& sceneTextures, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false, bool clrt = false, GltfDocumentOutline* outGltfDocument = nullptr);
 
 void SortSceneDrawsByMaterialKey(Scene& scene);
 void RebuildMaterialDrawBatches(Scene& scene);

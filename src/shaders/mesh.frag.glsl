@@ -16,6 +16,7 @@ layout(push_constant) uniform block
 };
 
 layout(constant_id = 2) const bool POST = false;
+layout(constant_id = 3) const bool WIRE_DEBUG = false;
 layout(binding = 1) readonly buffer Draws
 {
 	MeshDraw draws[];
@@ -57,6 +58,31 @@ void main()
 {
     MeshDraw meshDraw = draws[drawId];
 	Material material = materials[meshDraw.materialIndex];
+
+	if (WIRE_DEBUG)
+	{
+		if (POST)
+		{
+			vec4 albedo = material.baseColorFactor;
+			if (material.albedoTexture > 0)
+				albedo *= fromsrgb(texture(SAMP(material.albedoTexture), uv));
+			if (material.alphaMode == 1u)
+			{
+				if (albedo.a < material.shadingParams.z)
+					discard;
+			}
+			else if (material.alphaMode == 2u)
+			{
+				if (albedo.a < 0.5)
+					discard;
+			}
+		}
+		vec3 nrm = normalize(normal);
+		vec2 encN = encodeOct(nrm) * 0.5 + 0.5;
+		gbuffer[0] = vec4(0.0, 0.0, 0.0, 0.0);
+		gbuffer[1] = vec4(encN, 0.045, 0.0);
+		return;
+	}
 
 	float deband = gradientNoise(gl_FragCoord.xy) * 2 - 1;
 

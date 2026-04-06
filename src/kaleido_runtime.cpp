@@ -51,6 +51,7 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 	// material index 0 is always dummy
 	targetScene->materialDb.Clear();
 	targetScene->materialDb.Add(std::make_unique<PBRMaterial>(PBRMaterial::CreateDefault()));
+	targetScene->gltfDocument = GltfDocumentOutline{};
 
 	targetScene->camera.position = { 14.5f, 3.f, 10.f };
 	targetScene->camera.orientation = glm::radians(glm::vec3(-5.f, -220.f, 0.f));
@@ -71,7 +72,7 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
 		{
 			glm::vec3 euler(0.f);
-			if (!loadScene(targetScene->geometry, targetScene->materialDb, targetScene->draws, targetScene->sceneTextures, targetScene->animations, targetScene->camera, targetScene->sunDirection, config.modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled))
+			if (!loadScene(targetScene->geometry, targetScene->materialDb, targetScene->draws, targetScene->sceneTextures, targetScene->animations, targetScene->camera, targetScene->sunDirection, config.modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled, &targetScene->gltfDocument))
 			{
 				LOGE("Error: scene %s failed to load", config.modelPath.c_str());
 				return false;

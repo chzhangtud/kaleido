@@ -324,11 +324,18 @@ public:
 	VkPipeline depthreducePipeline = 0;
 	VkPipeline meshPipeline = 0;
 	VkPipeline meshpostPipeline = 0;
+	VkPipeline meshWirePipeline = 0;
+	VkPipeline meshpostWirePipeline = 0;
 	VkPipeline meshtaskPipeline = 0;
 	VkPipeline meshtasklatePipeline = 0;
 	VkPipeline meshtaskpostPipeline = 0;
+	VkPipeline meshtaskWirePipeline = 0;
+	VkPipeline meshtasklateWirePipeline = 0;
+	VkPipeline meshtaskpostWirePipeline = 0;
 	VkPipeline clusterPipeline = 0;
 	VkPipeline clusterpostPipeline = 0;
+	VkPipeline clusterWirePipeline = 0;
+	VkPipeline clusterpostWirePipeline = 0;
 	VkPipeline finalPipeline = 0;
 	VkPipeline taaPipeline = 0;
 	VkPipeline shadowlqPipeline = 0;
@@ -415,6 +422,8 @@ public:
 	bool raytracingSupported{ false };
 	bool clusterrtSupported = false;
 	bool pushDescriptorSupported{ false };
+	bool wireframeDebugSupported{ false };
+	bool debugWireframeMode{ false };
 	bool dvbCleared{ false };
 	bool mvbCleared{ false };
 
