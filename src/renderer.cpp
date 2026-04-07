@@ -1527,8 +1527,8 @@ bool VulkanContext::DrawFrame()
 			resourceManager.ReleaseTexture(shadowTargetHandle);
 		if (shadowblurTargetHandle.IsValid())
 			resourceManager.ReleaseTexture(shadowblurTargetHandle);
-		if (lightingTempHandle.IsValid())
-			resourceManager.ReleaseTexture(lightingTempHandle);
+		if (sceneColorHDRHandle.IsValid())
+			resourceManager.ReleaseTexture(sceneColorHDRHandle);
 
 		for (int ti = 0; ti < 2; ++ti)
 			if (taaHistoryHandles[ti].IsValid())
@@ -1591,13 +1591,13 @@ bool VulkanContext::DrawFrame()
 		shadowTargetHandle = resourceManager.CreateTexture(shadowDesc, /* transient= */ false);
 		shadowblurTargetHandle = resourceManager.CreateTexture(shadowDesc, /* transient= */ false);
 
-		RGTextureDesc litDesc{};
-		litDesc.width = desiredRenderWidth;
-		litDesc.height = desiredRenderHeight;
-		litDesc.mipLevels = 1;
-		litDesc.format = TextureFormat::RGBA8_UNorm;
-		litDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
-		lightingTempHandle = resourceManager.CreateTexture(litDesc, /* transient= */ false);
+		RGTextureDesc sceneColorDesc{};
+		sceneColorDesc.width = desiredRenderWidth;
+		sceneColorDesc.height = desiredRenderHeight;
+		sceneColorDesc.mipLevels = 1;
+		sceneColorDesc.format = TextureFormat::RGBA8_UNorm;
+		sceneColorDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
+		sceneColorHDRHandle = resourceManager.CreateTexture(sceneColorDesc, /* transient= */ false);
 
 		RGTextureDesc taaDesc{};
 		taaDesc.width = desiredRenderWidth;
@@ -2370,7 +2370,7 @@ bool VulkanContext::DrawFrame()
 			pyramid(6);
 		});
 
-	rg.addPass("GBuffer Late",
+	rg.addPass("GBuffer Opaque",
 		[&](RGPassBuilder& builder)
 		{
 			builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
@@ -2380,25 +2380,8 @@ bool VulkanContext::DrawFrame()
 		},
 		[&](RGPassContext&)
 		{
-			cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 8, "late cull", /* late= */ true);
-			render(/* late= */ true, clearColors, depthClear, 1, 10, "late render");
-		});
-
-	rg.addPass("GBuffer Post",
-		[&](RGPassBuilder& builder)
-		{
-			builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
-			for (uint32_t i = 0; i < gbufferCount; ++i)
-				builder.writeTexture(gbufferTargetHandles[i], ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
-			builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
-		},
-		[&](RGPassContext&)
-		{
-			if (scene->meshPostPasses >> 1)
-			{
-				cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "post cull", /* late= */ true, /* postPass= */ 1);
-				render(/* late= */ true, clearColors, depthClear, 2, 14, "post render", /* postPass= */ 1);
-			}
+			cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 8, "opaque cull", /* late= */ true);
+			render(/* late= */ true, clearColors, depthClear, 1, 10, "opaque render");
 		});
 
 	rg.addPass("Shadow Pass",
@@ -2531,61 +2514,85 @@ bool VulkanContext::DrawFrame()
 			}
 		});
 
-	rg.addPass("Lighting Pass",
+	const auto lightingPassSetup = [&](RGPassBuilder& builder)
+	{
+		builder.readTexture(gbufferTargetHandles[0], ResourceState::ShaderRead);
+		builder.readTexture(gbufferTargetHandles[1], ResourceState::ShaderRead);
+		builder.readTexture(depthTargetHandle, ResourceState::ShaderRead);
+		builder.readTexture(shadowTargetHandle, ResourceState::ShaderRead);
+		if (taaEnabled)
+			builder.writeTexture(sceneColorHDRHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+		else
+			builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+	};
+
+	const auto lightingPassExecute = [&](RGPassContext& ctx)
+	{
+		Image* shadowTarget = ctx.resourceManager->GetTexture(shadowTargetHandle);
+		assert(shadowTarget);
+		Image* sceneColorHDR = taaEnabled ? ctx.resourceManager->GetTexture(sceneColorHDRHandle) : nullptr;
+		if (taaEnabled)
+			assert(sceneColorHDR);
+
+		uint32_t timestamp = TS_ShadeBegin;
+
+		vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
+
+		vkCmdBindPipeline(ctx.commandBuffer, finalProgram.bindPoint, finalPipeline);
+
+		DescriptorInfo descriptors[] = {
+			{ taaEnabled ? sceneColorHDR->imageView : finalOutputImageView, VK_IMAGE_LAYOUT_GENERAL },
+			{ readSampler, gbufferTargets[0]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+			{ readSampler, gbufferTargets[1]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+			{ readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+			{ readSampler, shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }
+		};
+
+		ShadeData shadeData = {};
+		shadeData.cameraPosition = scene->camera.position;
+		shadeData.sunDirection = scene->sunDirection;
+		shadeData.shadowEnabled = shadowEnabled;
+		shadeData.inverseViewProjection = inverseViewProjection;
+		shadeData.imageSize = vec2(float(renderWidth), float(renderHeight));
+
+		if (pushDescriptorSupported)
+		{
+			dispatch(ctx.commandBuffer, finalProgram, renderWidth, renderHeight, shadeData, descriptors);
+		}
+		else
+		{
+			vkUpdateDescriptorSetWithTemplateKHR(device, finalProgram.descriptorSets[frameOffset], finalProgram.updateTemplate, descriptors);
+			vkCmdBindDescriptorSets(ctx.commandBuffer, finalProgram.bindPoint, finalProgram.layout, 0, 1, &finalProgram.descriptorSets[frameOffset], 0, nullptr);
+			vkCmdPushConstants(ctx.commandBuffer, finalProgram.layout, finalProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
+			vkCmdDispatch(ctx.commandBuffer, getGroupCount(renderWidth, finalProgram.localSizeX), getGroupCount(renderHeight, finalProgram.localSizeY), 1);
+		}
+
+		vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
+	};
+
+	// With TAA: opaque-lit buffer must be computed before transparency (refraction background). Without TAA: keep legacy order (shade after transparency).
+	if (taaEnabled)
+		rg.addPass("Lighting Pass", lightingPassSetup, lightingPassExecute);
+
+	rg.addPass("GBuffer Transparency",
 		[&](RGPassBuilder& builder)
 		{
-			builder.readTexture(gbufferTargetHandles[0], ResourceState::ShaderRead);
-			builder.readTexture(gbufferTargetHandles[1], ResourceState::ShaderRead);
-			builder.readTexture(depthTargetHandle, ResourceState::ShaderRead);
-			builder.readTexture(shadowTargetHandle, ResourceState::ShaderRead);
-			if (taaEnabled)
-				builder.writeTexture(lightingTempHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-			else
-				builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+			builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
+			for (uint32_t i = 0; i < gbufferCount; ++i)
+				builder.writeTexture(gbufferTargetHandles[i], ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
+			builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
 		},
-		[&](RGPassContext& ctx)
+		[&](RGPassContext&)
 		{
-			Image* shadowTarget = ctx.resourceManager->GetTexture(shadowTargetHandle);
-			assert(shadowTarget);
-			Image* lightingTemp = taaEnabled ? ctx.resourceManager->GetTexture(lightingTempHandle) : nullptr;
-			if (taaEnabled)
-				assert(lightingTemp);
-
-			uint32_t timestamp = TS_ShadeBegin;
-
-			vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
-
-			vkCmdBindPipeline(ctx.commandBuffer, finalProgram.bindPoint, finalPipeline);
-
-			DescriptorInfo descriptors[] = {
-				{ taaEnabled ? lightingTemp->imageView : finalOutputImageView, VK_IMAGE_LAYOUT_GENERAL },
-				{ readSampler, gbufferTargets[0]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
-				{ readSampler, gbufferTargets[1]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
-				{ readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
-				{ readSampler, shadowTarget->imageView, VK_IMAGE_LAYOUT_GENERAL }
-			};
-
-			ShadeData shadeData = {};
-			shadeData.cameraPosition = scene->camera.position;
-			shadeData.sunDirection = scene->sunDirection;
-			shadeData.shadowEnabled = shadowEnabled;
-			shadeData.inverseViewProjection = inverseViewProjection;
-			shadeData.imageSize = vec2(float(renderWidth), float(renderHeight));
-
-			if (pushDescriptorSupported)
+			if (scene->meshPostPasses >> 1)
 			{
-				dispatch(ctx.commandBuffer, finalProgram, renderWidth, renderHeight, shadeData, descriptors);
+				cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "transparency cull", /* late= */ true, /* postPass= */ 1);
+				render(/* late= */ true, clearColors, depthClear, 2, 14, "transparency render", /* postPass= */ 1);
 			}
-			else
-			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, finalProgram.descriptorSets[frameOffset], finalProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(ctx.commandBuffer, finalProgram.bindPoint, finalProgram.layout, 0, 1, &finalProgram.descriptorSets[frameOffset], 0, nullptr);
-				vkCmdPushConstants(ctx.commandBuffer, finalProgram.layout, finalProgram.pushConstantStages, 0, sizeof(shadeData), &shadeData);
-				vkCmdDispatch(ctx.commandBuffer, getGroupCount(renderWidth, finalProgram.localSizeX), getGroupCount(renderHeight, finalProgram.localSizeY), 1);
-			}
-
-			vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
 		});
+
+	if (!taaEnabled)
+		rg.addPass("Lighting Pass", lightingPassSetup, lightingPassExecute);
 
 	if (taaEnabled)
 	{
@@ -2595,7 +2602,7 @@ bool VulkanContext::DrawFrame()
 				const bool readA = (frameIndex % 2) == 0;
 				RGTextureHandle historyRead = readA ? taaHistoryHandles[0] : taaHistoryHandles[1];
 				RGTextureHandle historyWrite = readA ? taaHistoryHandles[1] : taaHistoryHandles[0];
-				builder.readTexture(lightingTempHandle, ResourceState::ShaderRead);
+				builder.readTexture(sceneColorHDRHandle, ResourceState::ShaderRead);
 				builder.readTextureFromPreviousFrame(historyRead);
 				builder.writeTexture(historyWrite, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 				builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
@@ -2606,15 +2613,15 @@ bool VulkanContext::DrawFrame()
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 
 				const bool readA = (frameIndex % 2) == 0;
-				Image* lightingTemp = ctx.resourceManager->GetTexture(lightingTempHandle);
+				Image* sceneColorHDR = ctx.resourceManager->GetTexture(sceneColorHDRHandle);
 				Image* taaRead = ctx.resourceManager->GetTexture(readA ? taaHistoryHandles[0] : taaHistoryHandles[1]);
 				Image* taaWrite = ctx.resourceManager->GetTexture(readA ? taaHistoryHandles[1] : taaHistoryHandles[0]);
-				assert(lightingTemp && taaRead && taaWrite);
+				assert(sceneColorHDR && taaRead && taaWrite);
 
 				vkCmdBindPipeline(ctx.commandBuffer, taaProgram.bindPoint, taaPipeline);
 
 				DescriptorInfo descriptors[] = {
-					{ readSampler, lightingTemp->imageView, VK_IMAGE_LAYOUT_GENERAL },
+					{ readSampler, sceneColorHDR->imageView, VK_IMAGE_LAYOUT_GENERAL },
 					{ readSampler, taaRead->imageView, VK_IMAGE_LAYOUT_GENERAL },
 					{ finalOutputImageView, VK_IMAGE_LAYOUT_GENERAL },
 					{ taaWrite->imageView, VK_IMAGE_LAYOUT_GENERAL }
@@ -2739,7 +2746,7 @@ bool VulkanContext::DrawFrame()
 			    pyramidGPUTime,
 			    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
 				shadeGPUTime);
-			debugtext(3, ~0u, "render breakdown: early %.2f ms, late %.2f ms, post %.2f ms",
+			debugtext(3, ~0u, "render breakdown: early %.2f ms, opaque %.2f ms, transparency %.2f ms",
 				    renderGPUTime, renderlateGPUTime, renderpostGPUTime);
 
 			debugtext(4, ~0u, "tlas: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms, taa: %.2f ms",
@@ -3209,7 +3216,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			gpuCullLatePlot.addValue(culllateGPUTime);
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.5f, 1.0f, 0.0f, 1.0f));
-			ImGui::PlotLines("##Culling Late GPU Time",
+			ImGui::PlotLines("##Culling Opaque GPU Time",
 			    gpuCullLatePlot.data(),
 			    gpuCullLatePlot.size(),
 			    gpuCullLatePlot.currentOffset(),
@@ -3218,7 +3225,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
-			DisplayProfilingData("Culling Late GPU Time(ms): ", culllateGPUTime, 1.0, 2.0);
+			DisplayProfilingData("Culling Opaque GPU Time(ms): ", culllateGPUTime, 1.0, 2.0);
 		}
 		{
 			static TimeSeriesPlot gpuRenderingPlot(100);
@@ -3241,7 +3248,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			gpuRenderingLatePlot.addValue(renderlateGPUTime);
 			ImGui::SetNextItemWidth(400.f);
 			ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.3f, 0.5f, 0.3f, 1.0f));
-			ImGui::PlotLines("##Rendering Late GPU Time",
+			ImGui::PlotLines("##Rendering Opaque GPU Time",
 			    gpuRenderingLatePlot.data(),
 			    gpuRenderingLatePlot.size(),
 			    gpuRenderingLatePlot.currentOffset(),
@@ -3250,7 +3257,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			    ImVec2(0, 80));
 			ImGui::PopStyleColor();
 			ImGui::SameLine();
-			DisplayProfilingData("Rendering Late GPU Time(ms): ", renderlateGPUTime, 4.0, 8.0);
+			DisplayProfilingData("Rendering Opaque GPU Time(ms): ", renderlateGPUTime, 4.0, 8.0);
 		}
 		{
 			static TimeSeriesPlot depthPyramidPlot(100);
@@ -3345,8 +3352,8 @@ void VulkanContext::Release()
 		resourceManager.ReleaseTexture(shadowTargetHandle);
 	if (shadowblurTargetHandle.IsValid())
 		resourceManager.ReleaseTexture(shadowblurTargetHandle);
-	if (lightingTempHandle.IsValid())
-		resourceManager.ReleaseTexture(lightingTempHandle);
+	if (sceneColorHDRHandle.IsValid())
+		resourceManager.ReleaseTexture(sceneColorHDRHandle);
 	for (int ti = 0; ti < 2; ++ti)
 		if (taaHistoryHandles[ti].IsValid())
 			resourceManager.ReleaseTexture(taaHistoryHandles[ti]);

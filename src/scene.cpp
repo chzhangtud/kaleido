@@ -695,7 +695,7 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 
 				draw.materialIndex = material ? materialOffset + int(cgltf_material_index(data, material)) : 0;
 
-				// postPass must match renderer cull/render passes: only 0 (opaque) and 1 (GBuffer Post) are implemented.
+				// postPass must match renderer cull/render passes: only 0 (opaque) and 1 (GBuffer Transparency) are implemented.
 				// Transmission (e.g. glass spheres) was previously 2 and never passed drawcull (drawData.postPass != cullData.postPass).
 				if (material && (material->alpha_mode != cgltf_alpha_mode_opaque || material->has_transmission))
 					draw.postPass = 1;

@@ -290,7 +290,8 @@ public:
 	RGTextureHandle depthTargetHandle{};
 	RGTextureHandle shadowTargetHandle{};
 	RGTextureHandle shadowblurTargetHandle{};
-	RGTextureHandle lightingTempHandle{};
+	// Opaque-lit result before the transparency G-buffer pass; used as refraction background (HDR path later).
+	RGTextureHandle sceneColorHDRHandle{};
 	RGTextureHandle taaHistoryHandles[2] = {};
 
 	RGTextureHandle depthPyramidHandle{};
