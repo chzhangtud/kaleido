@@ -100,6 +100,8 @@ struct alignas(16) Globals
 	mat4 projection;
 	CullData cullData;
 	float screenWidth, screenHeight;
+	// 0 = lit G-buffer, 1 = debug wireframe (fragment + line rasterization), 2 = meshlet random color
+	uint32_t gbufferDebugMode;
 };
 
 struct alignas(16) ShadowData
@@ -423,7 +425,8 @@ public:
 	bool clusterrtSupported = false;
 	bool pushDescriptorSupported{ false };
 	bool wireframeDebugSupported{ false };
-	bool debugWireframeMode{ false };
+	// ImGui combo index; must match push constant gbufferDebugMode values
+	int gbufferDebugViewMode{ 0 };
 	bool dvbCleared{ false };
 	bool mvbCleared{ false };
 

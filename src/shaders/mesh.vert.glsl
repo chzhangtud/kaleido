@@ -34,6 +34,8 @@ layout(location = 1) out vec2 out_uv;
 layout(location = 2) out vec3 out_normal;
 layout(location = 3) out vec4 out_tangent;
 layout(location = 4) out vec3 out_wpos;
+// Vertex path: used as meshlet-view fallback (per-draw hash); mesh shaders pass global meshlet index.
+layout(location = 5) out flat uint out_meshletIndex;
 
 void main()
 {
@@ -60,4 +62,5 @@ void main()
 	out_normal = normal;
 	out_tangent = tangent;
     out_wpos = wpos;
+	out_meshletIndex = drawId;
 }

@@ -16,7 +16,6 @@ layout(push_constant) uniform block
 };
 
 layout(constant_id = 2) const bool POST = false;
-layout(constant_id = 3) const bool WIRE_DEBUG = false;
 layout(binding = 1) readonly buffer Draws
 {
 	MeshDraw draws[];
@@ -31,6 +30,7 @@ layout(location = 1) in vec2 uv;
 layout(location = 2) in vec3 normal;
 layout(location = 3) in vec4 tangent;
 layout(location = 4) in vec3 wpos;
+layout(location = 5) in flat uint meshletIndex;
 
 layout(binding = 9) uniform sampler textureSampler;
 
@@ -59,7 +59,7 @@ void main()
     MeshDraw meshDraw = draws[drawId];
 	Material material = materials[meshDraw.materialIndex];
 
-	if (WIRE_DEBUG)
+	if (globals.gbufferDebugMode == 1u)
 	{
 		if (POST)
 		{
@@ -81,6 +81,34 @@ void main()
 		vec2 encN = encodeOct(nrm) * 0.5 + 0.5;
 		gbuffer[0] = vec4(0.0, 0.0, 0.0, 0.0);
 		gbuffer[1] = vec4(encN, 0.045, 0.0);
+		return;
+	}
+
+	if (globals.gbufferDebugMode == 2u)
+	{
+		if (POST)
+		{
+			vec4 albedo = material.baseColorFactor;
+			if (material.albedoTexture > 0)
+				albedo *= fromsrgb(texture(SAMP(material.albedoTexture), uv));
+			if (material.alphaMode == 1u)
+			{
+				if (albedo.a < material.shadingParams.z)
+					discard;
+			}
+			else if (material.alphaMode == 2u)
+			{
+				if (albedo.a < 0.5)
+					discard;
+			}
+		}
+		float debandM = gradientNoise(gl_FragCoord.xy) * 2 - 1;
+		uint h = hash(meshletIndex);
+		vec3 viz = vec3(float(h & 255u), float((h >> 8u) & 255u), float((h >> 16u) & 255u)) / 255.0;
+		vec3 nrmM = normalize(normal);
+		vec2 encNM = encodeOct(nrmM) * 0.5 + 0.5 + debandM * (0.5 / 1023);
+		gbuffer[0] = vec4(tosrgb(vec4(viz, 1.0)).rgb, 0.0);
+		gbuffer[1] = vec4(encNM, 0.045, 0.0);
 		return;
 	}
 

@@ -47,6 +47,8 @@ struct Globals
 	mat4 projection;
 	CullData cullData;
 	float screenWidth, screenHeight;
+	// 0 = lit, 1 = debug wireframe, 2 = meshlet random color
+	uint gbufferDebugMode;
 };
 
 struct MeshLod

@@ -821,9 +821,9 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		if (wireframeDebugSupported)
 		{
 			replace(meshWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
-			    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+			    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, VK_POLYGON_MODE_LINE));
 			replace(meshpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
-			    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+			    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
 		}
 
 		if (meshShadingSupported)
@@ -837,15 +837,15 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 			if (wireframeDebugSupported)
 			{
 				replace(meshtaskWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
-				    { { VK_FALSE }, { VK_TRUE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_FALSE }, { VK_TRUE }, { VK_FALSE } }, VK_POLYGON_MODE_LINE));
 				replace(meshtasklateWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
-				    { { VK_TRUE }, { VK_TRUE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_TRUE }, { VK_TRUE }, { VK_FALSE } }, VK_POLYGON_MODE_LINE));
 				replace(meshtaskpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
-				    { { VK_TRUE }, { VK_TRUE }, { VK_TRUE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_TRUE }, { VK_TRUE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
 				replace(clusterWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram,
-				    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, VK_POLYGON_MODE_LINE));
 				replace(clusterpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram,
-				    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
 			}
 		}
 
@@ -1891,6 +1891,13 @@ bool VulkanContext::DrawFrame()
 	globals.screenWidth = float(renderWidth);
 	globals.screenHeight = float(renderHeight);
 
+	uint32_t debugView = uint32_t(gbufferDebugViewMode);
+	if (debugView > 2u)
+		debugView = 0u;
+	if (debugView == 1u && !wireframeDebugSupported)
+		debugView = 0u;
+	globals.gbufferDebugMode = debugView;
+
 	const mat4 inverseViewProjection = inverse(projectionJittered * view);
 
 	bool taskSubmit = meshShadingSupported && meshShadingEnabled; // TODO; refactor this to be false when taskShadingEnabled is false
@@ -2135,7 +2142,7 @@ bool VulkanContext::DrawFrame()
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-		const bool useDebugWireframe = debugWireframeMode && wireframeDebugSupported;
+		const bool useDebugWireframe = (globals.gbufferDebugMode == 1u);
 		const VkCullModeFlags passCull = (postPass == 0 && !useDebugWireframe) ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
 		vkCmdSetCullMode(commandBuffer, passCull);
 		vkCmdSetDepthBias(commandBuffer, postPass == 0 ? 0 : 16, 0, postPass == 0 ? 0 : 1);
@@ -2656,7 +2663,27 @@ bool VulkanContext::DrawFrame()
 	static double frameCPUAvg = 0.0;
 	static double frameGPUAvg = 0.0;
 
-	if (debugGuiMode % 3)
+#if defined(WIN32)
+	uint64_t triangleCount = pipelineResults[0] + pipelineResults[1] + pipelineResults[2];
+#elif defined(__ANDROID__)
+	uint64_t triangleCount = 0;
+#endif
+
+	cullGPUTime = getTimestampDurationMs(timestampResults, TS_CullBegin, TS_CullEnd, props.limits.timestampPeriod);
+	renderGPUTime = getTimestampDurationMs(timestampResults, TS_RenderBegin, TS_RenderEnd, props.limits.timestampPeriod);
+	pyramidGPUTime = getTimestampDurationMs(timestampResults, TS_PyramidBegin, TS_PyramidEnd, props.limits.timestampPeriod);
+	culllateGPUTime = getTimestampDurationMs(timestampResults, TS_CullLateBegin, TS_CullLateEnd, props.limits.timestampPeriod);
+	renderlateGPUTime = getTimestampDurationMs(timestampResults, TS_RenderLateBegin, TS_RenderLateEnd, props.limits.timestampPeriod);
+	cullpostGPUTime = getTimestampDurationMs(timestampResults, TS_CullPostBegin, TS_CullPostEnd, props.limits.timestampPeriod);
+	renderpostGPUTime = getTimestampDurationMs(timestampResults, TS_RenderPostBegin, TS_RenderPostEnd, props.limits.timestampPeriod);
+	shadowsGPUTime = getTimestampDurationMs(timestampResults, TS_ShadowBegin, TS_ShadowEnd, props.limits.timestampPeriod);
+	shadowblurGPUTime = getTimestampDurationMs(timestampResults, TS_ShadowEnd, TS_ShadowBlurEnd, props.limits.timestampPeriod);
+	shadeGPUTime = getTimestampDurationMs(timestampResults, TS_ShadeBegin, TS_ShadeEnd, props.limits.timestampPeriod);
+	taaGPUTime = taaEnabled ? getTimestampDurationMs(timestampResults, TS_TaaBegin, TS_TaaEnd, props.limits.timestampPeriod) : 0.0;
+	tlasGPUTime = getTimestampDurationMs(timestampResults, TS_TlasBegin, TS_TlasEnd, props.limits.timestampPeriod);
+
+	// Skip burning debug text into the render target shown in the editor viewport (ImGui image).
+	if (debugGuiMode % 3 && !editorViewportMode)
 	{
 		auto debugtext = [&](int line, uint32_t color, const char* format, ...)
 		{
@@ -2698,32 +2725,12 @@ bool VulkanContext::DrawFrame()
 			vkCmdBindDescriptorSets(commandBuffer, debugtextProgram.bindPoint, debugtextProgram.layout, 0, 1, &debugtextProgram.descriptorSets[frameOffset], 0, nullptr);
 		}
 
-		// debug text goes here!
-#if defined(WIN32)
-		uint64_t triangleCount = pipelineResults[0] + pipelineResults[1] + pipelineResults[2];
-#elif defined(__ANDROID__)
-		uint64_t triangleCount = 0;
-#endif
-
-		cullGPUTime = getTimestampDurationMs(timestampResults, TS_CullBegin, TS_CullEnd, props.limits.timestampPeriod);
-		renderGPUTime = getTimestampDurationMs(timestampResults, TS_RenderBegin, TS_RenderEnd, props.limits.timestampPeriod);
-		pyramidGPUTime = getTimestampDurationMs(timestampResults, TS_PyramidBegin, TS_PyramidEnd, props.limits.timestampPeriod);
-		culllateGPUTime = getTimestampDurationMs(timestampResults, TS_CullLateBegin, TS_CullLateEnd, props.limits.timestampPeriod);
-		renderlateGPUTime = getTimestampDurationMs(timestampResults, TS_RenderLateBegin, TS_RenderLateEnd, props.limits.timestampPeriod);
-		cullpostGPUTime = getTimestampDurationMs(timestampResults, TS_CullPostBegin, TS_CullPostEnd, props.limits.timestampPeriod);
-		renderpostGPUTime = getTimestampDurationMs(timestampResults, TS_RenderPostBegin, TS_RenderPostEnd, props.limits.timestampPeriod);
-		shadowsGPUTime = getTimestampDurationMs(timestampResults, TS_ShadowBegin, TS_ShadowEnd, props.limits.timestampPeriod);
-		shadowblurGPUTime = getTimestampDurationMs(timestampResults, TS_ShadowEnd, TS_ShadowBlurEnd, props.limits.timestampPeriod);
-		shadeGPUTime = getTimestampDurationMs(timestampResults, TS_ShadeBegin, TS_ShadeEnd, props.limits.timestampPeriod);
-		taaGPUTime = taaEnabled ? getTimestampDurationMs(timestampResults, TS_TaaBegin, TS_TaaEnd, props.limits.timestampPeriod) : 0.0;
-		tlasGPUTime = getTimestampDurationMs(timestampResults, TS_TlasBegin, TS_TlasEnd, props.limits.timestampPeriod);
-
 		double trianglesPerSec = double(triangleCount) / double(frameGPUAvg * 1e-3);
 		double drawsPerSec = double(scene->draws.size()) / double(frameGPUAvg * 1e-3);
 
 		debugtext(0, ~0u, "%scpu: %.2f ms  (%+.2f); gpu: %.2f ms", reloadShaders ? "   " : "", frameCPUAvg, deltaTime * frameCPUAvg, frameGPUAvg);
 		if (reloadShaders)
-				debugtext(0, reloadShadersColor, "R*");
+			debugtext(0, reloadShadersColor, "R*");
 
 		if (debugGuiMode % 3 == 2)
 		{
@@ -2937,17 +2944,15 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			ImGui::SetNextItemWidth(220.f);
 			ImGui::SliderInt("Debug Info Mode (0=off, 1=on, 2=verbose)", &debugGuiMode, 0, 2);
 			ImGui::Checkbox("Enable Debug Sleep", &debugSleep);
-			if (!wireframeDebugSupported)
+			if (!wireframeDebugSupported && gbufferDebugViewMode == 1)
+				gbufferDebugViewMode = 0;
 			{
-				debugWireframeMode = false;
-				ImGui::BeginDisabled();
+				static const char* gbufferViewItems[] = { "Lit (shaded)", "Wireframe", "Meshlet (random color)" };
+				ImGui::SetNextItemWidth(260.f);
+				ImGui::Combo("G-buffer debug view", &gbufferDebugViewMode, gbufferViewItems, IM_ARRAYSIZE(gbufferViewItems));
 			}
-			ImGui::Checkbox("Debug wireframe (black mesh edges)", &debugWireframeMode);
 			if (!wireframeDebugSupported)
-			{
-				ImGui::EndDisabled();
-				ImGui::TextDisabled("Wireframe requires GPU fillModeNonSolid.");
-			}
+				ImGui::TextDisabled("Wireframe needs GPU fillModeNonSolid.");
 			ImGui::Text("Cluster Ray Tracing Enabled: %s", clusterRTEnabled ? "ON" : "OFF");
 		}
 
@@ -3118,17 +3123,15 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 		ImGui::Checkbox("Enable Animation", &animationEnabled);
 		ImGui::Text("Cluster Ray Tracing Enabled: %s", clusterRTEnabled ? "ON" : "OFF");
 		ImGui::Checkbox("Enable Debug Sleep", &debugSleep);
-		if (!wireframeDebugSupported)
+		if (!wireframeDebugSupported && gbufferDebugViewMode == 1)
+			gbufferDebugViewMode = 0;
 		{
-			debugWireframeMode = false;
-			ImGui::BeginDisabled();
+			static const char* gbufferViewItems[] = { "Lit (shaded)", "Wireframe", "Meshlet (random color)" };
+			ImGui::SetNextItemWidth(240.f);
+			ImGui::Combo("G-buffer debug view", &gbufferDebugViewMode, gbufferViewItems, IM_ARRAYSIZE(gbufferViewItems));
 		}
-		ImGui::Checkbox("Debug wireframe (black mesh edges)", &debugWireframeMode);
 		if (!wireframeDebugSupported)
-		{
-			ImGui::EndDisabled();
-			ImGui::TextDisabled("Wireframe requires GPU fillModeNonSolid.");
-		}
+			ImGui::TextDisabled("Wireframe needs GPU fillModeNonSolid.");
 		ImGui::End();
 	}
 

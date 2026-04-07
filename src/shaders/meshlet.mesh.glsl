@@ -70,6 +70,7 @@ layout(location = 1) out vec2 out_uv[];
 layout(location = 2) out vec3 out_normal[];
 layout(location = 3) out vec4 out_tangent[];
 layout(location = 4) out vec3 out_wpos[];
+layout(location = 5) out flat uint out_meshletIndex[];
 
 #if TRIANGLE_NORMAL
 layout(location = 1) perprimitiveEXT out vec3 triangleNormal[];
@@ -154,6 +155,7 @@ void main()
 		out_normal[i] = normal;
 		out_tangent[i] = tangent;
         out_wpos[i] = wpos;
+		out_meshletIndex[i] = mi;
 #if CULL
 		vertexClip[i] = vec3((clip.xy / clip.w * 0.5 + vec2(0.5)) * screen, clip.w);
 #endif
