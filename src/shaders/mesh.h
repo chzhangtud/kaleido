@@ -49,6 +49,9 @@ struct Globals
 	float screenWidth, screenHeight;
 	// 0 = lit, 1 = debug wireframe, 2 = meshlet random color
 	uint gbufferDebugMode;
+	// Filled for transparency alpha-blend pass when screen-space refraction is off; unused elsewhere.
+	vec3 sunDirection;
+	float sunPad;
 };
 
 struct MeshLod

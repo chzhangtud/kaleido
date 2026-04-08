@@ -72,7 +72,14 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders
 VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkShaderStageFlags pushConstantStages, size_t pushConstantSize);
 VkDescriptorSetLayout createDescriptorArrayLayout(VkDevice device);
 std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice device, VkDescriptorSetLayout layout, uint32_t descriptorCount);
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, std::vector<PushConst> pushconstants = {}, VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL);
+struct GraphicsPipelineExtraState
+{
+	VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
+	bool alphaBlendFirstAttachment = false;
+	bool depthWrite = true;
+};
+
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, std::vector<PushConst> pushconstants = {}, const GraphicsPipelineExtraState& extra = {});
 VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache, const Program& program, std::vector<PushConst> pushconstants = {});
 
 Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders shaders, size_t pushConstantSize, bool pushDescriptorSupported, VkDescriptorPool descriptorPool = VK_NULL_HANDLE, VkDescriptorSetLayout arrayLayout = VK_NULL_HANDLE);

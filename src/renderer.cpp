@@ -781,13 +781,23 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 
 	meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["mesh.vert"], &shaderSet["mesh.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
 
+	transparencyBlendMeshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["mesh.vert"], &shaderSet["transparency_blend.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
+
 	meshtaskProgram = {};
 	clusterProgram = {};
+	transparencyBlendMeshtaskProgram = {};
+	transparencyBlendClusterProgram = {};
 	if (meshShadingEnabled)
 	{
 		meshtaskProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["meshlet.task"], &shaderSet["meshlet.mesh"], &shaderSet["mesh.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
 
 		clusterProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["meshlet.mesh"], &shaderSet["mesh.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
+	}
+	if (meshShadingSupported)
+	{
+		transparencyBlendMeshtaskProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["meshlet.task"], &shaderSet["meshlet.mesh"], &shaderSet["transparency_blend.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
+
+		transparencyBlendClusterProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["meshlet.mesh"], &shaderSet["transparency_blend.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
 	}
 
 	finalProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["final.comp"] }, sizeof(ShadeData), pushDescriptorSupported, descriptorPool);
@@ -829,12 +839,29 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		replace(meshPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram));
 		replace(meshpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }));
 
+		VkFormat sceneColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+		VkPipelineRenderingCreateInfo sceneColorBlendRenderingInfo{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+		sceneColorBlendRenderingInfo.colorAttachmentCount = 1;
+		sceneColorBlendRenderingInfo.pColorAttachmentFormats = &sceneColorFormat;
+		sceneColorBlendRenderingInfo.depthAttachmentFormat = depthFormat;
+
+		GraphicsPipelineExtraState transparencyBlendRaster;
+		transparencyBlendRaster.alphaBlendFirstAttachment = true;
+		transparencyBlendRaster.depthWrite = false;
+
+		replace(meshTransparencyBlendPipeline, createGraphicsPipeline(device, pipelineCache, sceneColorBlendRenderingInfo, transparencyBlendMeshProgram,
+		    { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
+
 		if (wireframeDebugSupported)
 		{
-			replace(meshWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
-			    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, VK_POLYGON_MODE_LINE));
-			replace(meshpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
-			    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+			{
+				GraphicsPipelineExtraState wireExtra;
+				wireExtra.polygonMode = VK_POLYGON_MODE_LINE;
+				replace(meshWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
+				    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, wireExtra));
+				replace(meshpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
+				    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, wireExtra));
+			}
 		}
 
 		if (meshShadingSupported)
@@ -845,18 +872,25 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 			replace(clusterPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram));
 			replace(clusterpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }));
 
+			replace(clusterTransparencyBlendPipeline, createGraphicsPipeline(device, pipelineCache, sceneColorBlendRenderingInfo, transparencyBlendClusterProgram,
+			    { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
+			replace(meshtaskTransparencyBlendPipeline, createGraphicsPipeline(device, pipelineCache, sceneColorBlendRenderingInfo, transparencyBlendMeshtaskProgram,
+			    { { /* LATE= */ VK_TRUE }, { /* TASK= */ VK_TRUE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
+
 			if (wireframeDebugSupported)
 			{
+				GraphicsPipelineExtraState meshWireExtra;
+				meshWireExtra.polygonMode = VK_POLYGON_MODE_LINE;
 				replace(meshtaskWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
-				    { { VK_FALSE }, { VK_TRUE }, { VK_FALSE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_FALSE }, { VK_TRUE }, { VK_FALSE } }, meshWireExtra));
 				replace(meshtasklateWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
-				    { { VK_TRUE }, { VK_TRUE }, { VK_FALSE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_TRUE }, { VK_TRUE }, { VK_FALSE } }, meshWireExtra));
 				replace(meshtaskpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
-				    { { VK_TRUE }, { VK_TRUE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_TRUE }, { VK_TRUE }, { VK_TRUE } }, meshWireExtra));
 				replace(clusterWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram,
-				    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, meshWireExtra));
 				replace(clusterpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram,
-				    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, VK_POLYGON_MODE_LINE));
+				    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, meshWireExtra));
 			}
 		}
 
@@ -1613,7 +1647,8 @@ bool VulkanContext::DrawFrame()
 		sceneColorDesc.height = desiredRenderHeight;
 		sceneColorDesc.mipLevels = 1;
 		sceneColorDesc.format = TextureFormat::RGBA8_UNorm;
-		sceneColorDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
+		// ColorAttachment: optional alpha-blend pass into this target when screen-space refraction is disabled.
+		sceneColorDesc.usage = TextureUsage::Storage | TextureUsage::Sampled | TextureUsage::ColorAttachment;
 		sceneColorHDRHandle = resourceManager.CreateTexture(sceneColorDesc, /* transient= */ false);
 		sceneColorResolvedHandle = resourceManager.CreateTexture(sceneColorDesc, /* transient= */ false);
 
@@ -1710,6 +1745,9 @@ bool VulkanContext::DrawFrame()
 		LOGW("Depth target view is null; recreate lazily (handle=%u image=%p)", depthTargetHandle.id, depthTarget->image);
 		depthTarget->imageView = resourceManager.CreateImageView(depthTarget->image, depthFormat, 0, 1);
 	}
+
+	Image* sceneColorTarget = resourceManager.GetTexture(sceneColorHDRHandle);
+	assert(sceneColorTarget);
 
 	const uint32_t renderWidth = currentRenderWidth;
 	const uint32_t renderHeight = currentRenderHeight;
@@ -1915,6 +1953,7 @@ bool VulkanContext::DrawFrame()
 	if (debugView == 1u && !wireframeDebugSupported)
 		debugView = 0u;
 	globals.gbufferDebugMode = debugView;
+	globals.sunDirection = scene->sunDirection;
 
 	const mat4 inverseViewProjection = inverse(projectionJittered * view);
 
@@ -2035,7 +2074,7 @@ bool VulkanContext::DrawFrame()
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 1);
 	};
 
-	auto render = [&](bool late, const std::vector<VkClearColorValue>& clearColors, const VkClearDepthStencilValue& depthClear, uint32_t query, uint32_t timestamp, const char* phase, unsigned int postPass = 0)
+	auto render = [&](bool late, const std::vector<VkClearColorValue>& clearColors, const VkClearDepthStencilValue& depthClear, uint32_t query, uint32_t timestamp, const char* phase, unsigned int postPass = 0, bool alphaBlendToSceneColor = false)
 	{
 		Image* depthPyramid = resourceManager.GetTexture(depthPyramidHandle);
 		assert(depthPyramid);
@@ -2127,14 +2166,17 @@ bool VulkanContext::DrawFrame()
 		}
 
 		VkRenderingAttachmentInfo gbufferAttachments[gbufferCount] = {};
-		for (uint32_t i = 0; i < gbufferCount; ++i)
+		if (!alphaBlendToSceneColor)
 		{
-			gbufferAttachments[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-			gbufferAttachments[i].imageView = gbufferTargets[i]->imageView;
-			gbufferAttachments[i].imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
-			gbufferAttachments[i].loadOp = late ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
-			gbufferAttachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-			gbufferAttachments[i].clearValue.color = clearColors[i];
+			for (uint32_t i = 0; i < gbufferCount; ++i)
+			{
+				gbufferAttachments[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+				gbufferAttachments[i].imageView = gbufferTargets[i]->imageView;
+				gbufferAttachments[i].imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+				gbufferAttachments[i].loadOp = late ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+				gbufferAttachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+				gbufferAttachments[i].clearValue.color = clearColors[i];
+			}
 		}
 
 		VkRenderingAttachmentInfo depthAttachment = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
@@ -2144,13 +2186,28 @@ bool VulkanContext::DrawFrame()
 		depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		depthAttachment.clearValue.depthStencil = depthClear;
 
+		VkRenderingAttachmentInfo sceneColorBlendAttachment = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
 		VkRenderingInfo passInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO };
 		passInfo.renderArea.extent.width = renderWidth;
 		passInfo.renderArea.extent.height = renderHeight;
 		passInfo.layerCount = 1;
-		passInfo.colorAttachmentCount = gbufferCount;
-		passInfo.pColorAttachments = gbufferAttachments;
 		passInfo.pDepthAttachment = &depthAttachment;
+
+		if (alphaBlendToSceneColor)
+		{
+			assert(postPass == 1);
+			sceneColorBlendAttachment.imageView = sceneColorTarget->imageView;
+			sceneColorBlendAttachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+			sceneColorBlendAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+			sceneColorBlendAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+			passInfo.colorAttachmentCount = 1;
+			passInfo.pColorAttachments = &sceneColorBlendAttachment;
+		}
+		else
+		{
+			passInfo.colorAttachmentCount = gbufferCount;
+			passInfo.pColorAttachments = gbufferAttachments;
+		}
 
 		vkCmdBeginRendering(commandBuffer, &passInfo);
 
@@ -2170,9 +2227,11 @@ bool VulkanContext::DrawFrame()
 
 		if (clusterSubmit)
 		{
-			const VkPipeline clusterPl = postPass >= 1 ? (useDebugWireframe ? clusterpostWirePipeline : clusterpostPipeline)
-			                                              : (useDebugWireframe ? clusterWirePipeline : clusterPipeline);
-			vkCmdBindPipeline(commandBuffer, clusterProgram.bindPoint, clusterPl);
+			const VkPipeline clusterPl = alphaBlendToSceneColor ? clusterTransparencyBlendPipeline
+			                                                      : postPass >= 1 ? (useDebugWireframe ? clusterpostWirePipeline : clusterpostPipeline)
+			                                                                      : (useDebugWireframe ? clusterWirePipeline : clusterPipeline);
+			const Program& clusterProg = alphaBlendToSceneColor ? transparencyBlendClusterProgram : clusterProgram;
+			vkCmdBindPipeline(commandBuffer, clusterProg.bindPoint, clusterPl);
 
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid->imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mdb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
@@ -2180,26 +2239,28 @@ bool VulkanContext::DrawFrame()
 #if defined(WIN32)
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplate(commandBuffer, clusterProgram.updateTemplate, clusterProgram.layout, 0, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, clusterProgram.bindPoint, clusterProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+				vkCmdPushDescriptorSetWithTemplate(commandBuffer, clusterProg.updateTemplate, clusterProg.layout, 0, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, clusterProg.bindPoint, clusterProg.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 			}
 			else
 #endif
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, clusterSets[frameOffset][descriptorSetIndex], clusterProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, clusterProgram.bindPoint, clusterProgram.layout, 0, 1, &clusterSets[frameOffset][descriptorSetIndex], 0, nullptr);
-				vkCmdBindDescriptorSets(commandBuffer, clusterProgram.bindPoint, clusterProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, clusterSets[frameOffset][descriptorSetIndex], clusterProg.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, clusterProg.bindPoint, clusterProg.layout, 0, 1, &clusterSets[frameOffset][descriptorSetIndex], 0, nullptr);
+				vkCmdBindDescriptorSets(commandBuffer, clusterProg.bindPoint, clusterProg.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 			}
 
-			vkCmdPushConstants(commandBuffer, clusterProgram.layout, clusterProgram.pushConstantStages, 0, sizeof(globals), &passGlobals);
+			vkCmdPushConstants(commandBuffer, clusterProg.layout, clusterProg.pushConstantStages, 0, sizeof(globals), &passGlobals);
 			vkCmdDrawMeshTasksIndirectEXT(commandBuffer, ccb.buffer, 4, 1, 0);
 		}
 		else if (taskSubmit)
 		{
-			const VkPipeline taskPl = postPass >= 1 ? (useDebugWireframe ? meshtaskpostWirePipeline : meshtaskpostPipeline)
-			                                          : late ? (useDebugWireframe ? meshtasklateWirePipeline : meshtasklatePipeline)
-			                                                 : (useDebugWireframe ? meshtaskWirePipeline : meshtaskPipeline);
-			vkCmdBindPipeline(commandBuffer, meshtaskProgram.bindPoint, taskPl);
+			const VkPipeline taskPl = alphaBlendToSceneColor ? meshtaskTransparencyBlendPipeline
+			                                                 : postPass >= 1 ? (useDebugWireframe ? meshtaskpostWirePipeline : meshtaskpostPipeline)
+			                                                                 : late ? (useDebugWireframe ? meshtasklateWirePipeline : meshtasklatePipeline)
+			                                                                        : (useDebugWireframe ? meshtaskWirePipeline : meshtaskPipeline);
+			const Program& taskProg = alphaBlendToSceneColor ? transparencyBlendMeshtaskProgram : meshtaskProgram;
+			vkCmdBindPipeline(commandBuffer, taskProg.bindPoint, taskPl);
 
 			DescriptorInfo pyramidDesc(depthSampler, depthPyramid->imageView, VK_IMAGE_LAYOUT_GENERAL);
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, mb.buffer, mlb.buffer, mdb.buffer, vb.buffer, mvb.buffer, pyramidDesc, cib.buffer, textureSampler, mtb.buffer };
@@ -2207,46 +2268,48 @@ bool VulkanContext::DrawFrame()
 #if defined(WIN32)
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplate(commandBuffer, meshtaskProgram.updateTemplate, meshtaskProgram.layout, 0, descriptors);
+				vkCmdPushDescriptorSetWithTemplate(commandBuffer, taskProg.updateTemplate, taskProg.layout, 0, descriptors);
 			}
 			else
 #endif
 			{
-				vkUpdateDescriptorSetWithTemplateKHR(device, meshtaskSets[frameOffset][descriptorSetIndex], meshtaskProgram.updateTemplate, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, meshtaskProgram.bindPoint, meshtaskProgram.layout, 0, 1, &meshtaskSets[frameOffset][descriptorSetIndex], 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, meshtaskSets[frameOffset][descriptorSetIndex], taskProg.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, taskProg.bindPoint, taskProg.layout, 0, 1, &meshtaskSets[frameOffset][descriptorSetIndex], 0, nullptr);
 			}
 
-			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshtaskProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, taskProg.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 
-			vkCmdPushConstants(commandBuffer, meshtaskProgram.layout, meshtaskProgram.pushConstantStages, 0, sizeof(globals), &passGlobals);
+			vkCmdPushConstants(commandBuffer, taskProg.layout, taskProg.pushConstantStages, 0, sizeof(globals), &passGlobals);
 
 			vkCmdDrawMeshTasksIndirectEXT(commandBuffer, dccb.buffer, 4, 1, 0);
 		}
 		else
 		{
-			const VkPipeline meshPl = postPass >= 1 ? (useDebugWireframe ? meshpostWirePipeline : meshpostPipeline)
-			                                        : (useDebugWireframe ? meshWirePipeline : meshPipeline);
-			vkCmdBindPipeline(commandBuffer, meshProgram.bindPoint, meshPl);
+			const VkPipeline meshPl = alphaBlendToSceneColor ? meshTransparencyBlendPipeline
+			                                                 : postPass >= 1 ? (useDebugWireframe ? meshpostWirePipeline : meshpostPipeline)
+			                                                                 : (useDebugWireframe ? meshWirePipeline : meshPipeline);
+			const Program& meshProg = alphaBlendToSceneColor ? transparencyBlendMeshProgram : meshProgram;
+			vkCmdBindPipeline(commandBuffer, meshProg.bindPoint, meshPl);
 
 			DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), textureSampler, mtb.buffer };
 
 #if defined(WIN32)
 			if (pushDescriptorSupported)
 			{
-				vkCmdPushDescriptorSetWithTemplate(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
-				vkCmdBindDescriptorSets(commandBuffer, meshProgram.bindPoint, meshProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+				vkCmdPushDescriptorSetWithTemplate(commandBuffer, meshProg.updateTemplate, meshProg.layout, 0, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, meshProg.bindPoint, meshProg.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 			}
 			else
 #endif
 			{
-				vkCmdBindDescriptorSets(commandBuffer, meshProgram.bindPoint, meshProgram.layout, 0, 1, &meshSets[frameOffset][descriptorSetIndex], 0, nullptr);
-				vkCmdBindDescriptorSets(commandBuffer, meshProgram.bindPoint, meshProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
-				vkUpdateDescriptorSetWithTemplateKHR(device, meshSets[frameOffset][descriptorSetIndex], meshProgram.updateTemplate, descriptors);
+				vkCmdBindDescriptorSets(commandBuffer, meshProg.bindPoint, meshProg.layout, 0, 1, &meshSets[frameOffset][descriptorSetIndex], 0, nullptr);
+				vkCmdBindDescriptorSets(commandBuffer, meshProg.bindPoint, meshProg.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+				vkUpdateDescriptorSetWithTemplateKHR(device, meshSets[frameOffset][descriptorSetIndex], meshProg.updateTemplate, descriptors);
 			}
 
 			vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-			vkCmdPushConstants(commandBuffer, meshProgram.layout, meshProgram.pushConstantStages, 0, sizeof(globals), &passGlobals);
+			vkCmdPushConstants(commandBuffer, meshProg.layout, meshProg.pushConstantStages, 0, sizeof(globals), &passGlobals);
 			vkCmdDrawIndexedIndirectCount(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), dccb.buffer, 0, uint32_t(scene->draws.size()), sizeof(MeshDrawCommand));
 		}
 
@@ -2593,25 +2656,45 @@ bool VulkanContext::DrawFrame()
 	// Opaque-lit HDR must be ready before transparency so refraction can sample the background (see transmission resolve / TAA path).
 	rg.addPass("Lighting Pass", lightingPassSetup, lightingPassExecute);
 
-	rg.addPass("GBuffer Transparency",
-		[&](RGPassBuilder& builder)
-		{
-			// Render-graph ordering: without a resource edge, topo sort may run this pass before Lighting while both only
-			// depend on opaque GBuffer; lighting must consume opaque-only GBuffer before we layer transparency into it.
-			builder.readTexture(sceneColorHDRHandle, ResourceState::ShaderRead);
-			builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
-			for (uint32_t i = 0; i < gbufferCount; ++i)
-				builder.writeTexture(gbufferTargetHandles[i], ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
-			builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
-		},
-		[&](RGPassContext&)
-		{
-			if (scene->meshPostPasses >> 1)
+	if (screenSpaceRefractionEnabled)
+	{
+		rg.addPass("GBuffer Transparency",
+			[&](RGPassBuilder& builder)
+			{
+				// Render-graph ordering: without a resource edge, topo sort may run this pass before Lighting while both only
+				// depend on opaque GBuffer; lighting must consume opaque-only GBuffer before we layer transparency into it.
+				builder.readTexture(sceneColorHDRHandle, ResourceState::ShaderRead);
+				builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
+				for (uint32_t i = 0; i < gbufferCount; ++i)
+					builder.writeTexture(gbufferTargetHandles[i], ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
+				builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
+			},
+			[&](RGPassContext&)
+			{
+				if (scene->meshPostPasses >> 1)
+				{
+					cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "transparency cull", /* late= */ true, /* postPass= */ 1);
+					render(/* late= */ true, clearColors, depthClear, 2, 14, "transparency render", /* postPass= */ 1);
+				}
+			});
+	}
+	else if (scene->meshPostPasses >> 1)
+	{
+		rg.addPass("Transparency Alpha Blend",
+			[&](RGPassBuilder& builder)
+			{
+				builder.readTexture(sceneColorHDRHandle, ResourceState::ColorAttachment);
+				builder.writeTexture(sceneColorHDRHandle, ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
+				// Depth is a dynamic-rendering attachment (depth test); DepthStencilRead barriers to DEPTH_READ_ONLY_OPTIMAL,
+				// which mismatches vkCmdBeginRendering depthAttachment (ATTACHMENT_OPTIMAL). Match GBuffer Transparency pass.
+				builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
+			},
+			[&](RGPassContext&)
 			{
 				cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "transparency cull", /* late= */ true, /* postPass= */ 1);
-				render(/* late= */ true, clearColors, depthClear, 2, 14, "transparency render", /* postPass= */ 1);
-			}
-		});
+				render(/* late= */ true, clearColors, depthClear, 2, 14, "transparency alpha blend", /* postPass= */ 1, /* alphaBlendToSceneColor= */ true);
+			});
+	}
 
 	rg.addPass("Transmission Resolve",
 	    [&](RGPassBuilder& builder)
@@ -2642,6 +2725,7 @@ bool VulkanContext::DrawFrame()
 		    resolveData.inverseViewProjection = inverseViewProjection;
 		    resolveData.imageSize = vec2(float(renderWidth), float(renderHeight));
 		    resolveData.refractionWorldDistance = 0.08f;
+		    resolveData.refractionEnabled = screenSpaceRefractionEnabled ? 1u : 0u;
 
 		    DescriptorInfo descriptors[] = {
 			    { outView, VK_IMAGE_LAYOUT_GENERAL },
@@ -3015,6 +3099,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 				ImGui::SetNextItemWidth(220.f);
 				ImGui::SliderFloat("TAA Blend Alpha", &taaBlendAlpha, 0.01f, 1.0f, "%.2f");
 			}
+			ImGui::Checkbox("Screen-Space Refraction", &screenSpaceRefractionEnabled);
 			ImGui::Checkbox("Enable LoD", &lodEnabled);
 			if (lodEnabled)
 			{
@@ -3193,6 +3278,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			ImGui::SetNextItemWidth(200.f);
 			ImGui::SliderFloat("TAA Blend Alpha", &taaBlendAlpha, 0.01f, 1.0f, "%.2f");
 		}
+		ImGui::Checkbox("Screen-Space Refraction", &screenSpaceRefractionEnabled);
 		ImGui::Checkbox("Enable LoD", &lodEnabled);
 		if (lodEnabled)
 		{
@@ -3538,6 +3624,9 @@ void VulkanContext::Release()
 	destroyProgram(device, clustersubmitProgram, descriptorPool);
 	destroyProgram(device, clustercullProgram, descriptorPool);
 	destroyProgram(device, clusterProgram, descriptorPool);
+	destroyProgram(device, transparencyBlendMeshProgram, descriptorPool);
+	destroyProgram(device, transparencyBlendMeshtaskProgram, descriptorPool);
+	destroyProgram(device, transparencyBlendClusterProgram, descriptorPool);
 	destroyProgram(device, depthreduceProgram, descriptorPool);
 	destroyProgram(device, transmissionResolveProgram, descriptorPool);
 	destroyProgram(device, taaProgram, descriptorPool);

@@ -627,7 +627,7 @@ std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice devi
 	return std::make_pair(pool, set);
 }
 
-VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, std::vector<PushConst> pushconstants, VkPolygonMode polygonMode)
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, std::vector<PushConst> pushconstants, const GraphicsPipelineExtraState& extra)
 {
 	VkGraphicsPipelineCreateInfo createInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
 
@@ -702,9 +702,9 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 
 	VkPipelineRasterizationStateCreateInfo rasterizationState = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
 	rasterizationState.lineWidth = 1.f;
-	rasterizationState.polygonMode = polygonMode;
+	rasterizationState.polygonMode = extra.polygonMode;
 	rasterizationState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-	rasterizationState.cullMode = polygonMode == VK_POLYGON_MODE_LINE ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+	rasterizationState.cullMode = extra.polygonMode == VK_POLYGON_MODE_LINE ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
 	rasterizationState.depthBiasEnable = true;
 	createInfo.pRasterizationState = &rasterizationState;
 
@@ -714,7 +714,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 
 	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
 	depthStencilState.depthTestEnable = VK_TRUE;
-	depthStencilState.depthWriteEnable = VK_TRUE;
+	depthStencilState.depthWriteEnable = extra.depthWrite ? VK_TRUE : VK_FALSE;
 	depthStencilState.depthCompareOp = VK_COMPARE_OP_GREATER; // we are currently use inverse z.
 	createInfo.pDepthStencilState = &depthStencilState;
 
@@ -729,6 +729,17 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 		else
 			colorAttachmentStates[i].colorWriteMask =
 			    VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+		if (extra.alphaBlendFirstAttachment && i == 0 && fmt != VK_FORMAT_R32_UINT)
+		{
+			colorAttachmentStates[i].blendEnable = VK_TRUE;
+			colorAttachmentStates[i].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+			colorAttachmentStates[i].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+			colorAttachmentStates[i].colorBlendOp = VK_BLEND_OP_ADD;
+			colorAttachmentStates[i].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+			colorAttachmentStates[i].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+			colorAttachmentStates[i].alphaBlendOp = VK_BLEND_OP_ADD;
+		}
 	}
 
 	VkPipelineColorBlendStateCreateInfo colorBlendState = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };

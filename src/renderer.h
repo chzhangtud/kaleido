@@ -39,6 +39,7 @@ static bool shadowblurEnabled = true;
 static bool taaEnabled = true;
 static float taaBlendAlpha = 0.1f;
 static bool shadowCheckerboard = false;
+static bool screenSpaceRefractionEnabled = true;
 static int shadowQuality = 1;
 static bool animationEnabled = false;
 static bool clusterRTEnabled = false;
@@ -102,6 +103,8 @@ struct alignas(16) Globals
 	float screenWidth, screenHeight;
 	// 0 = lit G-buffer, 1 = debug wireframe (fragment + line rasterization), 2 = meshlet random color
 	uint32_t gbufferDebugMode;
+	vec3 sunDirection{};
+	float sunPad = 0.f;
 };
 
 struct alignas(16) ShadowData
@@ -140,7 +143,7 @@ struct alignas(16) TransmissionResolveData
 	mat4 inverseViewProjection;
 	vec2 imageSize;
 	float refractionWorldDistance;
-	float padTail;
+	uint32_t refractionEnabled;
 };
 
 static bool mousePressed = false;
@@ -351,6 +354,9 @@ public:
 	VkPipeline clusterpostPipeline = 0;
 	VkPipeline clusterWirePipeline = 0;
 	VkPipeline clusterpostWirePipeline = 0;
+	VkPipeline meshTransparencyBlendPipeline = 0;
+	VkPipeline meshtaskTransparencyBlendPipeline = 0;
+	VkPipeline clusterTransparencyBlendPipeline = 0;
 	VkPipeline finalPipeline = 0;
 	VkPipeline transmissionResolvePipeline = 0;
 	VkPipeline taaPipeline = 0;
@@ -371,6 +377,9 @@ public:
 	Program meshProgram{};
 	Program meshtaskProgram{};
 	Program clusterProgram{};
+	Program transparencyBlendMeshProgram{};
+	Program transparencyBlendMeshtaskProgram{};
+	Program transparencyBlendClusterProgram{};
 	Program finalProgram{};
 	Program transmissionResolveProgram{};
 	Program taaProgram{};

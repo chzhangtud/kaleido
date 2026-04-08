@@ -17,7 +17,7 @@ struct TransmissionResolveData
 	mat4 inverseViewProjection;
 	vec2 imageSize;
 	float refractionWorldDistance;
-	float padTail;
+	uint refractionEnabled;
 };
 
 layout(push_constant) uniform block
@@ -54,6 +54,12 @@ void main()
 
 	vec2 uv = (vec2(pos) + 0.5) / resolveData.imageSize;
 	vec4 bg = texture(sceneColorHDR, uv);
+
+	if (resolveData.refractionEnabled == 0u)
+	{
+		imageStore(outImage, ivec2(pos), bg);
+		return;
+	}
 
 	uint mid = texture(materialIndexImage, uv).r;
 	if (mid == 0xffffffffu)
