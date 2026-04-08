@@ -61,6 +61,10 @@ void main()
     MeshDraw meshDraw = draws[drawId];
 	Material material = materials[meshDraw.materialIndex];
 
+	// Opaque G-buffer passes (POST == false): do not rasterize blend/mask/transmission; those use the transparency pass only.
+	if (!POST && (material.alphaMode != 0u || material.transmissionFactor > 1e-4))
+		discard;
+
 	if (globals.gbufferDebugMode == 1u)
 	{
 		if (POST)

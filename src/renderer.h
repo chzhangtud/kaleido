@@ -135,8 +135,12 @@ struct alignas(16) TaaData
 
 struct alignas(16) TransmissionResolveData
 {
+	vec3 cameraPosition;
+	float padCam;
+	mat4 inverseViewProjection;
 	vec2 imageSize;
-	vec2 pad;
+	float refractionWorldDistance;
+	float padTail;
 };
 
 static bool mousePressed = false;
@@ -298,6 +302,8 @@ public:
 	RGTextureHandle shadowblurTargetHandle{};
 	// Opaque-lit result before the transparency G-buffer pass; used as refraction background (HDR path later).
 	RGTextureHandle sceneColorHDRHandle{};
+	// Post-transmission-resolve color; TAA reads this so refraction is included in the antialiased signal.
+	RGTextureHandle sceneColorResolvedHandle{};
 	RGTextureHandle taaHistoryHandles[2] = {};
 
 	RGTextureHandle depthPyramidHandle{};

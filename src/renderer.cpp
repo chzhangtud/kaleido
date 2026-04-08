@@ -663,6 +663,15 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		clusterrtSupported = clusterrtSupported || strcmp(ext.extensionName, VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME) == 0;
 	#endif
 	}
+	// RenderDoc replay often fails when captures contain GPU-volatile addresses (BDA, BLAS/TLAS
+	// deviceAddress). Disable RT/cluster-AS so captures stay replayable; shadows fall back to off.
+	if (readProcessEnvFlag("KALEIDO_RENDERDOC_COMPAT"))
+	{
+		if (raytracingSupported || clusterrtSupported)
+			LOGI("KALEIDO_RENDERDOC_COMPAT=1: ray tracing and cluster AS disabled for capture/replay stability");
+		raytracingSupported = false;
+		clusterrtSupported = false;
+	}
 #if defined(WIN32)
 	pushDescriptorSupported = true;
 #endif
@@ -782,7 +791,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	}
 
 	finalProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["final.comp"] }, sizeof(ShadeData), pushDescriptorSupported, descriptorPool);
-	transmissionResolveProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["transmission_resolve.comp"] }, sizeof(TransmissionResolveData), pushDescriptorSupported, descriptorPool);
+	transmissionResolveProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["transmission_resolve.comp"] }, sizeof(TransmissionResolveData), pushDescriptorSupported, descriptorPool, textureSetLayout);
 	taaProgram = createProgram(device, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaderSet["taa.comp"] }, sizeof(TaaData), pushDescriptorSupported, descriptorPool);
 	shadowProgram = {};
 	shadowblurProgram = {};
@@ -1532,6 +1541,8 @@ bool VulkanContext::DrawFrame()
 			resourceManager.ReleaseTexture(shadowblurTargetHandle);
 		if (sceneColorHDRHandle.IsValid())
 			resourceManager.ReleaseTexture(sceneColorHDRHandle);
+		if (sceneColorResolvedHandle.IsValid())
+			resourceManager.ReleaseTexture(sceneColorResolvedHandle);
 
 		for (int ti = 0; ti < 2; ++ti)
 			if (taaHistoryHandles[ti].IsValid())
@@ -1604,6 +1615,7 @@ bool VulkanContext::DrawFrame()
 		sceneColorDesc.format = TextureFormat::RGBA8_UNorm;
 		sceneColorDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
 		sceneColorHDRHandle = resourceManager.CreateTexture(sceneColorDesc, /* transient= */ false);
+		sceneColorResolvedHandle = resourceManager.CreateTexture(sceneColorDesc, /* transient= */ false);
 
 		RGTextureDesc taaDesc{};
 		taaDesc.width = desiredRenderWidth;
@@ -2584,6 +2596,9 @@ bool VulkanContext::DrawFrame()
 	rg.addPass("GBuffer Transparency",
 		[&](RGPassBuilder& builder)
 		{
+			// Render-graph ordering: without a resource edge, topo sort may run this pass before Lighting while both only
+			// depend on opaque GBuffer; lighting must consume opaque-only GBuffer before we layer transparency into it.
+			builder.readTexture(sceneColorHDRHandle, ResourceState::ShaderRead);
 			builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
 			for (uint32_t i = 0; i < gbufferCount; ++i)
 				builder.writeTexture(gbufferTargetHandles[i], ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
@@ -2598,42 +2613,61 @@ bool VulkanContext::DrawFrame()
 			}
 		});
 
-	if (!taaEnabled)
-	{
-		rg.addPass("Transmission Resolve",
-		    [&](RGPassBuilder& builder)
-		    {
-			    builder.readTexture(sceneColorHDRHandle, ResourceState::ShaderRead);
+	rg.addPass("Transmission Resolve",
+	    [&](RGPassBuilder& builder)
+	    {
+		    builder.readTexture(sceneColorHDRHandle, ResourceState::ShaderRead);
+		    builder.readTexture(gbufferTargetHandles[0], ResourceState::ShaderRead);
+		    builder.readTexture(gbufferTargetHandles[1], ResourceState::ShaderRead);
+		    builder.readTexture(gbufferTargetHandles[2], ResourceState::ShaderRead);
+		    builder.readTexture(depthTargetHandle, ResourceState::ShaderRead);
+		    if (taaEnabled)
+			    builder.writeTexture(sceneColorResolvedHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
+		    else
 			    builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-		    },
-		    [&](RGPassContext& ctx)
+	    },
+	    [&](RGPassContext& ctx)
+	    {
+		    Image* sceneColorTex = ctx.resourceManager->GetTexture(sceneColorHDRHandle);
+		    assert(sceneColorTex);
+		    Image* resolvedTarget = taaEnabled ? ctx.resourceManager->GetTexture(sceneColorResolvedHandle) : nullptr;
+		    if (taaEnabled)
+			    assert(resolvedTarget);
+		    const VkImageView outView = taaEnabled ? resolvedTarget->imageView : finalOutputImageView;
+
+		    vkCmdBindPipeline(ctx.commandBuffer, transmissionResolveProgram.bindPoint, transmissionResolvePipeline);
+
+		    TransmissionResolveData resolveData = {};
+		    resolveData.cameraPosition = scene->camera.position;
+		    resolveData.inverseViewProjection = inverseViewProjection;
+		    resolveData.imageSize = vec2(float(renderWidth), float(renderHeight));
+		    resolveData.refractionWorldDistance = 0.08f;
+
+		    DescriptorInfo descriptors[] = {
+			    { outView, VK_IMAGE_LAYOUT_GENERAL },
+			    { readSampler, sceneColorTex->imageView, VK_IMAGE_LAYOUT_GENERAL },
+			    { readSampler, gbufferTargets[0]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+			    { readSampler, gbufferTargets[1]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+			    { readSampler, depthTarget->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+			    { readSampler, gbufferTargets[2]->imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+			    mtb.buffer,
+			    textureSampler,
+		    };
+
+		    if (pushDescriptorSupported)
 		    {
-			    Image* sceneColorTex = ctx.resourceManager->GetTexture(sceneColorHDRHandle);
-			    assert(sceneColorTex);
-
-			    vkCmdBindPipeline(ctx.commandBuffer, transmissionResolveProgram.bindPoint, transmissionResolvePipeline);
-
-			    TransmissionResolveData resolveData = {};
-			    resolveData.imageSize = vec2(float(renderWidth), float(renderHeight));
-
-			    DescriptorInfo descriptors[] = {
-				    { finalOutputImageView, VK_IMAGE_LAYOUT_GENERAL },
-				    { readSampler, sceneColorTex->imageView, VK_IMAGE_LAYOUT_GENERAL },
-			    };
-
-			    if (pushDescriptorSupported)
-			    {
-				    dispatch(ctx.commandBuffer, transmissionResolveProgram, renderWidth, renderHeight, resolveData, descriptors);
-			    }
-			    else
-			    {
-				    vkUpdateDescriptorSetWithTemplateKHR(device, transmissionResolveProgram.descriptorSets[frameOffset], transmissionResolveProgram.updateTemplate, descriptors);
-				    vkCmdBindDescriptorSets(ctx.commandBuffer, transmissionResolveProgram.bindPoint, transmissionResolveProgram.layout, 0, 1, &transmissionResolveProgram.descriptorSets[frameOffset], 0, nullptr);
-				    vkCmdPushConstants(ctx.commandBuffer, transmissionResolveProgram.layout, transmissionResolveProgram.pushConstantStages, 0, sizeof(resolveData), &resolveData);
-				    vkCmdDispatch(ctx.commandBuffer, getGroupCount(renderWidth, transmissionResolveProgram.localSizeX), getGroupCount(renderHeight, transmissionResolveProgram.localSizeY), 1);
-			    }
-		    });
-	}
+			    vkCmdBindDescriptorSets(ctx.commandBuffer, transmissionResolveProgram.bindPoint, transmissionResolveProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+			    dispatch(ctx.commandBuffer, transmissionResolveProgram, renderWidth, renderHeight, resolveData, descriptors);
+		    }
+		    else
+		    {
+			    vkUpdateDescriptorSetWithTemplateKHR(device, transmissionResolveProgram.descriptorSets[frameOffset], transmissionResolveProgram.updateTemplate, descriptors);
+			    vkCmdBindDescriptorSets(ctx.commandBuffer, transmissionResolveProgram.bindPoint, transmissionResolveProgram.layout, 0, 1, &transmissionResolveProgram.descriptorSets[frameOffset], 0, nullptr);
+			    vkCmdBindDescriptorSets(ctx.commandBuffer, transmissionResolveProgram.bindPoint, transmissionResolveProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+			    vkCmdPushConstants(ctx.commandBuffer, transmissionResolveProgram.layout, transmissionResolveProgram.pushConstantStages, 0, sizeof(resolveData), &resolveData);
+			    vkCmdDispatch(ctx.commandBuffer, getGroupCount(renderWidth, transmissionResolveProgram.localSizeX), getGroupCount(renderHeight, transmissionResolveProgram.localSizeY), 1);
+		    }
+	    });
 
 	if (taaEnabled)
 	{
@@ -2643,7 +2677,7 @@ bool VulkanContext::DrawFrame()
 				const bool readA = (frameIndex % 2) == 0;
 				RGTextureHandle historyRead = readA ? taaHistoryHandles[0] : taaHistoryHandles[1];
 				RGTextureHandle historyWrite = readA ? taaHistoryHandles[1] : taaHistoryHandles[0];
-				builder.readTexture(sceneColorHDRHandle, ResourceState::ShaderRead);
+				builder.readTexture(sceneColorResolvedHandle, ResourceState::ShaderRead);
 				builder.readTextureFromPreviousFrame(historyRead);
 				builder.writeTexture(historyWrite, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 				builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
@@ -2654,15 +2688,15 @@ bool VulkanContext::DrawFrame()
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 
 				const bool readA = (frameIndex % 2) == 0;
-				Image* sceneColorHDR = ctx.resourceManager->GetTexture(sceneColorHDRHandle);
+				Image* sceneColorResolved = ctx.resourceManager->GetTexture(sceneColorResolvedHandle);
 				Image* taaRead = ctx.resourceManager->GetTexture(readA ? taaHistoryHandles[0] : taaHistoryHandles[1]);
 				Image* taaWrite = ctx.resourceManager->GetTexture(readA ? taaHistoryHandles[1] : taaHistoryHandles[0]);
-				assert(sceneColorHDR && taaRead && taaWrite);
+				assert(sceneColorResolved && taaRead && taaWrite);
 
 				vkCmdBindPipeline(ctx.commandBuffer, taaProgram.bindPoint, taaPipeline);
 
 				DescriptorInfo descriptors[] = {
-					{ readSampler, sceneColorHDR->imageView, VK_IMAGE_LAYOUT_GENERAL },
+					{ readSampler, sceneColorResolved->imageView, VK_IMAGE_LAYOUT_GENERAL },
 					{ readSampler, taaRead->imageView, VK_IMAGE_LAYOUT_GENERAL },
 					{ finalOutputImageView, VK_IMAGE_LAYOUT_GENERAL },
 					{ taaWrite->imageView, VK_IMAGE_LAYOUT_GENERAL }
@@ -3395,6 +3429,8 @@ void VulkanContext::Release()
 		resourceManager.ReleaseTexture(shadowblurTargetHandle);
 	if (sceneColorHDRHandle.IsValid())
 		resourceManager.ReleaseTexture(sceneColorHDRHandle);
+	if (sceneColorResolvedHandle.IsValid())
+		resourceManager.ReleaseTexture(sceneColorResolvedHandle);
 	for (int ti = 0; ti < 2; ++ti)
 		if (taaHistoryHandles[ti].IsValid())
 			resourceManager.ReleaseTexture(taaHistoryHandles[ti]);

@@ -41,7 +41,9 @@ struct alignas(16) Material
 	// x: glTF normal texture scale, y: occlusion strength, z: alpha cutoff (MASK), w: emissive strength (KHR)
 	vec4 shadingParams;
 	int32_t alphaMode; // 0 opaque, 1 mask, 2 blend (cgltf_alpha_mode)
-	int32_t trailingPad[3];
+	int32_t transmissionTexture; // 0 = none (same convention as other texture indices)
+	float transmissionFactor;
+	float ior; // KHR_materials_ior, default 1.5 when unspecified
 };
 
 static_assert(sizeof(Material) == 112, "Material size must match GLSL std430 (see shaders/mesh.h)");

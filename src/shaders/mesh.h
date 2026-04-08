@@ -89,7 +89,9 @@ struct Material
 
 	vec4 shadingParams; // x: normal scale, y: occlusion strength, z: alpha cutoff, w: emissive strength
 	uint alphaMode;     // 0 opaque, 1 mask, 2 blend
-	uint trailingPad[3];
+	uint transmissionTexture;
+	float transmissionFactor;
+	float ior;
 };
 
 struct MeshDraw

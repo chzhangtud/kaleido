@@ -19,6 +19,9 @@ PBRMaterial PBRMaterial::CreateDefault()
 	material.data.workflow = 1;
 	material.data.shadingParams = vec4(1.f, 1.f, 0.5f, 1.f);
 	material.data.alphaMode = 0;
+	material.data.transmissionTexture = 0;
+	material.data.transmissionFactor = 0.f;
+	material.data.ior = 1.5f;
 	return material;
 }
 
@@ -415,6 +418,28 @@ static void loadVertices(std::vector<Vertex>& vertices, const cgltf_primitive& p
 	}
 }
 
+// True if this material must render only in the transparency G-buffer pass (postPass == 1).
+static bool MaterialNeedsTransparencyPass(const cgltf_material& material)
+{
+	if (material.alpha_mode != cgltf_alpha_mode_opaque)
+		return true;
+	if (material.has_transmission)
+		return true;
+	if (material.has_pbr_metallic_roughness)
+	{
+		const float a = material.pbr_metallic_roughness.base_color_factor[3];
+		if (a < 1.0f - 1e-5f)
+			return true;
+	}
+	if (material.has_pbr_specular_glossiness)
+	{
+		const float a = material.pbr_specular_glossiness.diffuse_factor[3];
+		if (a < 1.0f - 1e-5f)
+			return true;
+	}
+	return false;
+}
+
 static MaterialKey BuildPbrMaterialKey(const cgltf_material& material, int workflow)
 {
 	uint32_t alpha = (uint32_t)material.alpha_mode;
@@ -477,6 +502,18 @@ static PBRMaterial BuildPbrMaterial(const cgltf_data* data, const cgltf_material
 	    material.alpha_cutoff,
 	    emissiveStrength);
 	mat.alphaMode = int32_t(material.alpha_mode);
+
+	mat.transmissionTexture = 0;
+	mat.transmissionFactor = 0.f;
+	mat.ior = 1.5f;
+	if (material.has_transmission)
+	{
+		mat.transmissionFactor = material.transmission.transmission_factor;
+		if (material.transmission.transmission_texture.texture)
+			mat.transmissionTexture = textureOffset + int(cgltf_texture_index(data, material.transmission.transmission_texture.texture));
+	}
+	if (material.has_ior)
+		mat.ior = material.ior.ior;
 
 	result.key = BuildPbrMaterialKey(material, mat.workflow);
 
@@ -696,8 +733,7 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 				draw.materialIndex = material ? materialOffset + int(cgltf_material_index(data, material)) : 0;
 
 				// postPass must match renderer cull/render passes: only 0 (opaque) and 1 (GBuffer Transparency) are implemented.
-				// Transmission (e.g. glass spheres) was previously 2 and never passed drawcull (drawData.postPass != cullData.postPass).
-				if (material && (material->alpha_mode != cgltf_alpha_mode_opaque || material->has_transmission))
+				if (material && MaterialNeedsTransparencyPass(*material))
 					draw.postPass = 1;
 
 				nodeDraws[i] = int(draws.size());
