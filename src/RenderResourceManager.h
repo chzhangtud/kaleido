@@ -458,6 +458,7 @@ private:
 		case TextureFormat::A2B10G10R10_UNorm: return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
 		case TextureFormat::RGBA16_Float:  return VK_FORMAT_R16G16B16A16_SFLOAT;
 		case TextureFormat::R32_Float:     return VK_FORMAT_R32_SFLOAT;
+		case TextureFormat::R32_UINT:      return VK_FORMAT_R32_UINT;
 		case TextureFormat::RGBA32_Float:  return VK_FORMAT_R32G32B32A32_SFLOAT;
 		case TextureFormat::D24S8:         return VK_FORMAT_D24_UNORM_S8_UINT;
 		case TextureFormat::D32_Float:     return VK_FORMAT_D32_SFLOAT;

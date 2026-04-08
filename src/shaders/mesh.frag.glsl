@@ -24,6 +24,8 @@ layout(binding = 1) readonly buffer Draws
 #extension GL_EXT_mesh_shader: require
 
 layout(location = 0) out vec4 gbuffer[2];
+// Per-pixel material table index; ~0u = no transmission resolve (opaque / empty).
+layout(location = 2) out uint gbufferMaterialIndex;
 
 layout(location = 0) in flat uint drawId;
 layout(location = 1) in vec2 uv;
@@ -81,6 +83,7 @@ void main()
 		vec2 encN = encodeOct(nrm) * 0.5 + 0.5;
 		gbuffer[0] = vec4(0.0, 0.0, 0.0, 0.0);
 		gbuffer[1] = vec4(encN, 0.045, 0.0);
+		gbufferMaterialIndex = POST ? uint(meshDraw.materialIndex) : 0xffffffffu;
 		return;
 	}
 
@@ -109,6 +112,7 @@ void main()
 		vec2 encNM = encodeOct(nrmM) * 0.5 + 0.5 + debandM * (0.5 / 1023);
 		gbuffer[0] = vec4(tosrgb(vec4(viz, 1.0)).rgb, 0.0);
 		gbuffer[1] = vec4(encNM, 0.045, 0.0);
+		gbufferMaterialIndex = POST ? uint(meshDraw.materialIndex) : 0xffffffffu;
 		return;
 	}
 
@@ -173,6 +177,7 @@ void main()
 
 	gbuffer[0] = vec4(tosrgb(albedo).rgb, log2(1 + emissivef) / 5);
 	gbuffer[1] = vec4(encNormal, roughness, metallic);
+	gbufferMaterialIndex = POST ? uint(meshDraw.materialIndex) : 0xffffffffu;
 	if (POST)
 	{
 		if (material.alphaMode == 1u)
@@ -190,6 +195,7 @@ void main()
 #if DEBUG
 	uint mhash = hash(drawId);
 	gbuffer[0] = vec4(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255), 255.0) / 255.0;
+	gbufferMaterialIndex = POST ? uint(meshDraw.materialIndex) : 0xffffffffu;
 	// gbuffer[0] = vec4(normal, 1.0);
 #endif
 }

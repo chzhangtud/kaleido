@@ -133,6 +133,12 @@ struct alignas(16) TaaData
 	float blendAlpha;
 };
 
+struct alignas(16) TransmissionResolveData
+{
+	vec2 imageSize;
+	vec2 pad;
+};
+
 static bool mousePressed = false;
 static bool firstMouse = true;
 static float cameraSpeed = 5.0f;
@@ -206,7 +212,7 @@ void SetVirtualSticks(float moveX, float moveY, float lookX, float lookY);
 
 void updateCamera();
 
-inline static const size_t gbufferCount = 2;
+inline static const size_t gbufferCount = 3;
 
 struct RGPassContext;
 
@@ -340,6 +346,7 @@ public:
 	VkPipeline clusterWirePipeline = 0;
 	VkPipeline clusterpostWirePipeline = 0;
 	VkPipeline finalPipeline = 0;
+	VkPipeline transmissionResolvePipeline = 0;
 	VkPipeline taaPipeline = 0;
 	VkPipeline shadowlqPipeline = 0;
 	VkPipeline shadowhqPipeline = 0;
@@ -359,6 +366,7 @@ public:
 	Program meshtaskProgram{};
 	Program clusterProgram{};
 	Program finalProgram{};
+	Program transmissionResolveProgram{};
 	Program taaProgram{};
 	Program shadowProgram{};
 	Program shadowfillProgram{};
