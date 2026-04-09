@@ -245,7 +245,7 @@ bool readProcessEnvFlag(const char* name)
 	return value && atoi(value) != 0;
 #endif
 }
-}  // namespace
+} // namespace
 
 VkSemaphore createSemaphore(VkDevice device)
 {
@@ -643,7 +643,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	physicalDevice = pickPhysicalDevice(physicalDevices, physicalDeviceCount);
 	if (!physicalDevice)
 	{
-		if (debugCallback) 
+		if (debugCallback)
 			vkDestroyDebugReportCallbackEXT(instance, debugCallback, 0);
 		vkDestroyInstance(instance, 0);
 		return;
@@ -659,9 +659,9 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 	{
 		meshShadingSupported = meshShadingSupported || strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0;
 		raytracingSupported = raytracingSupported || strcmp(ext.extensionName, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) == 0;
-	#if defined(VK_NV_cluster_acceleration_structure)
+#if defined(VK_NV_cluster_acceleration_structure)
 		clusterrtSupported = clusterrtSupported || strcmp(ext.extensionName, VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME) == 0;
-	#endif
+#endif
 	}
 	// RenderDoc replay often fails when captures contain GPU-volatile addresses (BDA, BLAS/TLAS
 	// deviceAddress). Disable RT/cluster-AS so captures stay replayable; shadows fall back to off.
@@ -829,7 +829,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		replace(drawcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE } }));
 		replace(drawculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_TRUE }, { /* TASK= */ VK_FALSE } }));
 		replace(taskcullPipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_TRUE } }));
-		replace(taskculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_TRUE }, {/* TASK= */ VK_TRUE } }));
+		replace(taskculllatePipeline, createComputePipeline(device, pipelineCache, drawcullProgram, { { /* LATE= */ VK_TRUE }, { /* TASK= */ VK_TRUE } }));
 
 		replace(tasksubmitPipeline, createComputePipeline(device, pipelineCache, tasksubmitProgram));
 		replace(clustersubmitPipeline, createComputePipeline(device, pipelineCache, clustersubmitProgram));
@@ -850,7 +850,7 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 		transparencyBlendRaster.depthWrite = false;
 
 		replace(meshTransparencyBlendPipeline, createGraphicsPipeline(device, pipelineCache, sceneColorBlendRenderingInfo, transparencyBlendMeshProgram,
-		    { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
+		                                           { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
 
 		if (wireframeDebugSupported)
 		{
@@ -858,9 +858,9 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 				GraphicsPipelineExtraState wireExtra;
 				wireExtra.polygonMode = VK_POLYGON_MODE_LINE;
 				replace(meshWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
-				    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, wireExtra));
+				                              { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, wireExtra));
 				replace(meshpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshProgram,
-				    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, wireExtra));
+				                                  { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, wireExtra));
 			}
 		}
 
@@ -873,24 +873,24 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 			replace(clusterpostPipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram, { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }));
 
 			replace(clusterTransparencyBlendPipeline, createGraphicsPipeline(device, pipelineCache, sceneColorBlendRenderingInfo, transparencyBlendClusterProgram,
-			    { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
+			                                              { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
 			replace(meshtaskTransparencyBlendPipeline, createGraphicsPipeline(device, pipelineCache, sceneColorBlendRenderingInfo, transparencyBlendMeshtaskProgram,
-			    { { /* LATE= */ VK_TRUE }, { /* TASK= */ VK_TRUE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
+			                                               { { /* LATE= */ VK_TRUE }, { /* TASK= */ VK_TRUE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
 
 			if (wireframeDebugSupported)
 			{
 				GraphicsPipelineExtraState meshWireExtra;
 				meshWireExtra.polygonMode = VK_POLYGON_MODE_LINE;
 				replace(meshtaskWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
-				    { { VK_FALSE }, { VK_TRUE }, { VK_FALSE } }, meshWireExtra));
+				                                  { { VK_FALSE }, { VK_TRUE }, { VK_FALSE } }, meshWireExtra));
 				replace(meshtasklateWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
-				    { { VK_TRUE }, { VK_TRUE }, { VK_FALSE } }, meshWireExtra));
+				                                      { { VK_TRUE }, { VK_TRUE }, { VK_FALSE } }, meshWireExtra));
 				replace(meshtaskpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, meshtaskProgram,
-				    { { VK_TRUE }, { VK_TRUE }, { VK_TRUE } }, meshWireExtra));
+				                                      { { VK_TRUE }, { VK_TRUE }, { VK_TRUE } }, meshWireExtra));
 				replace(clusterWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram,
-				    { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, meshWireExtra));
+				                                 { { VK_FALSE }, { VK_FALSE }, { VK_FALSE } }, meshWireExtra));
 				replace(clusterpostWirePipeline, createGraphicsPipeline(device, pipelineCache, gbufferInfo, clusterProgram,
-				    { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, meshWireExtra));
+				                                     { { VK_FALSE }, { VK_FALSE }, { VK_TRUE } }, meshWireExtra));
 			}
 		}
 
@@ -1181,7 +1181,7 @@ void VulkanContext::InitResources()
 	resourceManager.CreateBuffer(mtb, scene->materialDb.gpuMaterials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	resourceManager.CreateBuffer(vb, scene->geometry.vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	resourceManager.CreateBuffer(ib, scene->geometry.indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT  | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(ib, scene->geometry.indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	if (meshShadingEnabled)
 	{
@@ -1306,98 +1306,98 @@ void VulkanContext::InitResources()
 
 		if (!pushDescriptorSupported)
 		{
-		uint32_t setSize = MAX_FRAMES * DESCRIPTOR_SET_PER_FRAME;
-		// cull descriptor sets
-		{
-			std::vector<VkDescriptorSetLayout> layouts(setSize, drawcullProgram.descriptorSetLayout);
-			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = setSize;
-			allocInfo.pSetLayouts = layouts.data();
-
-			auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)drawcullSets);
-			VK_CHECK(ret);
-		}
-		{
-			std::vector<VkDescriptorSetLayout> layouts(setSize, tasksubmitProgram.descriptorSetLayout);
-			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = setSize;
-			allocInfo.pSetLayouts = layouts.data();
-
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)tasksubmitSets));
-		}
-
-		// render descriptor sets
-		{
-			std::vector<VkDescriptorSetLayout> layouts(setSize, clustercullProgram.descriptorSetLayout);
-			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = setSize;
-			allocInfo.pSetLayouts = layouts.data();
-
-            auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)clustercullSets);
-			VK_CHECK(ret);
-		}
-		{
-			std::vector<VkDescriptorSetLayout> layouts(setSize, clustersubmitProgram.descriptorSetLayout);
-			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = setSize;
-			allocInfo.pSetLayouts = layouts.data();
-
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)clustersubmitSets));
-		}
-		if (meshShadingEnabled)
-		{
+			uint32_t setSize = MAX_FRAMES * DESCRIPTOR_SET_PER_FRAME;
+			// cull descriptor sets
 			{
-				std::vector<VkDescriptorSetLayout> layouts(setSize, meshtaskProgram.descriptorSetLayout);
+				std::vector<VkDescriptorSetLayout> layouts(setSize, drawcullProgram.descriptorSetLayout);
 				VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 				allocInfo.descriptorPool = descriptorPool;
 				allocInfo.descriptorSetCount = setSize;
 				allocInfo.pSetLayouts = layouts.data();
 
-				auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)meshtaskSets);
+				auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)drawcullSets);
 				VK_CHECK(ret);
 			}
 			{
-				std::vector<VkDescriptorSetLayout> layouts(setSize, clusterProgram.descriptorSetLayout);
+				std::vector<VkDescriptorSetLayout> layouts(setSize, tasksubmitProgram.descriptorSetLayout);
 				VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 				allocInfo.descriptorPool = descriptorPool;
 				allocInfo.descriptorSetCount = setSize;
 				allocInfo.pSetLayouts = layouts.data();
 
-				auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)clusterSets);
+				VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)tasksubmitSets));
+			}
+
+			// render descriptor sets
+			{
+				std::vector<VkDescriptorSetLayout> layouts(setSize, clustercullProgram.descriptorSetLayout);
+				VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+				allocInfo.descriptorPool = descriptorPool;
+				allocInfo.descriptorSetCount = setSize;
+				allocInfo.pSetLayouts = layouts.data();
+
+				auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)clustercullSets);
 				VK_CHECK(ret);
+			}
+			{
+				std::vector<VkDescriptorSetLayout> layouts(setSize, clustersubmitProgram.descriptorSetLayout);
+				VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+				allocInfo.descriptorPool = descriptorPool;
+				allocInfo.descriptorSetCount = setSize;
+				allocInfo.pSetLayouts = layouts.data();
+
+				VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)clustersubmitSets));
+			}
+			if (meshShadingEnabled)
+			{
+				{
+					std::vector<VkDescriptorSetLayout> layouts(setSize, meshtaskProgram.descriptorSetLayout);
+					VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+					allocInfo.descriptorPool = descriptorPool;
+					allocInfo.descriptorSetCount = setSize;
+					allocInfo.pSetLayouts = layouts.data();
+
+					auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)meshtaskSets);
+					VK_CHECK(ret);
+				}
+				{
+					std::vector<VkDescriptorSetLayout> layouts(setSize, clusterProgram.descriptorSetLayout);
+					VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+					allocInfo.descriptorPool = descriptorPool;
+					allocInfo.descriptorSetCount = setSize;
+					allocInfo.pSetLayouts = layouts.data();
+
+					auto ret = vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)clusterSets);
+					VK_CHECK(ret);
+				}
+			}
+
+			{
+				std::vector<VkDescriptorSetLayout> layouts(setSize, meshProgram.descriptorSetLayout);
+				VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+				allocInfo.descriptorPool = descriptorPool;
+				allocInfo.descriptorSetCount = setSize;
+				allocInfo.pSetLayouts = layouts.data();
+
+				VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)meshSets));
+			}
+
+			// shadow blur sets
+			{
+				std::vector<VkDescriptorSetLayout> layouts(setSize, shadowblurProgram.descriptorSetLayout);
+				VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+				allocInfo.descriptorPool = descriptorPool;
+				allocInfo.descriptorSetCount = setSize;
+				allocInfo.pSetLayouts = layouts.data();
+
+				VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)shadowblurSets));
 			}
 		}
 
-		{
-			std::vector<VkDescriptorSetLayout> layouts(setSize, meshProgram.descriptorSetLayout);
-			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = setSize;
-			allocInfo.pSetLayouts = layouts.data();
-
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)meshSets));
-		}
-
-		// shadow blur sets
-		{
-			std::vector<VkDescriptorSetLayout> layouts(setSize, shadowblurProgram.descriptorSetLayout);
-			VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-			allocInfo.descriptorPool = descriptorPool;
-			allocInfo.descriptorSetCount = setSize;
-			allocInfo.pSetLayouts = layouts.data();
-
-			VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, (VkDescriptorSet*)shadowblurSets));
-		}
-		}
-
-VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
-renderingInfo.colorAttachmentCount = 1;
-renderingInfo.pColorAttachmentFormats = &swapchainFormat;
-renderingInfo.depthAttachmentFormat = depthFormat;
+		VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+		renderingInfo.colorAttachmentCount = 1;
+		renderingInfo.pColorAttachmentFormats = &swapchainFormat;
+		renderingInfo.depthAttachmentFormat = depthFormat;
 
 		guiRenderer->Initialize(window, API_VERSION, instance, physicalDevice, device, graphicsFamily, queue, renderingInfo, swapchainFormat, imageCount);
 
@@ -1490,19 +1490,19 @@ bool VulkanContext::DrawFrame()
 
 		for (Shader& shader : shaderSet.shaders)
 		{
-		#if defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
+#if defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 			if (shader.module)
 				vkDestroyShaderModule(device, shader.module, 0);
-		#endif
+#endif
 
 			std::vector<char> oldSpirv = std::move(shader.spirv);
 
 			std::string spirvPath = "/shaders/" + shader.name + ".spv";
-		#if defined(WIN32)
+#if defined(WIN32)
 			bool rcs = loadShader(shader, scene->path.c_str(), spirvPath.c_str());
-		#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
+#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 			bool rcs = loadShader(shader, device, scene->path.c_str(), spirvPath.c_str());
-		#endif
+#endif
 			assert(rcs);
 
 			changed |= oldSpirv != shader.spirv;
@@ -1851,10 +1851,11 @@ bool VulkanContext::DrawFrame()
 		// TODO: this is stupidly redundant
 		vkCmdFillBuffer(commandBuffer, dvb.buffer, 0, sizeof(uint32_t) * scene->draws.size(), 0);
 		VkBufferMemoryBarrier2 fillBarrier = bufferBarrier(dvb.buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-			#if defined(WIN32)
-			| VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT
-			#endif
-			, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+#if defined(WIN32)
+		                                                                                                                                 | VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT
+#endif
+		    ,
+		    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 		pipelineBarrier(commandBuffer, 0, 1, &fillBarrier, 0, nullptr);
 
 		dvbCleared = true;
@@ -1980,9 +1981,9 @@ bool VulkanContext::DrawFrame()
 		uint32_t rasterizationStage =
 		    taskSubmit
 		        ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-			#if defined(WIN32)
-				| VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT
-			#endif
+#if defined(WIN32)
+		              | VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT
+#endif
 		        : VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPoolTimestamp, timestamp + 0);
@@ -2228,8 +2229,8 @@ bool VulkanContext::DrawFrame()
 		if (clusterSubmit)
 		{
 			const VkPipeline clusterPl = alphaBlendToSceneColor ? clusterTransparencyBlendPipeline
-			                                                      : postPass >= 1 ? (useDebugWireframe ? clusterpostWirePipeline : clusterpostPipeline)
-			                                                                      : (useDebugWireframe ? clusterWirePipeline : clusterPipeline);
+			                             : postPass >= 1        ? (useDebugWireframe ? clusterpostWirePipeline : clusterpostPipeline)
+			                                                    : (useDebugWireframe ? clusterWirePipeline : clusterPipeline);
 			const Program& clusterProg = alphaBlendToSceneColor ? transparencyBlendClusterProgram : clusterProgram;
 			vkCmdBindPipeline(commandBuffer, clusterProg.bindPoint, clusterPl);
 
@@ -2256,9 +2257,9 @@ bool VulkanContext::DrawFrame()
 		else if (taskSubmit)
 		{
 			const VkPipeline taskPl = alphaBlendToSceneColor ? meshtaskTransparencyBlendPipeline
-			                                                 : postPass >= 1 ? (useDebugWireframe ? meshtaskpostWirePipeline : meshtaskpostPipeline)
-			                                                                 : late ? (useDebugWireframe ? meshtasklateWirePipeline : meshtasklatePipeline)
-			                                                                        : (useDebugWireframe ? meshtaskWirePipeline : meshtaskPipeline);
+			                          : postPass >= 1        ? (useDebugWireframe ? meshtaskpostWirePipeline : meshtaskpostPipeline)
+			                          : late                 ? (useDebugWireframe ? meshtasklateWirePipeline : meshtasklatePipeline)
+			                                                 : (useDebugWireframe ? meshtaskWirePipeline : meshtaskPipeline);
 			const Program& taskProg = alphaBlendToSceneColor ? transparencyBlendMeshtaskProgram : meshtaskProgram;
 			vkCmdBindPipeline(commandBuffer, taskProg.bindPoint, taskPl);
 
@@ -2286,8 +2287,8 @@ bool VulkanContext::DrawFrame()
 		else
 		{
 			const VkPipeline meshPl = alphaBlendToSceneColor ? meshTransparencyBlendPipeline
-			                                                 : postPass >= 1 ? (useDebugWireframe ? meshpostWirePipeline : meshpostPipeline)
-			                                                                 : (useDebugWireframe ? meshWirePipeline : meshPipeline);
+			                          : postPass >= 1        ? (useDebugWireframe ? meshpostWirePipeline : meshpostPipeline)
+			                                                 : (useDebugWireframe ? meshWirePipeline : meshPipeline);
 			const Program& meshProg = alphaBlendToSceneColor ? transparencyBlendMeshProgram : meshProgram;
 			vkCmdBindPipeline(commandBuffer, meshProg.bindPoint, meshPl);
 
@@ -2430,48 +2431,34 @@ bool VulkanContext::DrawFrame()
 
 	RenderGraph rg;
 
-	rg.addPass("GBuffer Early",
-		[&](RGPassBuilder& builder)
-		{
+	rg.addPass("GBuffer Early", [&](RGPassBuilder& builder)
+	    {
 			builder.readTextureFromPreviousFrame(depthPyramidHandle);  // Use previous frame's pyramid for culling
 			for (uint32_t i = 0; i < gbufferCount; ++i)
 				builder.writeTexture(gbufferTargetHandles[i], { RGLoadOp::Clear, RGStoreOp::Store });
-			builder.writeTexture(depthTargetHandle, { RGLoadOp::Clear, RGStoreOp::Store });
-		},
-		[&](RGPassContext&)
-		{
+			builder.writeTexture(depthTargetHandle, { RGLoadOp::Clear, RGStoreOp::Store }); }, [&](RGPassContext&)
+	    {
 			cull(taskSubmit ? taskcullPipeline : drawcullPipeline, 2, "early cull", /* late= */ false);
-			render(/* late= */ false, clearColors, depthClear, 0, 4, "early render");
-		});
+			render(/* late= */ false, clearColors, depthClear, 0, 4, "early render"); });
 
-	rg.addPass("Depth Pyramid",
-		[&](RGPassBuilder& builder)
-		{
+	rg.addPass("Depth Pyramid", [&](RGPassBuilder& builder)
+	    {
 			builder.readTexture(depthTargetHandle, ResourceState::DepthStencilRead);
-			builder.writeTexture(depthPyramidHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-		},
-		[&](RGPassContext&)
-		{
-			pyramid(6);
-		});
+			builder.writeTexture(depthPyramidHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store }); }, [&](RGPassContext&)
+	    { pyramid(6); });
 
-	rg.addPass("GBuffer Opaque",
-		[&](RGPassBuilder& builder)
-		{
+	rg.addPass("GBuffer Opaque", [&](RGPassBuilder& builder)
+	    {
 			builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
 			for (uint32_t i = 0; i < gbufferCount; ++i)
 				builder.writeTexture(gbufferTargetHandles[i], ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
-			builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
-		},
-		[&](RGPassContext&)
-		{
+			builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store }); }, [&](RGPassContext&)
+	    {
 			cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 8, "opaque cull", /* late= */ true);
-			render(/* late= */ true, clearColors, depthClear, 1, 10, "opaque render");
-		});
+			render(/* late= */ true, clearColors, depthClear, 1, 10, "opaque render"); });
 
-	rg.addPass("Shadow Pass",
-		[&](RGPassBuilder& builder)
-		{
+	rg.addPass("Shadow Pass", [&](RGPassBuilder& builder)
+	    {
 			builder.readTexture(gbufferTargetHandles[0], ResourceState::ShaderRead);
 			builder.readTexture(gbufferTargetHandles[1], ResourceState::ShaderRead);
 			builder.readTexture(gbufferTargetHandles[2], ResourceState::ShaderRead);
@@ -2482,10 +2469,8 @@ bool VulkanContext::DrawFrame()
 			if (shadowblurEnabled)
 			{
 				builder.writeTexture(shadowblurTargetHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-			}
-		},
-		[&](RGPassContext& ctx)
-		{
+			} }, [&](RGPassContext& ctx)
+	    {
 			Image* shadowTarget = resourceManager.GetTexture(shadowTargetHandle);
 			assert(shadowTarget);
 
@@ -2597,8 +2582,7 @@ bool VulkanContext::DrawFrame()
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 2);
-			}
-		});
+			} });
 
 	const auto lightingPassSetup = [&](RGPassBuilder& builder)
 	{
@@ -2658,46 +2642,37 @@ bool VulkanContext::DrawFrame()
 
 	if (screenSpaceRefractionEnabled)
 	{
-		rg.addPass("GBuffer Transparency",
-			[&](RGPassBuilder& builder)
-			{
+		rg.addPass("GBuffer Transparency", [&](RGPassBuilder& builder)
+		    {
 				// Render-graph ordering: without a resource edge, topo sort may run this pass before Lighting while both only
 				// depend on opaque GBuffer; lighting must consume opaque-only GBuffer before we layer transparency into it.
 				builder.readTexture(sceneColorHDRHandle, ResourceState::ShaderRead);
 				builder.readTexture(depthPyramidHandle, ResourceState::ShaderRead);
 				for (uint32_t i = 0; i < gbufferCount; ++i)
 					builder.writeTexture(gbufferTargetHandles[i], ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
-				builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
-			},
-			[&](RGPassContext&)
-			{
+				builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store }); }, [&](RGPassContext&)
+		    {
 				if (scene->meshPostPasses >> 1)
 				{
 					cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "transparency cull", /* late= */ true, /* postPass= */ 1);
 					render(/* late= */ true, clearColors, depthClear, 2, 14, "transparency render", /* postPass= */ 1);
-				}
-			});
+				} });
 	}
 	else if (scene->meshPostPasses >> 1)
 	{
-		rg.addPass("Transparency Alpha Blend",
-			[&](RGPassBuilder& builder)
-			{
+		rg.addPass("Transparency Alpha Blend", [&](RGPassBuilder& builder)
+		    {
 				builder.readTexture(sceneColorHDRHandle, ResourceState::ColorAttachment);
 				builder.writeTexture(sceneColorHDRHandle, ResourceState::ColorAttachment, { RGLoadOp::Load, RGStoreOp::Store });
 				// Depth is a dynamic-rendering attachment (depth test); DepthStencilRead barriers to DEPTH_READ_ONLY_OPTIMAL,
 				// which mismatches vkCmdBeginRendering depthAttachment (ATTACHMENT_OPTIMAL). Match GBuffer Transparency pass.
-				builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store });
-			},
-			[&](RGPassContext&)
-			{
+				builder.writeTexture(depthTargetHandle, ResourceState::DepthStencilWrite, { RGLoadOp::Load, RGStoreOp::Store }); }, [&](RGPassContext&)
+		    {
 				cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "transparency cull", /* late= */ true, /* postPass= */ 1);
-				render(/* late= */ true, clearColors, depthClear, 2, 14, "transparency alpha blend", /* postPass= */ 1, /* alphaBlendToSceneColor= */ true);
-			});
+				render(/* late= */ true, clearColors, depthClear, 2, 14, "transparency alpha blend", /* postPass= */ 1, /* alphaBlendToSceneColor= */ true); });
 	}
 
-	rg.addPass("Transmission Resolve",
-	    [&](RGPassBuilder& builder)
+	rg.addPass("Transmission Resolve", [&](RGPassBuilder& builder)
 	    {
 		    builder.readTexture(sceneColorHDRHandle, ResourceState::ShaderRead);
 		    builder.readTexture(gbufferTargetHandles[0], ResourceState::ShaderRead);
@@ -2707,9 +2682,7 @@ bool VulkanContext::DrawFrame()
 		    if (taaEnabled)
 			    builder.writeTexture(sceneColorResolvedHandle, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
 		    else
-			    builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-	    },
-	    [&](RGPassContext& ctx)
+			    builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store }); }, [&](RGPassContext& ctx)
 	    {
 		    Image* sceneColorTex = ctx.resourceManager->GetTexture(sceneColorHDRHandle);
 		    assert(sceneColorTex);
@@ -2750,24 +2723,20 @@ bool VulkanContext::DrawFrame()
 			    vkCmdBindDescriptorSets(ctx.commandBuffer, transmissionResolveProgram.bindPoint, transmissionResolveProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
 			    vkCmdPushConstants(ctx.commandBuffer, transmissionResolveProgram.layout, transmissionResolveProgram.pushConstantStages, 0, sizeof(resolveData), &resolveData);
 			    vkCmdDispatch(ctx.commandBuffer, getGroupCount(renderWidth, transmissionResolveProgram.localSizeX), getGroupCount(renderHeight, transmissionResolveProgram.localSizeY), 1);
-		    }
-	    });
+		    } });
 
 	if (taaEnabled)
 	{
-		rg.addPass("TAA",
-			[&](RGPassBuilder& builder)
-			{
+		rg.addPass("TAA", [&](RGPassBuilder& builder)
+		    {
 				const bool readA = (frameIndex % 2) == 0;
 				RGTextureHandle historyRead = readA ? taaHistoryHandles[0] : taaHistoryHandles[1];
 				RGTextureHandle historyWrite = readA ? taaHistoryHandles[1] : taaHistoryHandles[0];
 				builder.readTexture(sceneColorResolvedHandle, ResourceState::ShaderRead);
 				builder.readTextureFromPreviousFrame(historyRead);
 				builder.writeTexture(historyWrite, ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-				builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store });
-			},
-			[&](RGPassContext& ctx)
-			{
+				builder.writeExternalTexture("FinalColor", ResourceState::ShaderWrite, { RGLoadOp::DontCare, RGStoreOp::Store }); }, [&](RGPassContext& ctx)
+		    {
 				const uint32_t timestamp = TS_TaaBegin;
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 
@@ -2804,10 +2773,8 @@ bool VulkanContext::DrawFrame()
 				}
 
 				g_taaHistoryReady = true;
-				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
-			});
+				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1); });
 	}
-
 
 	RGPassContext rgContext{};
 	PrepareRenderGraphPassContext(rgContext, commandBuffer, frameIndex, imageIndex);
@@ -2904,12 +2871,12 @@ bool VulkanContext::DrawFrame()
 			    cullGPUTime + culllateGPUTime + cullpostGPUTime,
 			    pyramidGPUTime,
 			    renderGPUTime + renderlateGPUTime + renderpostGPUTime,
-				shadeGPUTime);
+			    shadeGPUTime);
 			debugtext(3, ~0u, "render breakdown: early %.2f ms, opaque %.2f ms, transparency %.2f ms",
-				    renderGPUTime, renderlateGPUTime, renderpostGPUTime);
+			    renderGPUTime, renderlateGPUTime, renderpostGPUTime);
 
 			debugtext(4, ~0u, "tlas: %.2f ms, shadows: %.2f ms, shadow blur: %.2f ms, taa: %.2f ms",
-				tlasGPUTime, shadowsGPUTime, shadowblurGPUTime, taaGPUTime);
+			    tlasGPUTime, shadowsGPUTime, shadowblurGPUTime, taaGPUTime);
 			debugtext(5, ~0u, "triangles %.2fM; %.1fB tri / sec, %.1fM draws / sec",
 			    double(triangleCount) * 1e-6, trianglesPerSec * 1e-9, drawsPerSec * 1e-6);
 			debugtext(7, ~0u, "frustum culling %s, occlusion culling %s, level-of-detail %s",
@@ -2938,7 +2905,7 @@ bool VulkanContext::DrawFrame()
 			}
 
 			VkImageMemoryBarrier2 viewportSampleBarrier = imageBarrier(finalOutputImage->image,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+			    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
 			    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &viewportSampleBarrier);
 		}
@@ -2949,21 +2916,21 @@ bool VulkanContext::DrawFrame()
 		const VkAccessFlags2 uiSrcAccess = sceneRenderedToSwapchain ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_2_NONE;
 		const VkImageLayout uiSrcLayout = sceneRenderedToSwapchain ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
 		VkImageMemoryBarrier2 uiBarrier = imageBarrier(swapchain.images[imageIndex],
-			uiSrcStage, uiSrcAccess, uiSrcLayout,
+		    uiSrcStage, uiSrcAccess, uiSrcLayout,
 		    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &uiBarrier);
 		guiRenderer->RenderDrawData(commandBuffer, swapchainImageViews[imageIndex], { uint32_t(swapchain.width), uint32_t(swapchain.height) }, editorViewportMode);
 	}
 
 	const VkPipelineStageFlags2 presentSrcStage = shouldRenderRuntimeUi
-	    ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-	    : (sceneRenderedToSwapchain ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
+	                                                  ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+	                                                  : (sceneRenderedToSwapchain ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
 	const VkAccessFlags2 presentSrcAccess = shouldRenderRuntimeUi
-	    ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-	    : (sceneRenderedToSwapchain ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_2_NONE);
+	                                            ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+	                                            : (sceneRenderedToSwapchain ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_2_NONE);
 	const VkImageLayout presentSrcLayout = shouldRenderRuntimeUi
-	    ? VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL
-	    : (sceneRenderedToSwapchain ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED);
+	                                           ? VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL
+	                                           : (sceneRenderedToSwapchain ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED);
 	VkImageMemoryBarrier2 presentBarrier = imageBarrier(swapchain.images[imageIndex],
 	    presentSrcStage, presentSrcAccess, presentSrcLayout,
 	    VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -3059,14 +3026,14 @@ bool VulkanContext::DrawFrame()
 }
 
 void VulkanContext::BuildRuntimeUi(float deltaTime,
-	double frameCPUAvg,
-	double frameGPUAvg,
-	double cullGPUTime,
-	double pyramidGPUTime,
-	double culllateGPUTime,
-	double renderGPUTime,
-	double renderlateGPUTime,
-	double taaGPUTime)
+    double frameCPUAvg,
+    double frameGPUAvg,
+    double cullGPUTime,
+    double pyramidGPUTime,
+    double culllateGPUTime,
+    double renderGPUTime,
+    double renderlateGPUTime,
+    double taaGPUTime)
 {
 	if (editorViewportMode)
 	{

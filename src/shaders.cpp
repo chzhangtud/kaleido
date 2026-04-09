@@ -393,11 +393,11 @@ bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const ch
 
 				std::string fpath = entry.path().string();
 				Shader shader = {};
-			#if defined(WIN32)
+#if defined(WIN32)
 				if (!loadShader(shader, fpath.c_str()))
-			#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
+#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 				if (!loadShader(shader, device, fpath.c_str()))
-			#endif
+#endif
 				{
 					LOGW("%s is not a valid SPIRV module", filename.c_str());
 					continue;
@@ -493,7 +493,7 @@ VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, Shaders shaders
 #if defined(WIN32)
 	setCreateInfo.flags = pushDescriptorSupported ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT : 0;
 #elif defined(ANDROID)
-    setCreateInfo.flags = 0;
+	setCreateInfo.flags = 0;
 #endif
 
 	setCreateInfo.bindingCount = uint32_t(setBindings.size());
@@ -563,7 +563,7 @@ static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipeli
 #if defined(WIN32)
 	createInfo.templateType = pushDescriptorSupported ? VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS : VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET;
 #elif defined(ANDROID)
-    createInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET;
+	createInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET;
 #endif
 
 	createInfo.descriptorSetLayout = pushDescriptorSupported ? VK_NULL_HANDLE : setLayout;
@@ -655,7 +655,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	{
 		const Shader* shader = program.shaders[i];
 
-	#if defined(WIN32)
+#if defined(WIN32)
 		VkShaderModuleCreateInfo& module = modules[i];
 		module.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
 		module.codeSize = shader->spirv.size(); // note: this needs to be a number of bytes!
@@ -663,10 +663,10 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 
 		VkPipelineShaderStageCreateInfo& stage = stages[i];
 		stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
+#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 		VkPipelineShaderStageCreateInfo stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
 		stage.module = shader->module;
-	#endif
+#endif
 		stage.stage = shader->stage;
 		if (!pushconstants.empty())
 		{
@@ -674,11 +674,11 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 		}
 		stage.pName = "main";
 
-	#if defined(WIN32)
+#if defined(WIN32)
 		stage.pNext = &module;
-	#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
+#elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 		stages.emplace_back(stage);
-	#endif
+#endif
 	}
 
 	createInfo.stageCount = uint32_t(stages.size());
@@ -834,7 +834,7 @@ VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache,
 		nameInfo.pObjectName = shader.name.c_str();
 		vkSetDebugUtilsObjectNameEXT(device, &nameInfo);
 	}
-	
+
 	return pipeline;
 }
 

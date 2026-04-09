@@ -23,18 +23,18 @@ struct RGBufferHandle
 // Descriptors used to describe virtual resources.
 struct RGTextureDesc
 {
-	uint32_t     width        = 0;
-	uint32_t     height       = 0;
-	uint32_t     mipLevels    = 1;
-	TextureFormat format      = TextureFormat::Unknown;
-	TextureUsage  usage       = TextureUsage::Unknown;
+	uint32_t width = 0;
+	uint32_t height = 0;
+	uint32_t mipLevels = 1;
+	TextureFormat format = TextureFormat::Unknown;
+	TextureUsage usage = TextureUsage::Unknown;
 };
 
 struct RGBufferDesc
 {
-	uint64_t    size        = 0;
-	BufferUsage usage       = BufferUsage::Unknown;
-	bool        hostVisible = false;
+	uint64_t size = 0;
+	BufferUsage usage = BufferUsage::Unknown;
+	bool hostVisible = false;
 };
 
 inline bool operator==(const RGTextureDesc& a, const RGTextureDesc& b)
@@ -345,8 +345,8 @@ public:
 		Buffer buffer{};
 		VkBufferUsageFlags usageFlags = ToVkBufferUsageFlags(desc.usage);
 		VkMemoryPropertyFlags memoryFlags = desc.hostVisible
-		                                       ? (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
-		                                       : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+		                                        ? (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+		                                        : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 		createBuffer(buffer, m_device, m_memoryProperties, desc.size, usageFlags, memoryFlags);
 
 		BufferRecord record{};
@@ -424,45 +424,56 @@ public:
 private:
 	struct ViewRecord
 	{
-		VkImage     image{ VK_NULL_HANDLE };
-		VkFormat    format{ VK_FORMAT_UNDEFINED };
-		uint32_t    mipLevel{ 0 };
-		uint32_t    levelCount{ 1 };
+		VkImage image{ VK_NULL_HANDLE };
+		VkFormat format{ VK_FORMAT_UNDEFINED };
+		uint32_t mipLevel{ 0 };
+		uint32_t levelCount{ 1 };
 		VkImageView view{ VK_NULL_HANDLE };
-		bool        inUse{ false };
+		bool inUse{ false };
 	};
 
 	struct TextureRecord
 	{
-		RGTextureDesc  desc{};
-		Image          image{};
+		RGTextureDesc desc{};
+		Image image{};
 		RGTextureHandle handle{};
-		bool           inUse = false;
+		bool inUse = false;
 	};
 
 	struct BufferRecord
 	{
-		RGBufferDesc   desc{};
-		Buffer         buffer{};
+		RGBufferDesc desc{};
+		Buffer buffer{};
 		RGBufferHandle handle{};
-		bool           inUse = false;
+		bool inUse = false;
 	};
 
 	static VkFormat ToVkFormat(TextureFormat format)
 	{
 		switch (format)
 		{
-		case TextureFormat::R8_UNorm:      return VK_FORMAT_R8_UNORM;
-		case TextureFormat::RG8_UNorm:     return VK_FORMAT_R8G8_UNORM;
-		case TextureFormat::RGBA8_UNorm:   return VK_FORMAT_R8G8B8A8_UNORM;
-		case TextureFormat::A2B10G10R10_UNorm: return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-		case TextureFormat::RGBA16_Float:  return VK_FORMAT_R16G16B16A16_SFLOAT;
-		case TextureFormat::R32_Float:     return VK_FORMAT_R32_SFLOAT;
-		case TextureFormat::R32_UINT:      return VK_FORMAT_R32_UINT;
-		case TextureFormat::RGBA32_Float:  return VK_FORMAT_R32G32B32A32_SFLOAT;
-		case TextureFormat::D24S8:         return VK_FORMAT_D24_UNORM_S8_UINT;
-		case TextureFormat::D32_Float:     return VK_FORMAT_D32_SFLOAT;
-		default:                           return VK_FORMAT_UNDEFINED;
+		case TextureFormat::R8_UNorm:
+			return VK_FORMAT_R8_UNORM;
+		case TextureFormat::RG8_UNorm:
+			return VK_FORMAT_R8G8_UNORM;
+		case TextureFormat::RGBA8_UNorm:
+			return VK_FORMAT_R8G8B8A8_UNORM;
+		case TextureFormat::A2B10G10R10_UNorm:
+			return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+		case TextureFormat::RGBA16_Float:
+			return VK_FORMAT_R16G16B16A16_SFLOAT;
+		case TextureFormat::R32_Float:
+			return VK_FORMAT_R32_SFLOAT;
+		case TextureFormat::R32_UINT:
+			return VK_FORMAT_R32_UINT;
+		case TextureFormat::RGBA32_Float:
+			return VK_FORMAT_R32G32B32A32_SFLOAT;
+		case TextureFormat::D24S8:
+			return VK_FORMAT_D24_UNORM_S8_UINT;
+		case TextureFormat::D32_Float:
+			return VK_FORMAT_D32_SFLOAT;
+		default:
+			return VK_FORMAT_UNDEFINED;
 		}
 	}
 
@@ -506,11 +517,11 @@ private:
 	VkDevice m_device{ VK_NULL_HANDLE };
 	VkPhysicalDeviceMemoryProperties m_memoryProperties{};
 
-	std::vector<ViewRecord>   m_viewPool;
+	std::vector<ViewRecord> m_viewPool;
 	std::vector<TextureRecord> m_texturePool;
-	std::vector<BufferRecord>  m_bufferPool;
+	std::vector<BufferRecord> m_bufferPool;
 
 	std::vector<RGTextureHandle> m_frameTempTextures;
-	std::vector<RGBufferHandle>  m_frameTempBuffers;
-	std::vector<VkImageView>      m_frameTempViews;
+	std::vector<RGBufferHandle> m_frameTempBuffers;
+	std::vector<VkImageView> m_frameTempViews;
 };

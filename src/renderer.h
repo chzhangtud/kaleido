@@ -264,14 +264,14 @@ public:
 private:
 	void PrepareRenderGraphPassContext(RGPassContext& out, VkCommandBuffer commandBuffer, uint64_t frameIndex, uint32_t swapchainImageIndex);
 	void BuildRuntimeUi(float deltaTime,
-		double frameCPUAvg,
-		double frameGPUAvg,
-		double cullGPUTime,
-		double pyramidGPUTime,
-		double culllateGPUTime,
-		double renderGPUTime,
-		double renderlateGPUTime,
-		double taaGPUTime);
+	    double frameCPUAvg,
+	    double frameGPUAvg,
+	    double cullGPUTime,
+	    double pyramidGPUTime,
+	    double culllateGPUTime,
+	    double renderGPUTime,
+	    double renderlateGPUTime,
+	    double taaGPUTime);
 
 	inline static std::shared_ptr<VulkanContext> gInstance = nullptr;
 

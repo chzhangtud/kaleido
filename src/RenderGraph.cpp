@@ -30,7 +30,8 @@ size_t getProducerDependency(size_t consumer, const std::vector<size_t>& produce
 
 bool recordTouchesCycle(const RGResourceRecord& rec, const std::unordered_set<size_t>& cyclePasses)
 {
-	auto inCycle = [&](size_t idx) { return cyclePasses.count(idx) != 0; };
+	auto inCycle = [&](size_t idx)
+	{ return cyclePasses.count(idx) != 0; };
 	bool hasProd = std::any_of(rec.producerPassIndices.begin(), rec.producerPassIndices.end(), inCycle);
 	bool hasCons = std::any_of(rec.consumerPassIndices.begin(), rec.consumerPassIndices.end(), inCycle);
 	return hasProd && hasCons;
@@ -80,20 +81,31 @@ const char* stateToString(ResourceState state)
 {
 	switch (state)
 	{
-	case ResourceState::Undefined:         return "Undefined";
-	case ResourceState::ShaderRead:        return "ShaderRead";
-	case ResourceState::ShaderWrite:       return "ShaderWrite";
-	case ResourceState::ColorAttachment:   return "ColorAttachment";
-	case ResourceState::DepthStencil:      return "DepthStencil";
-	case ResourceState::DepthStencilRead:  return "DepthStencilRead";
-	case ResourceState::DepthStencilWrite: return "DepthStencilWrite";
-	case ResourceState::CopySrc:           return "CopySrc";
-	case ResourceState::CopyDst:           return "CopyDst";
-	case ResourceState::Present:           return "Present";
-	default:                               return "Unknown";
+	case ResourceState::Undefined:
+		return "Undefined";
+	case ResourceState::ShaderRead:
+		return "ShaderRead";
+	case ResourceState::ShaderWrite:
+		return "ShaderWrite";
+	case ResourceState::ColorAttachment:
+		return "ColorAttachment";
+	case ResourceState::DepthStencil:
+		return "DepthStencil";
+	case ResourceState::DepthStencilRead:
+		return "DepthStencilRead";
+	case ResourceState::DepthStencilWrite:
+		return "DepthStencilWrite";
+	case ResourceState::CopySrc:
+		return "CopySrc";
+	case ResourceState::CopyDst:
+		return "CopyDst";
+	case ResourceState::Present:
+		return "Present";
+	default:
+		return "Unknown";
 	}
 }
-}  // namespace
+} // namespace
 
 void RGPassBuilder::readTexture(RGTextureHandle handle)
 {
@@ -234,7 +246,8 @@ std::vector<size_t> RenderGraph::getTopologicalOrder() const
 
 	auto addEdge = [&](size_t from, size_t to)
 	{
-		if (from == to) return;
+		if (from == to)
+			return;
 		if (addedEdges.insert(from * n + to).second)
 		{
 			outEdges[from].push_back(to);
@@ -328,7 +341,7 @@ void RenderGraph::execute(RGPassContext& context) const
 
 	struct ResourcePassState
 	{
-		bool          touched = false;
+		bool touched = false;
 		ResourceState beginState = ResourceState::Undefined;
 		ResourceState endState = ResourceState::Undefined;
 	};

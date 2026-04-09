@@ -310,7 +310,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 		extensions.emplace_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
 		extensions.emplace_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 	}
-    
+
 #if defined(VK_NV_cluster_acceleration_structure)
 	if (clusterrtSupported)
 		extensions.push_back(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME);
@@ -391,7 +391,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	features13.pNext = &features14;
 	void** ppNext = &features14.pNext;
 #elif defined(ANDROID)
-    void** ppNext = &features13.pNext;
+	void** ppNext = &features13.pNext;
 #endif
 
 	if (meshShadingEnabled)

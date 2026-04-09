@@ -70,7 +70,7 @@ static void appendMeshlet(Geometry& result, const meshopt_Meshlet& meshlet, cons
 
 	const unsigned int* indexGroups = reinterpret_cast<const unsigned int*>(&meshlet_triangles[0] + meshlet.triangle_offset);
 	unsigned int indexGroupCount = (meshlet.triangle_count * 3 + 3) / 4;
-	
+
 	for (unsigned int i = 0; i < indexGroupCount; ++i)
 		result.meshletdata.push_back(indexGroups[i]);
 
@@ -104,7 +104,7 @@ static void appendMeshlet(Geometry& result, const meshopt_Meshlet& meshlet, cons
 	m.coneAxis[1] = bounds.cone_axis_s8[1];
 	m.coneAxis[2] = bounds.cone_axis_s8[2];
 	m.coneCutoff = bounds.cone_cutoff_s8;
-	
+
 	result.meshlets.push_back(m);
 }
 
@@ -115,11 +115,11 @@ static size_t appendMeshlets(Geometry& result, const std::vector<vec3>& vertices
 	const size_t max_triangles = MESH_MAXTRI;
 	const float cone_weight = 0.25f;
 	const float fill_weight = 0.5f;
-	
+
 	std::vector<meshopt_Meshlet> meshlets(indices.size() / 3);
 	std::vector<unsigned int> meshlet_vertices(meshlets.size() * max_vertices);
 	std::vector<unsigned char> meshlet_triangles(meshlets.size() * max_triangles * 3);
-	
+
 	if (fast)
 		meshlets.resize(meshopt_buildMeshletsScan(meshlets.data(), meshlet_vertices.data(), meshlet_triangles.data(), indices.data(), indices.size(), vertices.size(), max_vertices, max_triangles));
 	else if (clrt && lod0) // only use spatial algo for lod0 as this is the only lod that is used for raytracing
@@ -987,7 +987,8 @@ void SortSceneDrawsByMaterialKey(Scene& scene)
 	if (n <= 1)
 		return;
 
-	auto materialKeyForDraw = [&](uint32_t materialIndex) -> MaterialKey {
+	auto materialKeyForDraw = [&](uint32_t materialIndex) -> MaterialKey
+	{
 		if (materialIndex >= keys.size())
 			return MaterialKey::DefaultPbrOpaque();
 		return keys[materialIndex];
@@ -997,9 +998,8 @@ void SortSceneDrawsByMaterialKey(Scene& scene)
 	for (size_t i = 0; i < n; ++i)
 		order[i] = uint32_t(i);
 
-	std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
-		return materialKeyForDraw(draws[a].materialIndex) < materialKeyForDraw(draws[b].materialIndex);
-	});
+	std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b)
+	    { return materialKeyForDraw(draws[a].materialIndex) < materialKeyForDraw(draws[b].materialIndex); });
 
 	std::vector<MeshDraw> sorted(n);
 	std::vector<uint32_t> oldToNew(n);
@@ -1030,7 +1030,8 @@ void RebuildMaterialDrawBatches(Scene& scene)
 	if (draws.empty())
 		return;
 
-	auto materialKeyForDraw = [&](uint32_t materialIndex) -> MaterialKey {
+	auto materialKeyForDraw = [&](uint32_t materialIndex) -> MaterialKey
+	{
 		if (materialIndex >= keys.size())
 			return MaterialKey::DefaultPbrOpaque();
 		return keys[materialIndex];

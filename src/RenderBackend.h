@@ -8,11 +8,11 @@
 
 enum class BufferUsage : uint32_t
 {
-	Unknown  = 0,
-	Vertex   = 1u << 0,
-	Index    = 1u << 1,
-	Uniform  = 1u << 2,
-	Storage  = 1u << 3,
+	Unknown = 0,
+	Vertex = 1u << 0,
+	Index = 1u << 1,
+	Uniform = 1u << 2,
+	Storage = 1u << 3,
 	Indirect = 1u << 4,
 };
 
@@ -38,13 +38,13 @@ enum class TextureFormat : uint32_t
 
 enum class TextureUsage : uint32_t
 {
-	Unknown          = 0,
-	Sampled          = 1u << 0,
-	ColorAttachment  = 1u << 1,
-	DepthStencil     = 1u << 2,
-	Storage          = 1u << 3,
-	TransferSrc      = 1u << 4,
-	TransferDst      = 1u << 5,
+	Unknown = 0,
+	Sampled = 1u << 0,
+	ColorAttachment = 1u << 1,
+	DepthStencil = 1u << 2,
+	Storage = 1u << 3,
+	TransferSrc = 1u << 4,
+	TransferDst = 1u << 5,
 };
 
 inline TextureUsage operator|(TextureUsage lhs, TextureUsage rhs)
@@ -54,18 +54,18 @@ inline TextureUsage operator|(TextureUsage lhs, TextureUsage rhs)
 
 struct BufferDesc
 {
-	uint64_t	size        = 0;
-	BufferUsage	usage       = BufferUsage::Unknown;
-	bool		hostVisible = false;
+	uint64_t size = 0;
+	BufferUsage usage = BufferUsage::Unknown;
+	bool hostVisible = false;
 };
 
 struct TextureDesc
 {
-	uint32_t		width        = 0;
-	uint32_t		height       = 0;
-	uint32_t		mipLevels    = 1;
-	TextureFormat	format      = TextureFormat::Unknown;
-	TextureUsage	usage       = TextureUsage::Unknown;
+	uint32_t width = 0;
+	uint32_t height = 0;
+	uint32_t mipLevels = 1;
+	TextureFormat format = TextureFormat::Unknown;
+	TextureUsage usage = TextureUsage::Unknown;
 };
 
 enum class ResourceState : uint32_t
@@ -85,16 +85,16 @@ enum class ResourceState : uint32_t
 
 struct TextureBarrier
 {
-	class ITexture*	texture     = nullptr;
-	ResourceState	oldState    = ResourceState::Undefined;
-	ResourceState	newState    = ResourceState::Undefined;
+	class ITexture* texture = nullptr;
+	ResourceState oldState = ResourceState::Undefined;
+	ResourceState newState = ResourceState::Undefined;
 };
 
 struct BufferBarrier
 {
-	class IBuffer*	buffer      = nullptr;
-	ResourceState	oldState    = ResourceState::Undefined;
-	ResourceState	newState    = ResourceState::Undefined;
+	class IBuffer* buffer = nullptr;
+	ResourceState oldState = ResourceState::Undefined;
+	ResourceState newState = ResourceState::Undefined;
 };
 
 class IBuffer
@@ -130,12 +130,12 @@ public:
 
 	// Basic resource barriers (exact mapping is backend-specific).
 	virtual void ResourceBarrier(const TextureBarrier* textureBarriers, uint32_t textureBarrierCount,
-	                             const BufferBarrier* bufferBarriers, uint32_t bufferBarrierCount) = 0;
+	    const BufferBarrier* bufferBarriers, uint32_t bufferBarrierCount) = 0;
 
 	// Dispatch / draw entry points that RenderGraph can use without touching the native API.
 	virtual void Dispatch(uint32_t threadGroupCountX,
-	                      uint32_t threadGroupCountY,
-	                      uint32_t threadGroupCountZ) = 0;
+	    uint32_t threadGroupCountY,
+	    uint32_t threadGroupCountZ) = 0;
 };
 
 class IRenderDevice
@@ -144,7 +144,7 @@ public:
 	virtual ~IRenderDevice() = default;
 
 	// Resource creation.
-	virtual std::unique_ptr<IBuffer>  CreateBuffer(const BufferDesc& desc, const void* initialData = nullptr) = 0;
+	virtual std::unique_ptr<IBuffer> CreateBuffer(const BufferDesc& desc, const void* initialData = nullptr) = 0;
 	virtual std::unique_ptr<ITexture> CreateTexture(const TextureDesc& desc, const void* initialData = nullptr) = 0;
 
 	// Command list.
@@ -156,9 +156,8 @@ public:
 
 	// Insert resource transitions for the active command stream.
 	virtual void InsertBarrier(ICommandList* cmdList,
-	                           const TextureBarrier* textureBarriers,
-	                           uint32_t textureBarrierCount,
-	                           const BufferBarrier* bufferBarriers,
-	                           uint32_t bufferBarrierCount) = 0;
+	    const TextureBarrier* textureBarriers,
+	    uint32_t textureBarrierCount,
+	    const BufferBarrier* bufferBarriers,
+	    uint32_t bufferBarrierCount) = 0;
 };
-

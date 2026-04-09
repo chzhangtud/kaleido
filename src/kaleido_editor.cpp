@@ -15,7 +15,8 @@ class EditorRuntimeHostBridge final : public RuntimeHostBridge
 {
 public:
 	EditorRuntimeHostBridge(int inArgc, const char** inArgv)
-	    : argc(inArgc), argv(inArgv)
+	    : argc(inArgc)
+	    , argv(inArgv)
 	{
 	}
 

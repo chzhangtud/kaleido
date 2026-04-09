@@ -2,9 +2,9 @@
 #include "resources.h"
 #include "config.h"
 
-const VkBuildAccelerationStructureFlagsKHR  kBuildBLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-const VkBuildAccelerationStructureFlagsKHR  kBuildCLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-const VkBuildAccelerationStructureFlagsKHR  kBuildTLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+const VkBuildAccelerationStructureFlagsKHR kBuildBLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+const VkBuildAccelerationStructureFlagsKHR kBuildCLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+const VkBuildAccelerationStructureFlagsKHR kBuildTLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
 
 void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& vb, const Buffer& ib, std::vector<VkAccelerationStructureKHR>& blas, std::vector<VkDeviceSize>& compactedSizes, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
 {
@@ -361,7 +361,7 @@ void buildCBLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vec
 	VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 	VK_CHECK(vkDeviceWaitIdle(device));
 
-	size_t compactTotalSize  = 0;
+	size_t compactTotalSize = 0;
 	for (size_t i = 0; i < clusterInfo.maxAccelerationStructureCount; ++i)
 	{
 		uint32_t size = ((uint32_t*)rangeBuffer.data)[clusterInfo.maxAccelerationStructureCount * 2 + i * 2];

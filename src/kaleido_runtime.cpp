@@ -60,8 +60,8 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 	targetScene->sunDirection = normalize(vec3(1.0f, 1.0f, 1.0f));
 
 	const bool allowEditorEmptyScene = config.hostOptions.launchMode == RuntimeLaunchMode::EditorViewport &&
-		config.modelPath.empty() &&
-		config.meshPaths.empty();
+	                                   config.modelPath.empty() &&
+	                                   config.meshPaths.empty();
 	bool sceneMode = false;
 	bool fastMode = getenv("FAST") && atoi(getenv("FAST"));
 	clusterRTEnabled = getenv("CLRT") && atoi(getenv("CLRT"));
@@ -95,8 +95,8 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 		const SceneTextureSource& tex = targetScene->sceneTextures[i];
 		Image image;
 		const bool ok = tex.embedded.empty()
-		    ? loadImage(image, vContext->device, vContext->physicalDevice, vContext->commandPools[0], vContext->commandBuffers[0], vContext->queue, vContext->memoryProperties, vContext->scratch, tex.path.c_str())
-		    : loadImageFromMemory(image, vContext->device, vContext->physicalDevice, vContext->commandPools[0], vContext->commandBuffers[0], vContext->queue, vContext->memoryProperties, vContext->scratch, tex.embedded.data(), tex.embedded.size());
+		                    ? loadImage(image, vContext->device, vContext->physicalDevice, vContext->commandPools[0], vContext->commandBuffers[0], vContext->queue, vContext->memoryProperties, vContext->scratch, tex.path.c_str())
+		                    : loadImageFromMemory(image, vContext->device, vContext->physicalDevice, vContext->commandPools[0], vContext->commandBuffers[0], vContext->queue, vContext->memoryProperties, vContext->scratch, tex.embedded.data(), tex.embedded.size());
 		if (!ok)
 		{
 			LOGE("Error: texture %zu (%s) failed to load", i, tex.path.c_str());
@@ -225,8 +225,8 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 {
 	const bool allowEditorEmptyScene = config.hostOptions.launchMode == RuntimeLaunchMode::EditorViewport &&
-		config.modelPath.empty() &&
-		config.meshPaths.empty();
+	                                   config.modelPath.empty() &&
+	                                   config.meshPaths.empty();
 	if (config.modelPath.empty() && !allowEditorEmptyScene)
 	{
 		LOGE("modelPath is empty");
