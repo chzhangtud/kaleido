@@ -11,41 +11,6 @@
 
 namespace fs = std::filesystem;
 
-PBRMaterial PBRMaterial::CreateDefault()
-{
-	PBRMaterial material{};
-	material.data.baseColorFactor = vec4(1);
-	material.data.pbrFactor = vec4(1, 1, 0, 1);
-	material.data.workflow = 1;
-	material.data.shadingParams = vec4(1.f, 1.f, 0.5f, 1.f);
-	material.data.alphaMode = 0;
-	material.data.transmissionTexture = 0;
-	material.data.transmissionFactor = 0.f;
-	material.data.ior = 1.5f;
-	return material;
-}
-
-void MaterialDatabase::Clear()
-{
-	entries.clear();
-	gpuMaterials.clear();
-	materialKeys.clear();
-}
-
-uint32_t MaterialDatabase::Add(std::unique_ptr<MaterialClass> material)
-{
-	assert(material);
-	materialKeys.push_back(material->GetMaterialKey());
-	gpuMaterials.push_back(material->ToGpuMaterial());
-	entries.push_back(std::move(material));
-	return uint32_t(gpuMaterials.size() - 1);
-}
-
-size_t MaterialDatabase::Size() const
-{
-	return gpuMaterials.size();
-}
-
 static void appendMeshlet(Geometry& result, const meshopt_Meshlet& meshlet, const std::vector<vec3>& vertices, const std::vector<unsigned int>& meshlet_vertices, const std::vector<unsigned char>& meshlet_triangles, uint32_t baseVertex, bool lod0)
 {
 	size_t dataOffset = result.meshletdata.size();

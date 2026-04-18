@@ -1,6 +1,7 @@
 #pragma once
 
 #include "math.h"
+#include "material_types.h"
 #include <stdint.h>
 #include <vector>
 #include <string>
@@ -21,113 +22,6 @@ struct alignas(16) Meshlet
 	uint8_t triangleCount;
 	uint8_t shortRefs;
 	uint8_t padding;
-};
-
-// Must match `struct Material` in shaders/mesh.h (std430 SSBO layout).
-struct alignas(16) Material
-{
-	int32_t albedoTexture;
-	int32_t normalTexture;
-	int32_t pbrTexture;
-	int32_t emissiveTexture;
-	int32_t occlusionTexture;
-	int32_t texturePad[3];
-
-	vec4 baseColorFactor;
-	vec4 pbrFactor; // MR: (unused, unused, metallic, roughness), SG: (specular.rgb, glossiness)
-	float emissiveFactor[3];
-	int32_t workflow; // 0: default, 1: metallic-roughness, 2: specular-glossiness fallback
-
-	// x: glTF normal texture scale, y: occlusion strength, z: alpha cutoff (MASK), w: emissive strength (KHR)
-	vec4 shadingParams;
-	int32_t alphaMode;           // 0 opaque, 1 mask, 2 blend (cgltf_alpha_mode)
-	int32_t transmissionTexture; // 0 = none (same convention as other texture indices)
-	float transmissionFactor;
-	float ior; // KHR_materials_ior, default 1.5 when unspecified
-};
-
-static_assert(sizeof(Material) == 112, "Material size must match GLSL std430 (see shaders/mesh.h)");
-
-enum class MaterialType : uint32_t
-{
-	PBR = 0,
-};
-
-// Stable batching/sort key: material class, workflow, alpha mode, double-sided, transmission (extensible upper bits reserved).
-struct MaterialKey
-{
-	uint64_t packed = 0;
-
-	static MaterialKey Pack(MaterialType type, uint32_t workflow, uint32_t alphaMode, uint32_t doubleSided, uint32_t transmission)
-	{
-		const uint64_t t = (uint64_t)(uint32_t)type & 0xFFu;
-		const uint64_t w = (uint64_t)(workflow & 0xFu) << 8;
-		const uint64_t a = (uint64_t)(alphaMode & 3u) << 12;
-		const uint64_t d = (uint64_t)(doubleSided & 1u) << 14;
-		const uint64_t tr = (uint64_t)(transmission & 1u) << 15;
-		MaterialKey k;
-		k.packed = t | w | a | d | tr;
-		return k;
-	}
-
-	// Opaque MR, single-sided, no transmission (matches glTF defaults / dummy slot 0).
-	static MaterialKey DefaultPbrOpaque() { return Pack(MaterialType::PBR, 1u, 0u, 0u, 0u); }
-
-	bool operator==(MaterialKey o) const { return packed == o.packed; }
-	bool operator!=(MaterialKey o) const { return packed != o.packed; }
-	bool operator<(MaterialKey o) const { return packed < o.packed; }
-};
-
-class MaterialClass
-{
-public:
-	virtual ~MaterialClass() = default;
-	virtual Material ToGpuMaterial() const = 0;
-	virtual MaterialType GetType() const = 0;
-	virtual MaterialKey GetMaterialKey() const = 0;
-};
-
-class PBRMaterial final : public MaterialClass
-{
-public:
-	Material data{};
-	MaterialKey key = MaterialKey::DefaultPbrOpaque();
-
-	Material ToGpuMaterial() const override
-	{
-		return data;
-	}
-
-	MaterialType GetType() const override
-	{
-		return MaterialType::PBR;
-	}
-
-	MaterialKey GetMaterialKey() const override
-	{
-		return key;
-	}
-
-	static PBRMaterial CreateDefault();
-};
-
-struct MaterialDatabase
-{
-	std::vector<std::unique_ptr<MaterialClass>> entries;
-	std::vector<Material> gpuMaterials;
-	std::vector<MaterialKey> materialKeys;
-
-	void Clear();
-	uint32_t Add(std::unique_ptr<MaterialClass> material);
-	size_t Size() const;
-};
-
-// CPU-side batch metadata: consecutive draws in scene.draws sharing the same MaterialKey (draws must be material-sorted).
-struct DrawBatch
-{
-	MaterialKey materialKey{};
-	uint32_t firstDraw = 0;
-	uint32_t drawCount = 0;
 };
 
 struct alignas(16) MeshDraw
