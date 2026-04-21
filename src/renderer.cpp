@@ -1776,9 +1776,10 @@ bool VulkanContext::DrawFrame()
 			const Keyframe& keyframe1 = animation.keyframes[index1];
 
 			MeshDraw& draw = scene->draws[animation.drawIndex];
-			draw.position = glm::mix(keyframe0.translation, keyframe1.translation, float(t));
-			draw.scale = glm::mix(keyframe0.scale, keyframe1.scale, float(t));
-			draw.orientation = glm::slerp(keyframe0.rotation, keyframe1.rotation, float(t));
+			const glm::vec3 tr = glm::mix(keyframe0.translation, keyframe1.translation, float(t));
+			const float uniformScale = glm::mix(keyframe0.scale, keyframe1.scale, float(t));
+			const glm::quat rot = glm::slerp(keyframe0.rotation, keyframe1.rotation, float(t));
+			draw.world = MeshDrawWorldFromUniformTRS(tr, uniformScale, rot);
 
 			MeshDraw& gpuDraw = static_cast<MeshDraw*>(db.data)[animation.drawIndex];
 			memcpy(&gpuDraw, &draw, sizeof(draw));

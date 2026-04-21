@@ -32,6 +32,36 @@ vec3 rotateQuat(vec3 v, vec4 q)
     return v + q.w * t + cross(q.xyz, t);
 }
 
+vec3 transformPoint(mat4 m, vec3 p)
+{
+	return (m * vec4(p, 1.0)).xyz;
+}
+
+float maxColumnLength(mat4 m)
+{
+	return max(max(length(m[0].xyz), length(m[1].xyz)), length(m[2].xyz));
+}
+
+// Normal / tangent for mesh shading: inverse-transpose of upper 3x3. When W is singular (e.g. zero scale
+// placeholder draw), transpose(inverse(L))) is undefined — fall back to object-space TBN (matches legacy rotateQuat-only path).
+void transformWorldTBN(mat4 W, vec3 inNormal, vec3 inTangent, out vec3 outNormal, out vec3 outTangent)
+{
+	mat3 L = mat3(W);
+	float colLen = max(max(length(L[0]), length(L[1])), length(L[2]));
+	float det = dot(cross(L[0], L[1]), L[2]);
+	if (colLen < 1e-12f || abs(det) < 1e-30f)
+	{
+		outNormal = normalize(inNormal);
+		outTangent = normalize(inTangent);
+	}
+	else
+	{
+		mat3 N = transpose(inverse(L));
+		outNormal = normalize(N * inNormal);
+		outTangent = normalize(N * inTangent);
+	}
+}
+
 // A Survey of Efficient Representations for Independent Unit Vectors
 vec2 encodeOct(vec3 v)
 {

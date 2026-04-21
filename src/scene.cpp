@@ -687,10 +687,12 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 			for (unsigned int j = 0; j < range.second; ++j)
 			{
 				MeshDraw draw = {};
-				draw.position = vec3(translation[0], translation[1], translation[2]);
-				draw.scale = std::max(scale[0], std::max(scale[1], scale[2]));
-				draw.scale = std::max(scale[0], std::max(scale[1], scale[2]));
-				draw.orientation = quat(rotation[0], rotation[1], rotation[2], rotation[3]);
+				const float uniformScale = std::max(scale[0], std::max(scale[1], scale[2]));
+				draw.world = MeshDrawWorldFromUniformTRS(
+				    vec3(translation[0], translation[1], translation[2]),
+				    uniformScale,
+				    quat(rotation[0], rotation[1], rotation[2], rotation[3]));
+				draw.gltfNodeIndex = uint32_t(i);
 				draw.meshIndex = range.first + j;
 
 				cgltf_material* material = primitiveMaterials[range.first + j - firstMeshOffset];

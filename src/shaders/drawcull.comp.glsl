@@ -2,6 +2,7 @@
 #extension GL_EXT_shader_16bit_storage: require
 #extension GL_EXT_shader_8bit_storage: require
 #extension GL_GOOGLE_include_directive: require
+#extension GL_EXT_nonuniform_qualifier: require
 
 #include "mesh.h"
 #include "math.h"
@@ -55,7 +56,7 @@ void main()
 	if (di >= cullData.drawCount)
 		return;
 
-	MeshDraw drawData = draws[di];
+	MeshDraw drawData = draws[nonuniformEXT(di)];
 
 	if (drawData.postPass != cullData.postPass)
 		return;
@@ -67,9 +68,9 @@ void main()
 	uint meshIndex = drawData.meshIndex;
 	Mesh mesh = meshes[meshIndex];
 
-	vec3 center = rotateQuat(mesh.center, drawData.orientation) * drawData.scale + drawData.position;
+	vec3 center = transformPoint(drawData.world, mesh.center);
 	center = (cullData.view * vec4(center, 1)).xyz;
-	float radius = mesh.radius * drawData.scale;
+	float radius = mesh.radius * maxColumnLength(drawData.world);
 
 	bool visible = true;
 	// the left/top/right/bottom plane culling utilizes frustum symmetry to cull against two planes at the same time
@@ -110,7 +111,7 @@ void main()
 		if (cullData.lodEnabled == 1)
 		{
 			float distance = max(length(center) - radius, 0);
-			float threshold = distance * cullData.lodTarget / drawData.scale;
+			float threshold = distance * cullData.lodTarget / maxColumnLength(drawData.world);
 
 			for (uint i = 1; i < mesh.lodCount; ++i)
 				if (mesh.lods[i].error < threshold)

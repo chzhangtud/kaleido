@@ -1,6 +1,7 @@
 #pragma once
 
 #include "math.h"
+#include <glm/gtc/matrix_transform.hpp>
 #include "material_types.h"
 #include <stdint.h>
 #include <vector>
@@ -8,6 +9,7 @@
 #include <memory>
 #include "common.h"
 #include "resources.h"
+#include <cstddef>
 
 struct alignas(16) Meshlet
 {
@@ -24,19 +26,33 @@ struct alignas(16) Meshlet
 	uint8_t padding;
 };
 
+// std430: mat4 at offset 0, then 4 u32 groups - verify with static_assert after padding settles.
 struct alignas(16) MeshDraw
 {
-	vec3 position;
-	float scale;
-	quat orientation;
+	glm::mat4 world{ 1.f }; // column-major, object to world
 
-	uint32_t meshIndex;
-	uint32_t meshletVisibilityOffset;
-	uint32_t postPass;
-	uint32_t flags;
+	uint32_t meshIndex = 0;
+	uint32_t meshletVisibilityOffset = 0;
+	uint32_t postPass = 0;
+	uint32_t flags = 0;
 
-	uint32_t materialIndex;
+	uint32_t materialIndex = 0;
+	uint32_t gltfNodeIndex = 0;
+	uint32_t pad0 = 0;
+	uint32_t pad1 = 0;
 };
+
+static_assert(sizeof(MeshDraw) % 16 == 0, "MeshDraw must stay 16-byte aligned for GPU");
+static_assert(sizeof(MeshDraw) == 96, "MeshDraw std430 size must match shaders");
+static_assert(offsetof(MeshDraw, world) == 0, "MeshDraw.world offset must match std430");
+static_assert(offsetof(MeshDraw, meshIndex) == 64, "MeshDraw.meshIndex offset must match std430");
+static_assert(offsetof(MeshDraw, materialIndex) == 80, "MeshDraw.materialIndex offset must match std430");
+static_assert(offsetof(MeshDraw, gltfNodeIndex) == 84, "MeshDraw.gltfNodeIndex offset must match std430");
+
+inline glm::mat4 MeshDrawWorldFromUniformTRS(const glm::vec3& position, float scale, const glm::quat& orientation)
+{
+	return glm::translate(glm::mat4(1.f), position) * glm::mat4_cast(orientation) * glm::scale(glm::mat4(1.f), glm::vec3(scale));
+}
 
 struct Vertex
 {

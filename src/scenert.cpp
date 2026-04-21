@@ -461,14 +461,10 @@ void buildCBLAS(VkDevice device, const std::vector<Mesh>& meshes, const std::vec
 
 void fillInstanceRT(VkAccelerationStructureInstanceKHR& instance, const MeshDraw& draw, uint32_t instanceIndex, VkDeviceAddress blas)
 {
-	mat3 xform = transpose(glm::mat3_cast(draw.orientation)) * draw.scale;
-
-	memcpy(instance.transform.matrix[0], &xform[0], sizeof(float) * 3);
-	memcpy(instance.transform.matrix[1], &xform[1], sizeof(float) * 3);
-	memcpy(instance.transform.matrix[2], &xform[2], sizeof(float) * 3);
-	instance.transform.matrix[0][3] = draw.position.x;
-	instance.transform.matrix[1][3] = draw.position.y;
-	instance.transform.matrix[2][3] = draw.position.z;
+	const glm::mat4& W = draw.world;
+	for (int r = 0; r < 3; ++r)
+		for (int c = 0; c < 4; ++c)
+			instance.transform.matrix[r][c] = W[c][r];
 	instance.instanceCustomIndex = instanceIndex;
 	instance.mask = 1 << draw.postPass;
 	instance.flags = draw.postPass ? VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR : VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;

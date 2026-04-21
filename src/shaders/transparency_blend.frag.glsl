@@ -42,8 +42,8 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
-	MeshDraw meshDraw = draws[drawId];
-	Material material = materials[meshDraw.materialIndex];
+	MeshDraw meshDraw = draws[nonuniformEXT(drawId)];
+	Material material = materials[nonuniformEXT(meshDraw.materialIndex)];
 
 	vec4 albedo = material.baseColorFactor;
 	if (material.albedoTexture > 0)

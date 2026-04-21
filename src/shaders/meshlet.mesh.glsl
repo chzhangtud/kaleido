@@ -5,6 +5,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types: require
 #extension GL_EXT_mesh_shader: require
 #extension GL_GOOGLE_include_directive: require
+#extension GL_EXT_nonuniform_qualifier: require
 
 #include "mesh.h"
 #include "math.h"
@@ -110,7 +111,7 @@ void main()
 	MeshTaskCommand	command = taskCommands[ci & 0xffffff];
 	uint mi = command.taskOffset + (ci >> 24);
 
-	MeshDraw meshDraw = draws[command.drawId];
+	MeshDraw meshDraw = draws[nonuniformEXT(command.drawId)];
 
 #if DEBUG
     uint mhash = hash(mi);
@@ -144,9 +145,12 @@ void main()
 		vec4 tangent;
 		unpackTBN(v.np, uint(v.tp), normal, tangent);
 
-        normal = rotateQuat(normal, meshDraw.orientation);
-        tangent.xyz = rotateQuat(tangent.xyz, meshDraw.orientation);
-		vec3 wpos = rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position;
+		mat4 W = meshDraw.world;
+		vec3 wpos = (W * vec4(position, 1.0)).xyz;
+		vec3 oN, oT;
+		transformWorldTBN(W, normal, tangent.xyz, oN, oT);
+		normal = oN;
+		tangent.xyz = oT;
 		vec4 clip = globals.projection * (globals.cullData.view * vec4(wpos, 1));
         gl_MeshVerticesEXT[i].gl_Position = clip;
 

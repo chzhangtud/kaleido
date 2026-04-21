@@ -99,9 +99,7 @@ struct Material
 
 struct MeshDraw
 {
-	vec3 position;
-	float scale;
-	vec4 orientation;
+	mat4 world;
 
 	uint meshIndex;
 	uint meshletVisibilityOffset;
@@ -109,6 +107,9 @@ struct MeshDraw
 	uint flags;
 
 	uint materialIndex;
+	uint gltfNodeIndex;
+	uint pad0;
+	uint pad1;
 };
 
 struct MeshDrawCommand

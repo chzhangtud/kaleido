@@ -38,9 +38,8 @@ void BootstrapEditorEmptyScene(const std::shared_ptr<Scene>& scene)
 	scene->geometry.meshes.push_back(mesh);
 
 	MeshDraw draw{};
-	draw.position = vec3(0.f);
-	draw.scale = 0.f;
-	draw.orientation = quat(1.f, 0.f, 0.f, 0.f);
+	draw.world = MeshDrawWorldFromUniformTRS(vec3(0.f), 0.f, quat(1.f, 0.f, 0.f, 0.f));
+	draw.gltfNodeIndex = 0;
 	draw.meshIndex = 0;
 	draw.materialIndex = 0;
 	scene->draws.push_back(draw);
@@ -178,19 +177,19 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 			MeshDraw& draw = targetScene->draws[i];
 
 			size_t meshIndex = rand32() % targetScene->geometry.meshes.size();
-			const Mesh& mesh = targetScene->geometry.meshes[meshIndex];
 
-			draw.position[0] = float(rand01()) * sceneRadius * 2 - sceneRadius;
-			draw.position[1] = float(rand01()) * sceneRadius * 2 - sceneRadius;
-			draw.position[2] = float(rand01()) * sceneRadius * 2 - sceneRadius;
-			draw.scale = float(rand01()) + 1;
-			draw.scale *= 2;
+			const vec3 position(float(rand01()) * sceneRadius * 2 - sceneRadius,
+			    float(rand01()) * sceneRadius * 2 - sceneRadius,
+			    float(rand01()) * sceneRadius * 2 - sceneRadius);
+			const float uniformScale = (float(rand01()) + 1.f) * 2.f;
 
 			vec3 axis = normalize(vec3(float(rand01()) * 2 - 1, float(rand01()) * 2 - 1, float(rand01()) * 2 - 1));
 			float angle = glm::radians(float(rand01()) * 90.f);
 
-			draw.orientation = quat(cosf(angle * 0.5f), axis * sinf(angle * 0.5f));
+			const quat orientation = quat(cosf(angle * 0.5f), axis * sinf(angle * 0.5f));
 
+			draw.world = MeshDrawWorldFromUniformTRS(position, uniformScale, orientation);
+			draw.gltfNodeIndex = 0;
 			draw.meshIndex = uint32_t(meshIndex);
 		}
 	}

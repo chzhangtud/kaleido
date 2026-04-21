@@ -3,6 +3,7 @@
 #extension GL_EXT_shader_16bit_storage: require
 #extension GL_EXT_shader_8bit_storage: require
 #extension GL_GOOGLE_include_directive: require
+#extension GL_EXT_nonuniform_qualifier: require
 
 #include "mesh.h"
 #include "math.h"
@@ -56,7 +57,7 @@ void main()
 	uint commandId = gl_WorkGroupID.x * 64 + gl_WorkGroupID.y;
 	MeshTaskCommand command = taskCommands[commandId];
 	uint drawId = command.drawId;
-	MeshDraw meshDraw = draws[drawId];
+	MeshDraw meshDraw = draws[nonuniformEXT(drawId)];
 
 	uint lateDrawVisibility = command.lateDrawVisibility;
 	uint taskCount = command.taskCount;
@@ -66,13 +67,13 @@ void main()
 	uint mvi = mgi + command.meshletVisibilityOffset;
 
 #if CULL
-	vec3 center = rotateQuat(meshlets[mi].center, meshDraw.orientation) * meshDraw.scale + meshDraw.position;
+	vec3 center = transformPoint(meshDraw.world, meshlets[mi].center);
 	center = (cullData.view * vec4(center, 1)).xyz;
-	float radius = meshlets[mi].radius * meshDraw.scale;
-	vec3 coneAxis = rotateQuat(vec3(int(meshlets[mi].coneAxis[0]) / 127.0,
+	float radius = meshlets[mi].radius * maxColumnLength(meshDraw.world);
+	vec3 coneAxis = mat3(meshDraw.world) * vec3(int(meshlets[mi].coneAxis[0]) / 127.0,
 									int(meshlets[mi].coneAxis[1]) / 127.0,
-									int(meshlets[mi].coneAxis[2]) / 127.0), meshDraw.orientation);
-	coneAxis = mat3(cullData.view) * coneAxis;
+									int(meshlets[mi].coneAxis[2]) / 127.0);
+	coneAxis = mat3(cullData.view) * normalize(coneAxis);
 	float coneCutoff = int(meshlets[mi].coneCutoff) / 127.0;
 
 	bool valid = mgi < taskCount;

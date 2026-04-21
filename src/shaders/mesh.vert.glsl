@@ -4,6 +4,7 @@
 #extension GL_EXT_shader_8bit_storage: require
 #extension GL_EXT_shader_explicit_arithmetic_types: require
 #extension GL_GOOGLE_include_directive: require
+#extension GL_EXT_nonuniform_qualifier: require
 #extension GL_ARB_shader_draw_parameters: require
 
 #include "mesh.h"
@@ -40,7 +41,7 @@ layout(location = 5) out flat uint out_meshletIndex;
 void main()
 {
     uint drawId = drawCommands[gl_DrawIDARB].drawId;
-	MeshDraw meshDraw = draws[drawId];
+	MeshDraw meshDraw = draws[nonuniformEXT(drawId)];
 
     Vertex v = vb.vertices[gl_VertexIndex];
 
@@ -51,10 +52,12 @@ void main()
 	vec4 tangent;
 	unpackTBN(v.np, uint(v.tp), normal, tangent);
 
-    normal = rotateQuat(normal, meshDraw.orientation);
-    tangent.xyz = rotateQuat(tangent.xyz, meshDraw.orientation);
-
-    vec3 wpos = rotateQuat(position, meshDraw.orientation) * meshDraw.scale + meshDraw.position;
+	mat4 W = meshDraw.world;
+	vec3 wpos = (W * vec4(position, 1.0)).xyz;
+	vec3 oN, oT;
+	transformWorldTBN(W, normal, tangent.xyz, oN, oT);
+	normal = oN;
+	tangent.xyz = oT;
 	gl_Position = globals.projection * (globals.cullData.view * vec4(wpos, 1));
 
     out_drawId = drawId;

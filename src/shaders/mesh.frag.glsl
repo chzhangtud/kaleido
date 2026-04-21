@@ -58,8 +58,8 @@ uint hash(uint a)
 
 void main()
 {
-    MeshDraw meshDraw = draws[drawId];
-	Material material = materials[meshDraw.materialIndex];
+    MeshDraw meshDraw = draws[nonuniformEXT(drawId)];
+	Material material = materials[nonuniformEXT(meshDraw.materialIndex)];
 
 	// Opaque G-buffer passes (POST == false): do not rasterize blend/mask/transmission; those use the transparency pass only.
 	if (!POST && (material.alphaMode != 0u || material.transmissionFactor > 1e-4))

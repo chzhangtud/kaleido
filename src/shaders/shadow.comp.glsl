@@ -80,8 +80,8 @@ bool shadowTraceTransparent(vec3 wpos, vec3 dir, uint rayflags)
 		int triid = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
 		vec2 bary = rayQueryGetIntersectionBarycentricsEXT(rq, false);
 
-		MeshDraw draw = draws[objid];
-		Material material = materials[draw.materialIndex];
+		MeshDraw draw = draws[nonuniformEXT(objid)];
+		Material material = materials[nonuniformEXT(draw.materialIndex)];
 		Mesh mesh = meshes[draw.meshIndex];
 
 		uint vertexOffset = mesh.vertexOffset;
