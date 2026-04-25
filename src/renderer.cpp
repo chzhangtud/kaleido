@@ -6,7 +6,10 @@
 #include "../external/stb/stb_image_write.h"
 #include "../external/ktx_software/external/astc-encoder/Source/ThirdParty/tinyexr.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
+#include <string_view>
 #if defined(WIN32)
 #include <windows.h>
 #include <commdlg.h>
@@ -30,6 +33,20 @@ void dispatch(VkCommandBuffer commandBuffer, const Program& program, uint32_t th
 
 namespace
 {
+bool PathEndsWithExtensionIgnoreCase(std::string_view path, std::string_view extWithDot)
+{
+	if (path.size() < extWithDot.size())
+		return false;
+	for (size_t i = 0; i < extWithDot.size(); ++i)
+	{
+		const char a = char(std::tolower(static_cast<unsigned char>(path[path.size() - extWithDot.size() + i])));
+		const char b = extWithDot[i];
+		if (a != b)
+			return false;
+	}
+	return true;
+}
+
 enum GpuTimestampSlot : uint32_t
 {
 	TS_FrameBegin = 0,
@@ -934,7 +951,19 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 
 #if defined(WIN32)
 	const char* windowTitle = editorViewportMode ? "kaleido editor" : "kaleido_standalone";
-	window = glfwCreateWindow(1024, 768, windowTitle, 0, 0);
+	int clientW = 1024;
+	int clientH = 768;
+	if (editorViewportMode && editorInitialViewportRequestWidth > 0u && editorInitialViewportRequestHeight > 0u)
+	{
+		// Leave room for the editor panel (360) + gap (20), ImGui viewport window chrome, and OS borders so
+		// mainViewport->WorkSize can fit (viewport outer width) without clamping below the requested render size.
+		const int panelAndGap = 380;
+		const int horizontalChrome = 64;
+		const int verticalChrome = 112;
+		clientW = std::max(clientW, int(editorInitialViewportRequestWidth) + panelAndGap + horizontalChrome);
+		clientH = std::max(clientH, int(editorInitialViewportRequestHeight) + verticalChrome);
+	}
+	window = glfwCreateWindow(clientW, clientH, windowTitle, 0, 0);
 	assert(window);
 
 	glfwSetKeyCallback(window, keyCallback);
@@ -1203,6 +1232,31 @@ void VulkanContext::SetEditorViewportMode(bool enabled)
 	editorViewportMode = enabled;
 }
 
+#if defined(WIN32)
+void VulkanContext::SetEditorInitialViewportRequest(uint32_t width, uint32_t height)
+{
+	editorInitialViewportRequestWidth = width;
+	editorInitialViewportRequestHeight = height;
+}
+
+void VulkanContext::ApplyEditorViewportSizeFromSnapshot(uint32_t width, uint32_t height)
+{
+	if (!editorViewportMode || width == 0u || height == 0u || !window)
+		return;
+	editorInitialViewportRequestWidth = width;
+	editorInitialViewportRequestHeight = height;
+	const int panelAndGap = 380;
+	const int horizontalChrome = 64;
+	const int verticalChrome = 112;
+	const int needW = int(width) + panelAndGap + horizontalChrome;
+	const int needH = int(height) + verticalChrome;
+	int curW = 0;
+	int curH = 0;
+	glfwGetWindowSize(window, &curW, &curH);
+	glfwSetWindowSize(window, std::max(curW, needW), std::max(curH, needH));
+}
+#endif
+
 bool VulkanContext::IsEditorViewportMode() const noexcept
 {
 	return editorViewportMode;
@@ -1258,7 +1312,7 @@ void VulkanContext::ProcessCompletedViewportDump(uint32_t frameSlot)
 		LOGE("Failed to save viewport dump: %s", outputPath.c_str());
 	}
 
-	if (autoExitAfterViewportDump && saveExr && !autoDumpExrPathPending.empty() && outputPath == autoDumpExrPathPending)
+	if (autoExitAfterViewportDump && !autoDumpExrPathPending.empty() && outputPath == autoDumpExrPathPending)
 	{
 #if defined(WIN32)
 		if (window)
@@ -2115,7 +2169,7 @@ bool VulkanContext::DrawFrame()
 	    && editorViewportMode && !editorViewportDumpRequested)
 	{
 		editorViewportDumpRequested = true;
-		editorViewportDumpSaveAsExr = true;
+		editorViewportDumpSaveAsExr = !PathEndsWithExtensionIgnoreCase(autoDumpExrPathPending, ".png");
 		editorViewportDumpRequestPath = autoDumpExrPathPending;
 		autoExrFired = true;
 	}
@@ -3423,12 +3477,26 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 		const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
 		const float panelWidth = 360.0f;
 		const float panelGap = 20.0f;
-		const float viewportWidth = std::max(1.0f, mainViewport->WorkSize.x - panelWidth - panelGap);
-		const float viewportHeight = std::max(1.0f, mainViewport->WorkSize.y);
+		const float workHeight = std::max(1.0f, mainViewport->WorkSize.y);
+		float viewportWindowW = std::max(1.0f, mainViewport->WorkSize.x - panelWidth - panelGap);
+		float viewportWindowH = workHeight;
+#if defined(WIN32)
+		if (editorInitialViewportRequestWidth > 0u && editorInitialViewportRequestHeight > 0u)
+		{
+			const ImGuiStyle& st = ImGui::GetStyle();
+			const float titleBarH = ImGui::GetFrameHeight();
+			viewportWindowW = float(editorInitialViewportRequestWidth) + st.WindowPadding.x * 2.0f;
+			viewportWindowH = float(editorInitialViewportRequestHeight) + titleBarH + st.WindowPadding.y * 2.0f;
+			const float maxW = std::max(1.0f, mainViewport->WorkSize.x - panelWidth - panelGap);
+			const float maxH = std::max(1.0f, mainViewport->WorkSize.y);
+			viewportWindowW = std::min(viewportWindowW, maxW);
+			viewportWindowH = std::min(viewportWindowH, maxH);
+		}
+#endif
 
 		// Keep editor UI windows synced with the host window size.
 		ImGui::SetNextWindowPos(ImVec2(mainViewport->WorkPos.x, mainViewport->WorkPos.y), ImGuiCond_Always);
-		ImGui::SetNextWindowSize(ImVec2(panelWidth, viewportHeight), ImGuiCond_Always);
+		ImGui::SetNextWindowSize(ImVec2(panelWidth, workHeight), ImGuiCond_Always);
 		ImGui::Begin("kaleido editor");
 
 		if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3569,6 +3637,11 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 						snapshot.modelPath = scene->path;
 						snapshot.camera = CaptureEditorCameraState(*scene);
 						snapshot.renderSettings = CaptureEditorRenderSettings();
+						if (editorViewportWidth > 0u && editorViewportHeight > 0u)
+						{
+							snapshot.viewportWidth = editorViewportWidth;
+							snapshot.viewportHeight = editorViewportHeight;
+						}
 						std::string saveError;
 						if (SaveEditorSceneSnapshot(outPath, snapshot, &saveError))
 						{
@@ -3642,7 +3715,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 		ImGui::End();
 
 		ImGui::SetNextWindowPos(ImVec2(mainViewport->WorkPos.x + panelWidth + panelGap, mainViewport->WorkPos.y), ImGuiCond_Always);
-		ImGui::SetNextWindowSize(ImVec2(viewportWidth, viewportHeight), ImGuiCond_Always);
+		ImGui::SetNextWindowSize(ImVec2(viewportWindowW, viewportWindowH), ImGuiCond_Always);
 		ImGui::Begin("viewport");
 		const ImVec2 windowPos = ImGui::GetWindowPos();
 		const ImVec2 contentMin = ImGui::GetWindowContentRegionMin();

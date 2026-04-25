@@ -252,6 +252,8 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 	KaleidoLaunchConfig effectiveConfig = config;
 	EditorSceneSnapshot bootSnapshot{};
 	bool haveBootEditorSnapshot = false;
+	uint32_t initialViewportW = config.editorInitialViewportWidth;
+	uint32_t initialViewportH = config.editorInitialViewportHeight;
 
 	// If a scene-state JSON is provided, resolve model path and load snapshot; BuildSceneContentFromConfig uses modelPath.
 	if (!config.editorSceneStatePath.empty())
@@ -276,6 +278,15 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 		effectiveConfig.loadSingleModel = true;
 		effectiveConfig.editorSceneStatePath.clear();
 		haveBootEditorSnapshot = true;
+		// Scene JSON viewport wins unless the user set both dimensions via CLI (-viewportW / -viewportH).
+		if (bootSnapshot.viewportWidth > 0u && bootSnapshot.viewportHeight > 0u && config.editorInitialViewportWidth == 0u &&
+		    config.editorInitialViewportHeight == 0u)
+		{
+			initialViewportW = bootSnapshot.viewportWidth;
+			initialViewportH = bootSnapshot.viewportHeight;
+			effectiveConfig.editorInitialViewportWidth = initialViewportW;
+			effectiveConfig.editorInitialViewportHeight = initialViewportH;
+		}
 	}
 
 	scene = std::make_shared<Scene>(effectiveConfig.path.c_str());
@@ -283,6 +294,12 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 	vContext->SetScene(scene);
 	vContext->SetRuntimeUiEnabled(config.hostOptions.enableRuntimeUi);
 	vContext->SetEditorViewportMode(config.hostOptions.launchMode == RuntimeLaunchMode::EditorViewport);
+#if defined(WIN32)
+	if (config.hostOptions.launchMode == RuntimeLaunchMode::EditorViewport && initialViewportW > 0u && initialViewportH > 0u)
+	{
+		vContext->SetEditorInitialViewportRequest(initialViewportW, initialViewportH);
+	}
+#endif
 
 #if defined(WIN32)
 	vContext->InitVulkan();
@@ -306,6 +323,8 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 
 	vContext->InitResources();
 	activeConfig = config;
+	activeConfig.editorInitialViewportWidth = initialViewportW;
+	activeConfig.editorInitialViewportHeight = initialViewportH;
 	initialized = true;
 	return 0;
 }
@@ -368,6 +387,14 @@ bool KaleidoRuntime::RenderFrame()
 		{
 			ApplyEditorRenderSettings(pendingSnapshot->renderSettings);
 			ApplyEditorCameraState(*scene, pendingSnapshot->camera);
+#if defined(WIN32)
+			if (vContext->IsEditorViewportMode() && pendingSnapshot->viewportWidth > 0u && pendingSnapshot->viewportHeight > 0u)
+			{
+				nextConfig.editorInitialViewportWidth = pendingSnapshot->viewportWidth;
+				nextConfig.editorInitialViewportHeight = pendingSnapshot->viewportHeight;
+				vContext->ApplyEditorViewportSizeFromSnapshot(pendingSnapshot->viewportWidth, pendingSnapshot->viewportHeight);
+			}
+#endif
 		}
 		vContext->InitResources();
 		activeConfig = nextConfig;

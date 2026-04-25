@@ -265,6 +265,12 @@ public:
 	void SetRuntimeUiEnabled(bool enabled);
 	bool IsRuntimeUiEnabled() const noexcept;
 	void SetEditorViewportMode(bool enabled);
+#if defined(WIN32)
+	// Requested editor viewport pixel size (both > 0). Used for initial GLFW window size and ImGui viewport layout.
+	void SetEditorInitialViewportRequest(uint32_t width, uint32_t height);
+	// After startup: apply saved viewport size and grow the host window if needed (e.g. scene JSON restore).
+	void ApplyEditorViewportSizeFromSnapshot(uint32_t width, uint32_t height);
+#endif
 	bool IsEditorViewportMode() const noexcept;
 	int GetGBufferDebugViewMode() const noexcept;
 	void SetGBufferDebugViewMode(int mode);
@@ -483,6 +489,10 @@ public:
 	std::shared_ptr<Scene> scene;
 	bool runtimeUiEnabled = true;
 	bool editorViewportMode = false;
+#if defined(WIN32)
+	uint32_t editorInitialViewportRequestWidth = 0;
+	uint32_t editorInitialViewportRequestHeight = 0;
+#endif
 	uint32_t currentRenderWidth = 0;
 	uint32_t currentRenderHeight = 0;
 	uint32_t editorViewportWidth = 0;

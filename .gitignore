@@ -1,4 +1,5 @@
 build/
+build_ninja/
 .vs/
 debug-*.log
 src/shaders/*.spv

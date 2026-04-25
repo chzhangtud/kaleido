@@ -42,6 +42,18 @@ public:
 			{
 				config.autoDumpExrFrameDelay = uint32_t(atoi(argv[++i]));
 			}
+			else if ((strcmp(argv[i], "-viewportW") == 0 || strcmp(argv[i], "--viewport-width") == 0) && i + 1 < argc)
+			{
+				const int v = atoi(argv[++i]);
+				if (v > 0)
+					config.editorInitialViewportWidth = uint32_t(v);
+			}
+			else if ((strcmp(argv[i], "-viewportH") == 0 || strcmp(argv[i], "--viewport-height") == 0) && i + 1 < argc)
+			{
+				const int v = atoi(argv[++i]);
+				if (v > 0)
+					config.editorInitialViewportHeight = uint32_t(v);
+			}
 			else if (argv[i][0] == '-')
 			{
 				LOGW("Unknown argument: %s", argv[i]);
@@ -58,6 +70,10 @@ public:
 				else if (strcmp(argv[i], "--load-scene-state") == 0 && i + 1 < argc)
 					++i;
 				else if (strcmp(argv[i], "--auto-dump-frames") == 0 && i + 1 < argc)
+					++i;
+				else if ((strcmp(argv[i], "-viewportW") == 0 || strcmp(argv[i], "--viewport-width") == 0) && i + 1 < argc)
+					++i;
+				else if ((strcmp(argv[i], "-viewportH") == 0 || strcmp(argv[i], "--viewport-height") == 0) && i + 1 < argc)
 					++i;
 				continue;
 			}

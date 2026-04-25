@@ -61,6 +61,18 @@ void ReadFloat(const rapidjson::Value& obj, const char* key, float& target)
 	if (it != obj.MemberEnd() && it->value.IsNumber())
 		target = static_cast<float>(it->value.GetDouble());
 }
+
+void ReadUint32Positive(const rapidjson::Value& obj, const char* key, uint32_t& target)
+{
+	auto it = obj.FindMember(key);
+	if (it == obj.MemberEnd())
+		return;
+	const rapidjson::Value& v = it->value;
+	if (v.IsUint() && v.GetUint() > 0u)
+		target = v.GetUint();
+	else if (v.IsInt() && v.GetInt() > 0)
+		target = static_cast<uint32_t>(v.GetInt());
+}
 } // namespace
 
 bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorSceneSnapshot& snapshot, std::string* outError)
@@ -136,6 +148,17 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.Key("clusterRTEnabled");
 	writer.Bool(snapshot.renderSettings.clusterRTEnabled);
 	writer.EndObject();
+
+	if (snapshot.viewportWidth > 0u && snapshot.viewportHeight > 0u)
+	{
+		writer.Key("viewport");
+		writer.StartObject();
+		writer.Key("width");
+		writer.Uint(snapshot.viewportWidth);
+		writer.Key("height");
+		writer.Uint(snapshot.viewportHeight);
+		writer.EndObject();
+	}
 
 	writer.EndObject();
 
@@ -263,6 +286,21 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 		ReadBool(rs, "debugSleep", snapshot.renderSettings.debugSleep);
 		ReadInt(rs, "gbufferDebugViewMode", snapshot.renderSettings.gbufferDebugViewMode);
 		ReadBool(rs, "clusterRTEnabled", snapshot.renderSettings.clusterRTEnabled);
+	}
+
+	const auto viewportIt = document.FindMember("viewport");
+	if (viewportIt != document.MemberEnd() && viewportIt->value.IsObject())
+	{
+		const rapidjson::Value& vp = viewportIt->value;
+		uint32_t vw = 0;
+		uint32_t vh = 0;
+		ReadUint32Positive(vp, "width", vw);
+		ReadUint32Positive(vp, "height", vh);
+		if (vw > 0u && vh > 0u)
+		{
+			snapshot.viewportWidth = vw;
+			snapshot.viewportHeight = vh;
+		}
 	}
 
 	outSnapshot = std::move(snapshot);
