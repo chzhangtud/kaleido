@@ -1,4 +1,5 @@
 build/
 .vs/
+debug-*.log
 src/shaders/*.spv
 .cursor/

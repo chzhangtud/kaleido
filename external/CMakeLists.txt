@@ -75,6 +75,14 @@ source_group("Header Files\\stb" FILES
     ${CMAKE_CURRENT_LIST_DIR}/stb/stb_image.h
 )
 
+add_library(rapidjson INTERFACE)
+target_include_directories(rapidjson INTERFACE ${CMAKE_CURRENT_LIST_DIR}/rapidjson/include)
+file(GLOB_RECURSE RAPIDJSON_HEADERS
+    ${CMAKE_CURRENT_LIST_DIR}/rapidjson/include/rapidjson/*.h
+)
+add_custom_target(rapidjson_headers SOURCES ${RAPIDJSON_HEADERS})
+source_group(TREE "${CMAKE_CURRENT_LIST_DIR}/rapidjson/include" PREFIX "Header Files\\rapidjson" FILES ${RAPIDJSON_HEADERS})
+
 # ImGui - standalone external project
 add_library(imgui STATIC)
 
@@ -132,6 +140,8 @@ if (MSVC)
     set_property(TARGET fast_obj_lib PROPERTY FOLDER "external")
     set_property(TARGET cgltf PROPERTY FOLDER "external")
     set_property(TARGET stb_image PROPERTY FOLDER "external")
+    set_property(TARGET rapidjson PROPERTY FOLDER "external")
+    set_property(TARGET rapidjson_headers PROPERTY FOLDER "external")
     set_property(TARGET ktx PROPERTY FOLDER "external/ktx")
     set_property(TARGET astcenc-avx2-static PROPERTY FOLDER "external/ktx")
     set_property(TARGET ktx_read PROPERTY FOLDER "external/ktx")

@@ -1,14 +1,29 @@
 #include "kaleido_runtime.h"
 
 #include "common.h"
+#include "editor_scene_io.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
+#include <optional>
 
 namespace
 {
+bool IsSceneAssetPath(const std::string& path)
+{
+	const char* ext = strrchr(path.c_str(), '.');
+	return ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0);
+}
+
+bool IsSceneStateFilePath(const std::string& path)
+{
+	const char* ext = strrchr(path.c_str(), '.');
+	return ext && strcmp(ext, ".json") == 0;
+}
+
 void BootstrapEditorEmptyScene(const std::shared_ptr<Scene>& scene)
 {
 	// Keep one degenerate mesh/draw so GPU buffer uploads stay valid while rendering an "empty" scene.
@@ -51,6 +66,7 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 	targetScene->materialDb.Clear();
 	targetScene->materialDb.Add(std::make_unique<PBRMaterial>(PBRMaterial::CreateDefault()));
 	targetScene->gltfDocument = GltfDocumentOutline{};
+	targetScene->path.clear();
 
 	targetScene->camera.position = { 14.5f, 3.f, 10.f };
 	targetScene->camera.orientation = glm::radians(glm::vec3(-5.f, -220.f, 0.f));
@@ -67,8 +83,7 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 
 	if (config.loadSingleModel)
 	{
-		const char* ext = strrchr(config.modelPath.c_str(), '.');
-		if (ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0))
+		if (IsSceneAssetPath(config.modelPath))
 		{
 			glm::vec3 euler(0.f);
 			if (!loadScene(targetScene->geometry, targetScene->materialDb, targetScene->draws, targetScene->sceneTextures, targetScene->animations, targetScene->camera, targetScene->sunDirection, config.modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled, &targetScene->gltfDocument))
@@ -81,6 +96,7 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 			yaw = euler.y;
 			roll = euler.z;
 			sceneMode = true;
+			targetScene->path = config.modelPath;
 		}
 	}
 
@@ -225,14 +241,44 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 {
 	const bool allowEditorEmptyScene = config.hostOptions.launchMode == RuntimeLaunchMode::EditorViewport &&
 	                                   config.modelPath.empty() &&
-	                                   config.meshPaths.empty();
-	if (config.modelPath.empty() && !allowEditorEmptyScene)
+	                                   config.meshPaths.empty() &&
+	                                   config.editorSceneStatePath.empty();
+	if (config.modelPath.empty() && config.editorSceneStatePath.empty() && !allowEditorEmptyScene)
 	{
 		LOGE("modelPath is empty");
 		return 1;
 	}
 
-	scene = std::make_shared<Scene>(config.path.c_str());
+	KaleidoLaunchConfig effectiveConfig = config;
+	EditorSceneSnapshot bootSnapshot{};
+	bool haveBootEditorSnapshot = false;
+
+	// If a scene-state JSON is provided, resolve model path and load snapshot; BuildSceneContentFromConfig uses modelPath.
+	if (!config.editorSceneStatePath.empty())
+	{
+		std::string loadError;
+		if (!LoadEditorSceneSnapshot(config.editorSceneStatePath, bootSnapshot, &loadError))
+		{
+			LOGE("Failed to read editor scene state file %s: %s", config.editorSceneStatePath.c_str(), loadError.c_str());
+			return 1;
+		}
+		if (!IsSceneAssetPath(bootSnapshot.modelPath))
+		{
+			LOGE("Editor scene file %s has unsupported modelPath: %s", config.editorSceneStatePath.c_str(), bootSnapshot.modelPath.c_str());
+			return 1;
+		}
+		if (!std::filesystem::exists(bootSnapshot.modelPath))
+		{
+			LOGE("Editor scene file %s references missing model: %s", config.editorSceneStatePath.c_str(), bootSnapshot.modelPath.c_str());
+			return 1;
+		}
+		effectiveConfig.modelPath = bootSnapshot.modelPath;
+		effectiveConfig.loadSingleModel = true;
+		effectiveConfig.editorSceneStatePath.clear();
+		haveBootEditorSnapshot = true;
+	}
+
+	scene = std::make_shared<Scene>(effectiveConfig.path.c_str());
 	auto vContext = VulkanContext::GetInstance();
 	vContext->SetScene(scene);
 	vContext->SetRuntimeUiEnabled(config.hostOptions.enableRuntimeUi);
@@ -244,8 +290,19 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 	vContext->InitVulkan(config.nativeWindow);
 #endif
 
-	if (!BuildSceneContentFromConfig(config, scene, vContext.get()))
+	if (!BuildSceneContentFromConfig(effectiveConfig, scene, vContext.get()))
 		return 1;
+
+	if (haveBootEditorSnapshot)
+	{
+		ApplyEditorRenderSettings(bootSnapshot.renderSettings);
+		ApplyEditorCameraState(*scene, bootSnapshot.camera);
+	}
+
+	if (!config.autoDumpExrPath.empty() && vContext->IsEditorViewportMode())
+	{
+		vContext->SetAutoExitAfterExrDump(config.autoDumpExrPath, config.autoDumpExrFrameDelay);
+	}
 
 	vContext->InitResources();
 	activeConfig = config;
@@ -262,11 +319,39 @@ bool KaleidoRuntime::RenderFrame()
 	std::string requestedScenePath;
 	if (vContext->ConsumeEditorSceneLoadRequest(requestedScenePath))
 	{
+		std::optional<EditorSceneSnapshot> pendingSnapshot;
 		KaleidoLaunchConfig nextConfig = activeConfig;
-		nextConfig.modelPath = requestedScenePath;
+		if (IsSceneStateFilePath(requestedScenePath))
+		{
+			EditorSceneSnapshot snapshot{};
+			std::string loadError;
+			if (!LoadEditorSceneSnapshot(requestedScenePath, snapshot, &loadError))
+			{
+				LOGE("Failed to load editor scene file %s: %s", requestedScenePath.c_str(), loadError.c_str());
+				return true;
+			}
+			if (!IsSceneAssetPath(snapshot.modelPath))
+			{
+				LOGE("Editor scene file %s references unsupported model path: %s", requestedScenePath.c_str(), snapshot.modelPath.c_str());
+				return true;
+			}
+			if (!std::filesystem::exists(snapshot.modelPath))
+			{
+				LOGE("Editor scene file %s references missing model path: %s", requestedScenePath.c_str(), snapshot.modelPath.c_str());
+				return true;
+			}
+
+			nextConfig.modelPath = snapshot.modelPath;
+			pendingSnapshot = std::move(snapshot);
+			LOGI("Editor requested scene-state load: %s -> %s", requestedScenePath.c_str(), nextConfig.modelPath.c_str());
+		}
+		else
+		{
+			nextConfig.modelPath = requestedScenePath;
+			LOGI("Editor requested scene asset load: %s", requestedScenePath.c_str());
+		}
 		nextConfig.meshPaths.clear();
 		nextConfig.loadSingleModel = true;
-		LOGI("Editor requested scene load: %s", requestedScenePath.c_str());
 
 		VK_CHECK(vkDeviceWaitIdle(vContext->device));
 
@@ -279,6 +364,11 @@ bool KaleidoRuntime::RenderFrame()
 		vContext->ResetSceneResourcesForReload();
 		scene = nextScene;
 		vContext->SetScene(scene);
+		if (pendingSnapshot.has_value())
+		{
+			ApplyEditorRenderSettings(pendingSnapshot->renderSettings);
+			ApplyEditorCameraState(*scene, pendingSnapshot->camera);
+		}
 		vContext->InitResources();
 		activeConfig = nextConfig;
 		LOGI("Scene reloaded in-place: %s", requestedScenePath.c_str());

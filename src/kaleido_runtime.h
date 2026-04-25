@@ -27,6 +27,12 @@ struct KaleidoLaunchConfig
 	std::vector<std::string> meshPaths;
 	bool loadSingleModel = true;
 	RuntimeHostOptions hostOptions{};
+	// Optional: load editor scene snapshot on startup (RapidJSON .json from Save Scene).
+	std::string editorSceneStatePath;
+	// Optional: for automation — dump first editor viewport to this path as EXR and exit the process.
+	std::string autoDumpExrPath;
+	// Number of render frames to wait after Initialize before scheduling the auto dump.
+	uint32_t autoDumpExrFrameDelay = 64;
 #if defined(__ANDROID__)
 	ANativeWindow* nativeWindow = nullptr;
 #endif

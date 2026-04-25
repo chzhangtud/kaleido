@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 
@@ -27,6 +28,7 @@
 #include "ProfilingTools.h"
 #include "scene.h"
 #include "scenert.h"
+#include "editor_scene_state.h"
 
 static bool meshShadingEnabled = true;
 static bool cullingEnabled = true;
@@ -218,6 +220,10 @@ void OnPointerUp();
 void SetVirtualSticks(float moveX, float moveY, float lookX, float lookY);
 
 void updateCamera();
+EditorRenderSettings CaptureEditorRenderSettings();
+void ApplyEditorRenderSettings(const EditorRenderSettings& settings);
+EditorCameraState CaptureEditorCameraState(const Scene& scene);
+void ApplyEditorCameraState(Scene& scene, const EditorCameraState& state);
 
 inline static const size_t gbufferCount = 3;
 
@@ -229,6 +235,16 @@ struct RGExternalImageRegistryEntry
 	VkImage image = VK_NULL_HANDLE;
 	TextureFormat format = TextureFormat::Unknown;
 	TextureUsage usage = TextureUsage::Unknown;
+};
+
+struct ViewportDumpReadback
+{
+	bool inUse = false;
+	Buffer staging{};
+	uint32_t width = 0;
+	uint32_t height = 0;
+	bool saveAsExr = false;
+	std::string outputPath;
 };
 
 class VulkanContext
@@ -250,8 +266,12 @@ public:
 	bool IsRuntimeUiEnabled() const noexcept;
 	void SetEditorViewportMode(bool enabled);
 	bool IsEditorViewportMode() const noexcept;
+	int GetGBufferDebugViewMode() const noexcept;
+	void SetGBufferDebugViewMode(int mode);
 	void RequestEditorSceneLoad(const std::string& scenePath);
 	bool ConsumeEditorSceneLoadRequest(std::string& outScenePath);
+	// For CLI/automation: after enough frames, submit an EXR viewport dump, then set window should close on success.
+	void SetAutoExitAfterExrDump(const std::string& exrPath, uint32_t frameDelay);
 	void ResetSceneResourcesForReload();
 
 	bool DrawFrame();
@@ -272,6 +292,8 @@ private:
 	    double renderGPUTime,
 	    double renderlateGPUTime,
 	    double taaGPUTime);
+	void ProcessCompletedViewportDump(uint32_t frameSlot);
+	void ReleaseViewportDumpReadbacks();
 
 	inline static std::shared_ptr<VulkanContext> gInstance = nullptr;
 
@@ -476,6 +498,17 @@ public:
 	uint64_t pendingTexturePoolPurgeAfterFrame = 0;
 	bool editorSceneLoadRequested = false;
 	std::string editorSceneLoadRequestPath;
+	bool editorViewportDumpRequested = false;
+	bool editorViewportDumpSaveAsExr = false;
+	std::string editorViewportDumpRequestPath;
+	std::string editorViewportDumpStatus;
+	bool editorViewportDumpStatusIsError = false;
+	ViewportDumpReadback viewportDumpReadbacks[MAX_FRAMES];
+	bool autoExitAfterViewportDump = false;
+	std::string autoDumpExrPathPending;
+	uint64_t autoDumpExrFireAtFrame = UINT64_MAX;
+	bool autoExrFired = false;
+	bool pendingAutoExitFromExr = false;
 	bool frameResourcesInitialized = false;
 };
 

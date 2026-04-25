@@ -2,6 +2,9 @@
 #include "tools.h"
 #include "RenderBackend.h"
 #include "RenderGraph.h"
+#include "editor_scene_io.h"
+#include "../external/stb/stb_image_write.h"
+#include "../external/ktx_software/external/astc-encoder/Source/ThirdParty/tinyexr.h"
 
 #include <filesystem>
 #if defined(WIN32)
@@ -82,7 +85,158 @@ bool ShowOpenSceneDialog(std::string& outPath)
 
 	return false;
 }
+
+bool ShowOpenSceneStateDialog(std::string& outPath)
+{
+	char filePath[MAX_PATH] = "";
+	OPENFILENAMEA ofn{};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = nullptr;
+	ofn.lpstrFile = filePath;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = "kaleido Scene (*.json)\0*.json\0All Files (*.*)\0*.*\0";
+	ofn.nFilterIndex = 1;
+	ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+
+	if (GetOpenFileNameA(&ofn) == TRUE)
+	{
+		outPath = filePath;
+		return true;
+	}
+
+	return false;
+}
+
+bool ShowSaveSceneStateDialog(std::string& outPath)
+{
+	char filePath[MAX_PATH] = "";
+	OPENFILENAMEA ofn{};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = nullptr;
+	ofn.lpstrFile = filePath;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = "kaleido Scene (*.json)\0*.json\0All Files (*.*)\0*.*\0";
+	ofn.nFilterIndex = 1;
+	ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY;
+	ofn.lpstrDefExt = "json";
+
+	if (GetSaveFileNameA(&ofn) == TRUE)
+	{
+		outPath = filePath;
+		return true;
+	}
+
+	return false;
+}
+
+bool ShowSaveViewportDumpDialog(std::string& outPath, bool saveAsExr)
+{
+	char filePath[MAX_PATH] = "";
+	OPENFILENAMEA ofn{};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = nullptr;
+	ofn.lpstrFile = filePath;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = saveAsExr
+	                      ? "OpenEXR (*.exr)\0*.exr\0All Files (*.*)\0*.*\0"
+	                      : "PNG Image (*.png)\0*.png\0All Files (*.*)\0*.*\0";
+	ofn.nFilterIndex = 1;
+	ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY;
+	ofn.lpstrDefExt = saveAsExr ? "exr" : "png";
+
+	if (GetSaveFileNameA(&ofn) == TRUE)
+	{
+		outPath = filePath;
+		return true;
+	}
+
+	return false;
+}
 #endif
+
+bool IsSceneAssetPath(const std::string& path)
+{
+	const char* ext = strrchr(path.c_str(), '.');
+	return ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0);
+}
+
+bool SaveViewportDumpPng(const std::string& path, uint32_t width, uint32_t height, const uint8_t* rgba)
+{
+	if (!rgba || width == 0 || height == 0)
+		return false;
+	const int ok = stbi_write_png(path.c_str(), int(width), int(height), 4, rgba, int(width * 4));
+	return ok != 0;
+}
+
+bool SaveViewportDumpExr(const std::string& path, uint32_t width, uint32_t height, const uint8_t* rgba)
+{
+	if (!rgba || width == 0 || height == 0)
+		return false;
+
+	const size_t pixelCount = size_t(width) * size_t(height);
+	std::vector<float> channelR(pixelCount);
+	std::vector<float> channelG(pixelCount);
+	std::vector<float> channelB(pixelCount);
+	std::vector<float> channelA(pixelCount);
+	for (size_t i = 0; i < pixelCount; ++i)
+	{
+		channelR[i] = float(rgba[i * 4 + 0]) / 255.0f;
+		channelG[i] = float(rgba[i * 4 + 1]) / 255.0f;
+		channelB[i] = float(rgba[i * 4 + 2]) / 255.0f;
+		channelA[i] = float(rgba[i * 4 + 3]) / 255.0f;
+	}
+
+	EXRImage image;
+	InitEXRImage(&image);
+	image.num_channels = 4;
+	std::vector<float*> exrChannelPtrs = { channelB.data(), channelG.data(), channelR.data(), channelA.data() };
+	image.images = reinterpret_cast<unsigned char**>(exrChannelPtrs.data());
+	image.width = int(width);
+	image.height = int(height);
+
+	EXRHeader header;
+	InitEXRHeader(&header);
+	header.num_channels = 4;
+	header.channels = static_cast<EXRChannelInfo*>(malloc(sizeof(EXRChannelInfo) * header.num_channels));
+	header.pixel_types = static_cast<int*>(malloc(sizeof(int) * header.num_channels));
+	header.requested_pixel_types = static_cast<int*>(malloc(sizeof(int) * header.num_channels));
+	if (!header.channels || !header.pixel_types || !header.requested_pixel_types)
+	{
+		free(header.channels);
+		free(header.pixel_types);
+		free(header.requested_pixel_types);
+		LOGE("Save EXR failed: out of memory while preparing header.");
+		return false;
+	}
+
+	strncpy_s(header.channels[0].name, sizeof(header.channels[0].name), "B", _TRUNCATE);
+	strncpy_s(header.channels[1].name, sizeof(header.channels[1].name), "G", _TRUNCATE);
+	strncpy_s(header.channels[2].name, sizeof(header.channels[2].name), "R", _TRUNCATE);
+	strncpy_s(header.channels[3].name, sizeof(header.channels[3].name), "A", _TRUNCATE);
+	for (int c = 0; c < header.num_channels; ++c)
+	{
+		header.pixel_types[c] = TINYEXR_PIXELTYPE_FLOAT;
+		header.requested_pixel_types[c] = TINYEXR_PIXELTYPE_HALF;
+	}
+	header.compression_type = TINYEXR_COMPRESSIONTYPE_NONE;
+
+	const char* err = nullptr;
+	const int exrCode = SaveEXRImageToFile(&image, &header, path.c_str(), &err);
+	free(header.channels);
+	free(header.pixel_types);
+	free(header.requested_pixel_types);
+	if (exrCode != TINYEXR_SUCCESS)
+	{
+		if (err)
+		{
+			LOGE("SaveEXRImageToFile failed for %s: %s", path.c_str(), err);
+			FreeEXRErrorMessage(err);
+		}
+		return false;
+	}
+
+	return true;
+}
 
 static std::string BuildGltfNodeLabel(const GltfDocumentOutline& doc, const GltfNodeOutline& node)
 {
@@ -540,6 +694,89 @@ void updateCamera()
 	sce->camera.orientation = glm::quatLookAt(front, up);
 }
 
+EditorRenderSettings CaptureEditorRenderSettings()
+{
+	EditorRenderSettings settings{};
+	settings.meshShadingEnabled = meshShadingEnabled;
+	settings.taskShadingEnabled = taskShadingEnabled;
+	settings.cullingEnabled = cullingEnabled;
+	settings.occlusionEnabled = occlusionEnabled;
+	settings.clusterOcclusionEnabled = clusterOcclusionEnabled;
+	settings.shadowEnabled = shadowEnabled;
+	settings.shadowQuality = shadowQuality;
+	settings.shadowBlurEnabled = shadowblurEnabled;
+	settings.shadowCheckerboard = shadowCheckerboard;
+	settings.taaEnabled = taaEnabled;
+	settings.taaBlendAlpha = taaBlendAlpha;
+	settings.screenSpaceRefractionEnabled = screenSpaceRefractionEnabled;
+	settings.lodEnabled = lodEnabled;
+	settings.debugLodStep = debugLodStep;
+	settings.animationEnabled = animationEnabled;
+	settings.reloadShaders = reloadShaders;
+	settings.debugGuiMode = debugGuiMode;
+	settings.debugSleep = debugSleep;
+	settings.gbufferDebugViewMode = VulkanContext::GetInstance()->GetGBufferDebugViewMode();
+	settings.clusterRTEnabled = clusterRTEnabled;
+	return settings;
+}
+
+void ApplyEditorRenderSettings(const EditorRenderSettings& settings)
+{
+	meshShadingEnabled = settings.meshShadingEnabled;
+	taskShadingEnabled = settings.taskShadingEnabled;
+	cullingEnabled = settings.cullingEnabled;
+	occlusionEnabled = settings.occlusionEnabled;
+	clusterOcclusionEnabled = settings.clusterOcclusionEnabled;
+	shadowEnabled = settings.shadowEnabled;
+	shadowQuality = std::clamp(settings.shadowQuality, 0, 1);
+	shadowblurEnabled = settings.shadowBlurEnabled;
+	shadowCheckerboard = settings.shadowCheckerboard;
+	taaEnabled = settings.taaEnabled;
+	taaBlendAlpha = std::clamp(settings.taaBlendAlpha, 0.01f, 1.0f);
+	screenSpaceRefractionEnabled = settings.screenSpaceRefractionEnabled;
+	lodEnabled = settings.lodEnabled;
+	debugLodStep = std::max(0, settings.debugLodStep);
+	animationEnabled = settings.animationEnabled;
+	reloadShaders = settings.reloadShaders;
+	debugGuiMode = std::clamp(settings.debugGuiMode, 0, 2);
+	debugSleep = settings.debugSleep;
+	VulkanContext::GetInstance()->SetGBufferDebugViewMode(settings.gbufferDebugViewMode);
+	clusterRTEnabled = settings.clusterRTEnabled;
+}
+
+EditorCameraState CaptureEditorCameraState(const Scene& scene)
+{
+	EditorCameraState state{};
+	state.position = scene.camera.position;
+	state.eulerDegrees = vec3(pitch, yaw, roll);
+	state.fovY = scene.camera.fovY;
+	state.znear = scene.camera.znear;
+	state.moveSpeed = cameraSpeed;
+	state.dollyZoomEnabled = enableDollyZoom;
+	state.dollyZoomRefDistance = soRef;
+	return state;
+}
+
+void ApplyEditorCameraState(Scene& scene, const EditorCameraState& state)
+{
+	scene.camera.position = state.position;
+	scene.camera.fovY = state.fovY;
+	scene.camera.znear = state.znear;
+
+	pitch = state.eulerDegrees.x;
+	yaw = state.eulerDegrees.y;
+	roll = state.eulerDegrees.z;
+	cameraSpeed = std::max(0.0f, state.moveSpeed);
+	enableDollyZoom = state.dollyZoomEnabled;
+	soRef = std::max(0.01f, state.dollyZoomRefDistance);
+	if (enableDollyZoom)
+		cameraOriginForDolly = scene.camera.position;
+
+	cameraDirty = true;
+	updateCamera();
+	cameraDirty = false;
+}
+
 mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
 {
 	float f = 1.0f / tanf(fovY / 2.0f);
@@ -971,6 +1208,82 @@ bool VulkanContext::IsEditorViewportMode() const noexcept
 	return editorViewportMode;
 }
 
+int VulkanContext::GetGBufferDebugViewMode() const noexcept
+{
+	return gbufferDebugViewMode;
+}
+
+void VulkanContext::SetGBufferDebugViewMode(int mode)
+{
+	gbufferDebugViewMode = std::clamp(mode, 0, 2);
+}
+
+void VulkanContext::SetAutoExitAfterExrDump(const std::string& exrPath, uint32_t frameDelay)
+{
+	if (exrPath.empty() || !editorViewportMode)
+		return;
+	autoExitAfterViewportDump = true;
+	autoDumpExrPathPending = exrPath;
+	autoDumpExrFireAtFrame = uint64_t(frameDelay);
+	autoExrFired = false;
+}
+
+void VulkanContext::ProcessCompletedViewportDump(uint32_t frameSlot)
+{
+	if (frameSlot >= MAX_FRAMES)
+		return;
+	ViewportDumpReadback& pending = viewportDumpReadbacks[frameSlot];
+	if (!pending.inUse)
+		return;
+	const std::string outputPath = pending.outputPath;
+	const bool saveExr = pending.saveAsExr;
+
+	const uint8_t* pixels = static_cast<const uint8_t*>(pending.staging.data);
+	bool ok = false;
+	if (saveExr)
+		ok = SaveViewportDumpExr(outputPath, pending.width, pending.height, pixels);
+	else
+		ok = SaveViewportDumpPng(outputPath, pending.width, pending.height, pixels);
+
+	if (ok)
+	{
+		editorViewportDumpStatus = std::string("Viewport dump saved: ") + outputPath;
+		editorViewportDumpStatusIsError = false;
+		LOGI("Viewport dump saved: %s", outputPath.c_str());
+	}
+	else
+	{
+		editorViewportDumpStatus = std::string("Failed to save viewport dump: ") + outputPath;
+		editorViewportDumpStatusIsError = true;
+		LOGE("Failed to save viewport dump: %s", outputPath.c_str());
+	}
+
+	if (autoExitAfterViewportDump && saveExr && !autoDumpExrPathPending.empty() && outputPath == autoDumpExrPathPending)
+	{
+#if defined(WIN32)
+		if (window)
+			glfwSetWindowShouldClose(window, GLFW_TRUE);
+#endif
+	}
+
+	resourceManager.DestroyBuffer(pending.staging);
+	pending = {};
+}
+
+void VulkanContext::ReleaseViewportDumpReadbacks()
+{
+	for (uint32_t i = 0; i < MAX_FRAMES; ++i)
+	{
+		if (viewportDumpReadbacks[i].inUse)
+		{
+			resourceManager.DestroyBuffer(viewportDumpReadbacks[i].staging);
+			viewportDumpReadbacks[i] = {};
+		}
+	}
+	editorViewportDumpRequested = false;
+	editorViewportDumpRequestPath.clear();
+}
+
 void VulkanContext::RequestEditorSceneLoad(const std::string& scenePath)
 {
 	if (scenePath.empty())
@@ -994,6 +1307,7 @@ bool VulkanContext::ConsumeEditorSceneLoadRequest(std::string& outScenePath)
 void VulkanContext::ResetSceneResourcesForReload()
 {
 	VK_CHECK(vkDeviceWaitIdle(device));
+	ReleaseViewportDumpReadbacks();
 
 	if (raytracingSupported)
 	{
@@ -1720,7 +2034,8 @@ bool VulkanContext::DrawFrame()
 			viewportDesc.height = desiredRenderHeight;
 			viewportDesc.mipLevels = 1;
 			viewportDesc.format = TextureFormat::RGBA8_UNorm;
-			viewportDesc.usage = TextureUsage::Storage | TextureUsage::Sampled;
+			// TransferSrc is required for vkCmdCopyImageToBuffer (viewport EXR/PNG dump readback).
+			viewportDesc.usage = TextureUsage::Storage | TextureUsage::Sampled | TextureUsage::TransferSrc;
 			editorViewportTargetHandle = resourceManager.CreateTexture(viewportDesc, /* transient= */ false);
 		}
 
@@ -1795,6 +2110,15 @@ bool VulkanContext::DrawFrame()
 	}
 
 	uint8_t frameOffset = frameIndex % MAX_FRAMES;
+
+	if (autoExitAfterViewportDump && !autoExrFired && !autoDumpExrPathPending.empty() && frameIndex >= autoDumpExrFireAtFrame
+	    && editorViewportMode && !editorViewportDumpRequested)
+	{
+		editorViewportDumpRequested = true;
+		editorViewportDumpSaveAsExr = true;
+		editorViewportDumpRequestPath = autoDumpExrPathPending;
+		autoExrFired = true;
+	}
 
 	if (!pushDescriptorSupported && depthPyramidLevels > 0 && depthreduceSets[frameOffset].empty())
 	{
@@ -2912,6 +3236,63 @@ bool VulkanContext::DrawFrame()
 		}
 
 		BuildRuntimeUi(deltaTime, frameCPUAvg, frameGPUAvg, cullGPUTime, pyramidGPUTime, culllateGPUTime, renderGPUTime, renderlateGPUTime, taaGPUTime);
+		if (editorViewportMode && finalOutputImage && editorViewportDumpRequested)
+		{
+			ViewportDumpReadback& pending = viewportDumpReadbacks[frameOffset];
+			if (pending.inUse)
+			{
+				editorViewportDumpStatus = "Previous viewport dump is still pending. Please retry next frame.";
+				editorViewportDumpStatusIsError = true;
+				LOGW("%s", editorViewportDumpStatus.c_str());
+			}
+			else
+			{
+				const uint32_t dumpWidth = currentRenderWidth;
+				const uint32_t dumpHeight = currentRenderHeight;
+				const size_t dumpSize = size_t(dumpWidth) * size_t(dumpHeight) * 4;
+				resourceManager.CreateBuffer(pending.staging,
+				    dumpSize,
+				    VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+				pending.inUse = true;
+				pending.width = dumpWidth;
+				pending.height = dumpHeight;
+				pending.saveAsExr = editorViewportDumpSaveAsExr;
+				pending.outputPath = editorViewportDumpRequestPath;
+
+				VkImageMemoryBarrier2 toTransferBarrier = imageBarrier(finalOutputImage->image,
+				    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &toTransferBarrier);
+
+				VkBufferImageCopy copyRegion{};
+				copyRegion.bufferOffset = 0;
+				copyRegion.bufferRowLength = 0;
+				copyRegion.bufferImageHeight = 0;
+				copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+				copyRegion.imageSubresource.mipLevel = 0;
+				copyRegion.imageSubresource.baseArrayLayer = 0;
+				copyRegion.imageSubresource.layerCount = 1;
+				copyRegion.imageExtent.width = dumpWidth;
+				copyRegion.imageExtent.height = dumpHeight;
+				copyRegion.imageExtent.depth = 1;
+
+				vkCmdCopyImageToBuffer(commandBuffer, finalOutputImage->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pending.staging.buffer, 1, &copyRegion);
+
+				VkBufferMemoryBarrier2 hostReadBarrier = bufferBarrier(
+				    pending.staging.buffer,
+				    VK_PIPELINE_STAGE_TRANSFER_BIT,
+				    VK_ACCESS_TRANSFER_WRITE_BIT,
+				    VK_PIPELINE_STAGE_HOST_BIT,
+				    VK_ACCESS_HOST_READ_BIT);
+				VkImageMemoryBarrier2 toSampleBarrier = imageBarrier(finalOutputImage->image,
+				    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 1, &hostReadBarrier, 1, &toSampleBarrier);
+			}
+			editorViewportDumpRequested = false;
+			editorViewportDumpRequestPath.clear();
+		}
 		guiRenderer->EndFrame();
 		const VkPipelineStageFlags2 uiSrcStage = sceneRenderedToSwapchain ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
 		const VkAccessFlags2 uiSrcAccess = sceneRenderedToSwapchain ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_2_NONE;
@@ -2980,6 +3361,7 @@ bool VulkanContext::DrawFrame()
 		int waitIndex = (frameIndex + 1) % MAX_FRAMES;
 		VkFence waitFence = frameFences[waitIndex];
 		VK_CHECK(vkWaitForFences(device, 1, &waitFence, VK_TRUE, ~0ull));
+		ProcessCompletedViewportDump(uint32_t(waitIndex));
 		VK_CHECK(vkResetFences(device, 1, &waitFence));
 
 		VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolsTimestamp[waitIndex], 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
@@ -3123,7 +3505,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			static bool assetLoadStatusIsError = false;
 
 			ImGui::Text("Current scene path: %s", scene->path.empty() ? "<empty>" : scene->path.c_str());
-			ImGui::InputText("Scene Path", scenePathInput, sizeof(scenePathInput));
+			ImGui::InputText("Load Path", scenePathInput, sizeof(scenePathInput));
 #if defined(WIN32)
 			ImGui::SameLine();
 			if (ImGui::Button("Browse..."))
@@ -3137,7 +3519,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 				}
 			}
 #endif
-			ImGui::Text("Supported formats: .gltf / .glb");
+			ImGui::Text("Supported scene assets: .gltf / .glb");
 
 			if (ImGui::Button("Load Scene"))
 			{
@@ -3149,8 +3531,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 				}
 				else
 				{
-					const char* ext = strrchr(requestPath.c_str(), '.');
-					const bool supported = ext && (strcmp(ext, ".gltf") == 0 || strcmp(ext, ".glb") == 0);
+					const bool supported = IsSceneAssetPath(requestPath);
 					if (!supported)
 					{
 						assetLoadStatus = "Unsupported scene format. Use .gltf or .glb.";
@@ -3170,10 +3551,85 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 				}
 			}
 
+			ImGui::Spacing();
+#if defined(WIN32)
+			if (ImGui::Button("Save Scene"))
+			{
+				if (scene->path.empty() || !IsSceneAssetPath(scene->path))
+				{
+					assetLoadStatus = "Current scene has no valid .gltf/.glb source path to serialize.";
+					assetLoadStatusIsError = true;
+				}
+				else
+				{
+					std::string outPath;
+					if (ShowSaveSceneStateDialog(outPath))
+					{
+						EditorSceneSnapshot snapshot{};
+						snapshot.modelPath = scene->path;
+						snapshot.camera = CaptureEditorCameraState(*scene);
+						snapshot.renderSettings = CaptureEditorRenderSettings();
+						std::string saveError;
+						if (SaveEditorSceneSnapshot(outPath, snapshot, &saveError))
+						{
+							assetLoadStatus = "Scene JSON saved.";
+							assetLoadStatusIsError = false;
+						}
+						else
+						{
+							assetLoadStatus = "Failed to save scene JSON: " + saveError;
+							assetLoadStatusIsError = true;
+						}
+					}
+				}
+			}
+
+			ImGui::SameLine();
+			if (ImGui::Button("Restore Scene"))
+			{
+				std::string inPath;
+				if (ShowOpenSceneStateDialog(inPath))
+				{
+					RequestEditorSceneLoad(inPath);
+					assetLoadStatus = "Scene restore request submitted.";
+					assetLoadStatusIsError = false;
+				}
+			}
+
+			static int dumpFormat = 0; // 0=PNG, 1=EXR
+			static const char* dumpFormats[] = { "PNG (8-bit)", "EXR (FP16)" };
+			ImGui::SetNextItemWidth(200.f);
+			ImGui::Combo("Viewport Dump Format", &dumpFormat, dumpFormats, IM_ARRAYSIZE(dumpFormats));
+			if (ImGui::Button("Dump Viewport"))
+			{
+				std::string outPath;
+				const bool saveAsExr = dumpFormat == 1;
+				if (ShowSaveViewportDumpDialog(outPath, saveAsExr))
+				{
+					std::filesystem::path dumpPath(outPath);
+					if (dumpPath.extension().empty())
+						dumpPath += saveAsExr ? ".exr" : ".png";
+
+					editorViewportDumpRequested = true;
+					editorViewportDumpSaveAsExr = saveAsExr;
+					editorViewportDumpRequestPath = dumpPath.string();
+					editorViewportDumpStatus = "Viewport dump request submitted.";
+					editorViewportDumpStatusIsError = false;
+				}
+			}
+#else
+			ImGui::TextDisabled("Save/Restore/Dump Scene buttons are available on Win32.");
+#endif
+
 			if (!assetLoadStatus.empty())
 			{
 				ImVec4 color = assetLoadStatusIsError ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f) : ImVec4(0.35f, 1.0f, 0.35f, 1.0f);
 				ImGui::TextColored(color, "%s", assetLoadStatus.c_str());
+			}
+			if (!editorViewportDumpStatus.empty())
+			{
+				ImVec4 color = editorViewportDumpStatusIsError ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f) : ImVec4(0.35f, 1.0f, 0.35f, 1.0f);
+				ImGui::TextColored(color, "%s", editorViewportDumpStatus.c_str());
 			}
 
 			ImGui::Spacing();
@@ -3466,6 +3922,7 @@ void VulkanContext::DestroyInstance()
 void VulkanContext::Release()
 {
 	VK_CHECK(vkDeviceWaitIdle(device));
+	ReleaseViewportDumpReadbacks();
 
 	if (depthPyramidHandle.IsValid())
 	{

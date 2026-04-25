@@ -6,9 +6,12 @@
 #include "kaleido_runtime.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <memory>
+#include <string>
 
 #if defined(WIN32)
+#include <windows.h>
 namespace
 {
 class EditorRuntimeHostBridge final : public RuntimeHostBridge
@@ -24,12 +27,58 @@ public:
 	{
 		KaleidoLaunchConfig config{};
 		config.path = argv[0];
-		if (argc >= 2)
+
+		for (int i = 1; i < argc; ++i)
 		{
-			config.modelPath = argv[1];
-			config.loadSingleModel = true;
+			if (strcmp(argv[i], "--auto-dump-exr") == 0 && i + 1 < argc)
+			{
+				config.autoDumpExrPath = argv[++i];
+			}
+			else if (strcmp(argv[i], "--load-scene-state") == 0 && i + 1 < argc)
+			{
+				config.editorSceneStatePath = argv[++i];
+			}
+			else if (strcmp(argv[i], "--auto-dump-frames") == 0 && i + 1 < argc)
+			{
+				config.autoDumpExrFrameDelay = uint32_t(atoi(argv[++i]));
+			}
+			else if (argv[i][0] == '-')
+			{
+				LOGW("Unknown argument: %s", argv[i]);
+			}
 		}
-		else
+
+		// First non-option argument: .json = editor scene file, else gltf/glb as a single model.
+		for (int i = 1; i < argc; ++i)
+		{
+			if (argv[i][0] == '-')
+			{
+				if (strcmp(argv[i], "--auto-dump-exr") == 0 && i + 1 < argc)
+					++i;
+				else if (strcmp(argv[i], "--load-scene-state") == 0 && i + 1 < argc)
+					++i;
+				else if (strcmp(argv[i], "--auto-dump-frames") == 0 && i + 1 < argc)
+					++i;
+				continue;
+			}
+			const char* ext = strrchr(argv[i], '.');
+			if (ext && _stricmp(ext, ".json") == 0)
+			{
+				if (config.editorSceneStatePath.empty())
+					config.editorSceneStatePath = argv[i];
+			}
+			else if (ext && (_stricmp(ext, ".gltf") == 0 || _stricmp(ext, ".glb") == 0))
+			{
+				if (config.modelPath.empty())
+				{
+					config.modelPath = argv[i];
+					config.loadSingleModel = true;
+				}
+			}
+			break;
+		}
+
+		if (config.modelPath.empty() && config.editorSceneStatePath.empty())
 		{
 			const char* editorModel = getenv("KALEIDO_EDITOR_MODEL");
 			if (editorModel && editorModel[0])
@@ -40,10 +89,14 @@ public:
 			}
 			else
 			{
-				// Editor can boot without a startup scene (Unity-like empty scene entry).
 				config.loadSingleModel = false;
 				LOGI("No startup scene specified for kaleido_editor; launching with an empty scene.");
 			}
+		}
+		else
+		{
+			if (!config.modelPath.empty())
+				config.loadSingleModel = true;
 		}
 
 		config.hostOptions.enableRuntimeUi = true;
@@ -59,6 +112,17 @@ private:
 
 int main(int argc, const char** argv)
 {
+	// Unattended automation: avoid blocking WER/abort UI when the process faults.
+	for (int i = 1; i < argc; ++i)
+	{
+		if (strcmp(argv[i], "--auto-dump-exr") == 0)
+		{
+			SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+			_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+			break;
+		}
+	}
+
 	auto runtime = std::make_unique<KaleidoRuntime>();
 	EditorRuntimeHostBridge bridge(argc, argv);
 
