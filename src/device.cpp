@@ -170,6 +170,11 @@ VkDebugReportCallbackEXT registerDebugCallback(VkInstance instance)
 
 	return callback;
 }
+#else
+VkDebugReportCallbackEXT registerDebugCallback(VkInstance)
+{
+	return nullptr;
+}
 #endif
 
 uint32_t getGraphicsFamilyIndex(VkPhysicalDevice physicalDevice)

@@ -1,0 +1,3 @@
+add_executable(transform_graph_smoke transform_graph_smoke.cpp)
+target_link_libraries(transform_graph_smoke PRIVATE glm)
+add_test(NAME transform_graph_smoke COMMAND transform_graph_smoke)

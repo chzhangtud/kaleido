@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 project(kaleido VERSION 0.1)
 option(SHADER_DEBUG "Embed debug information into SPIV shaders" OFF)
 option(BUILD_KALEIDO_EDITOR "Build desktop kaleido_editor launcher skeleton" ON)
+option(KALEIDO_BUILD_TESTS "Build transform graph smoke tests" OFF)
 
 if (WIN32)
 if(NOT DEFINED ENV{VULKAN_SDK})
@@ -19,6 +20,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(BUILD_TESTING OFF)
 
 add_subdirectory(external)
+
+if(KALEIDO_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
 file(GLOB GLSL_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.glsl")
 file(GLOB GLSL_HEADER_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.h")
@@ -97,14 +103,18 @@ if(ANDROID)
 endif()
 
 if (WIN32)
-    target_compile_definitions(kaleido_runtime_core PRIVATE VK_USE_PLATFORM_WIN32_KHR
+    # Clang on Windows does not define WIN32 by default; match MSVC so platform #ifs and common.h logging work.
+    target_compile_definitions(kaleido_runtime_core PRIVATE WIN32
+                                                            VK_USE_PLATFORM_WIN32_KHR
                                                             GLFW_EXPOSE_NATIVE_WIN32
                                                             NOMINMAX)
-    target_compile_definitions(kaleido_standalone PRIVATE VK_USE_PLATFORM_WIN32_KHR
+    target_compile_definitions(kaleido_standalone PRIVATE WIN32
+                                                          VK_USE_PLATFORM_WIN32_KHR
                                                           GLFW_EXPOSE_NATIVE_WIN32
                                                           NOMINMAX)
     if(TARGET kaleido_editor)
-        target_compile_definitions(kaleido_editor PRIVATE VK_USE_PLATFORM_WIN32_KHR
+        target_compile_definitions(kaleido_editor PRIVATE WIN32
+                                                          VK_USE_PLATFORM_WIN32_KHR
                                                           GLFW_EXPOSE_NATIVE_WIN32
                                                           NOMINMAX)
     endif()
