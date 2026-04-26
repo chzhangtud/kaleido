@@ -1,6 +1,8 @@
 #include "shaders.h"
 #include "config.h"
+#include "common.h"
 #include <stdio.h>
+#include <cstdlib>
 #include <filesystem>
 
 #include <spirv.h>
@@ -371,13 +373,28 @@ bool loadShaders(ShaderSet& shaders, const char* base, const char* path)
 bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const char* path)
 #endif
 {
-	std::string spath = base;
-	std::string::size_type pos = spath.find_last_of("/\\");
-	if (pos == std::string::npos)
-		spath = "";
-	else
-		spath = spath.substr(0, pos + 1);
-	spath += path;
+	std::string spath;
+#if defined(WIN32)
+	if (const char* shaderDirEnv = getenv("KALEIDO_SHADER_DIR"))
+	{
+		if (shaderDirEnv[0])
+		{
+			spath = shaderDirEnv;
+			if (!spath.empty() && spath.back() != '/' && spath.back() != '\\')
+				spath.push_back('/');
+		}
+	}
+#endif
+	if (spath.empty())
+	{
+		spath = base;
+		std::string::size_type pos = spath.find_last_of("/\\");
+		if (pos == std::string::npos)
+			spath = "";
+		else
+			spath = spath.substr(0, pos + 1);
+		spath += path;
+	}
 
 #if defined(WIN32)
 	try
