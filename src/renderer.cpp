@@ -3,6 +3,12 @@
 #include "RenderBackend.h"
 #include "RenderGraph.h"
 #include "editor_scene_io.h"
+#include "scene_transforms.h"
+
+#include <glm/gtc/matrix_transform.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
+#undef GLM_ENABLE_EXPERIMENTAL
 #include "../external/stb/stb_image_write.h"
 #include "../external/ktx_software/external/astc-encoder/Source/ThirdParty/tinyexr.h"
 
@@ -272,7 +278,7 @@ static std::string BuildGltfNodeLabel(const GltfDocumentOutline& doc, const Gltf
 	return label;
 }
 
-static void DrawGltfOutlineNode(const GltfDocumentOutline& doc, uint32_t nodeIdx)
+static void DrawGltfOutlineNode(Scene& scene, const GltfDocumentOutline& doc, uint32_t nodeIdx)
 {
 	if (size_t(nodeIdx) >= doc.nodes.size())
 		return;
@@ -280,19 +286,28 @@ static void DrawGltfOutlineNode(const GltfDocumentOutline& doc, uint32_t nodeIdx
 	const std::string label = BuildGltfNodeLabel(doc, node);
 
 	ImGui::PushID(int(nodeIdx));
+	const bool selected = scene.uiSelectedGltfNode.has_value() && *scene.uiSelectedGltfNode == nodeIdx;
+	const ImGuiTreeNodeFlags baseFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
 	if (node.children.empty())
-		ImGui::BulletText("%s", label.c_str());
-	else if (ImGui::TreeNodeEx("gnode", ImGuiTreeNodeFlags_None, "%s", label.c_str()))
 	{
+		ImGui::TreeNodeEx("gleaf", baseFlags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | (selected ? ImGuiTreeNodeFlags_Selected : 0), "%s", label.c_str());
+		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+			scene.uiSelectedGltfNode = nodeIdx;
+	}
+	else if (ImGui::TreeNodeEx("gnode", baseFlags | (selected ? ImGuiTreeNodeFlags_Selected : 0), "%s", label.c_str()))
+	{
+		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+			scene.uiSelectedGltfNode = nodeIdx;
 		for (uint32_t c : node.children)
-			DrawGltfOutlineNode(doc, c);
+			DrawGltfOutlineNode(scene, doc, c);
 		ImGui::TreePop();
 	}
 	ImGui::PopID();
 }
 
-static void DrawGltfDocumentTree(const GltfDocumentOutline& doc)
+static void DrawGltfDocumentTree(Scene& scene)
 {
+	const GltfDocumentOutline& doc = scene.gltfDocument;
 	if (!doc.loaded)
 	{
 		ImGui::TextDisabled("(Load a .gltf / .glb to view the asset hierarchy.)");
@@ -315,7 +330,7 @@ static void DrawGltfDocumentTree(const GltfDocumentOutline& doc)
 					if (ImGui::TreeNodeEx("gsc", ImGuiTreeNodeFlags_None, "%s", scLabel.c_str()))
 					{
 						for (uint32_t root : sc.rootNodes)
-							DrawGltfOutlineNode(doc, root);
+							DrawGltfOutlineNode(scene, doc, root);
 						ImGui::TreePop();
 					}
 					ImGui::PopID();
@@ -327,6 +342,46 @@ static void DrawGltfDocumentTree(const GltfDocumentOutline& doc)
 			ImGui::TextDisabled("No scenes in file.");
 
 		ImGui::TreePop();
+	}
+
+	if (scene.uiSelectedGltfNode.has_value() && !scene.transformNodes.empty() &&
+	    *scene.uiSelectedGltfNode < scene.transformNodes.size())
+	{
+		const uint32_t ni = *scene.uiSelectedGltfNode;
+		TransformNode& tn = scene.transformNodes[ni];
+		glm::vec3 scale;
+		glm::quat orientation;
+		glm::vec3 translation;
+		glm::vec3 skew;
+		glm::vec4 perspective;
+		glm::decompose(tn.local, scale, orientation, translation, skew, perspective);
+		orientation = glm::normalize(orientation);
+		static glm::vec3 s_inspectorEulerDeg(0.f);
+		static uint32_t s_inspectorNode = ~0u;
+		if (ni != s_inspectorNode)
+		{
+			s_inspectorEulerDeg = glm::degrees(glm::eulerAngles(orientation));
+			s_inspectorNode = ni;
+		}
+
+		ImGui::Separator();
+		ImGui::TextUnformatted("Node transform (local)");
+		ImGui::DragFloat3("Translation", &translation.x, 0.01f);
+		const bool trDone = ImGui::IsItemDeactivatedAfterEdit();
+		ImGui::DragFloat3("Rotation (deg)", &s_inspectorEulerDeg.x, 0.5f);
+		const bool rotDone = ImGui::IsItemDeactivatedAfterEdit();
+		ImGui::DragFloat3("Scale", &scale.x, 0.01f);
+		const bool scDone = ImGui::IsItemDeactivatedAfterEdit();
+		if (trDone || rotDone || scDone)
+		{
+			const glm::mat4 rx = glm::rotate(glm::mat4(1.f), glm::radians(s_inspectorEulerDeg.x), glm::vec3(1.f, 0.f, 0.f));
+			const glm::mat4 ry = glm::rotate(glm::mat4(1.f), glm::radians(s_inspectorEulerDeg.y), glm::vec3(0.f, 1.f, 0.f));
+			const glm::mat4 rz = glm::rotate(glm::mat4(1.f), glm::radians(s_inspectorEulerDeg.z), glm::vec3(0.f, 0.f, 1.f));
+			orientation = glm::normalize(glm::quat_cast(rz * ry * rx));
+			tn.local = glm::translate(glm::mat4(1.f), translation) * glm::mat4_cast(orientation) * glm::scale(glm::mat4(1.f), scale);
+			MarkTransformSubtreeDirty(scene, ni);
+			FlushSceneTransforms(scene);
+		}
 	}
 }
 
@@ -2122,13 +2177,16 @@ bool VulkanContext::DrawFrame()
 	const uint32_t renderHeight = currentRenderHeight;
 
 	// TODO: this code races the GPU reading the transforms from both TLAS and draw buffers, which can cause rendering issues
-	if (animationEnabled)
+	if (animationEnabled && !scene->transformNodes.empty())
 	{
 		static double animationTime = 0.0; // TODO: handle overflow when the program last for long time
 		animationTime += deltaTime;
 
 		for (Animation& animation : scene->animations)
 		{
+			if (animation.gltfNodeIndex >= scene->transformNodes.size())
+				continue;
+
 			double index = (animationTime - animation.startTime) / animation.period;
 
 			if (index < 0)
@@ -2136,31 +2194,40 @@ bool VulkanContext::DrawFrame()
 
 			index = fmod(index, double(animation.keyframes.size()));
 
-			int index0 = int(index) % animation.keyframes.size();
-			int index1 = (index0 + 1) % animation.keyframes.size();
+			int index0 = int(index) % int(animation.keyframes.size());
+			int index1 = (index0 + 1) % int(animation.keyframes.size());
 
 			double t = index - floor(index);
 
-			const Keyframe& keyframe0 = animation.keyframes[index0];
-			const Keyframe& keyframe1 = animation.keyframes[index1];
+			const Keyframe& keyframe0 = animation.keyframes[size_t(index0)];
+			const Keyframe& keyframe1 = animation.keyframes[size_t(index1)];
 
-			MeshDraw& draw = scene->draws[animation.drawIndex];
 			const glm::vec3 tr = glm::mix(keyframe0.translation, keyframe1.translation, float(t));
-			const float uniformScale = glm::mix(keyframe0.scale, keyframe1.scale, float(t));
+			const glm::vec3 scl = glm::mix(keyframe0.scale, keyframe1.scale, float(t));
 			const glm::quat rot = glm::slerp(keyframe0.rotation, keyframe1.rotation, float(t));
-			draw.world = MeshDrawWorldFromUniformTRS(tr, uniformScale, rot);
 
-			MeshDraw& gpuDraw = static_cast<MeshDraw*>(db.data)[animation.drawIndex];
-			memcpy(&gpuDraw, &draw, sizeof(draw));
+			TransformNode& node = scene->transformNodes[animation.gltfNodeIndex];
+			node.local = glm::translate(glm::mat4(1.f), tr) * glm::mat4_cast(rot) * glm::scale(glm::mat4(1.f), scl);
+			MarkTransformSubtreeDirty(*scene, animation.gltfNodeIndex);
+		}
 
-			if (raytracingSupported)
+		FlushSceneTransforms(*scene);
+	}
+
+	if (scene->transformsGpuDirty && db.data)
+	{
+		memcpy(db.data, scene->draws.data(), scene->draws.size() * sizeof(MeshDraw));
+		if (raytracingSupported && tlasInstanceBuffer.data)
+		{
+			for (size_t i = 0; i < scene->draws.size(); ++i)
 			{
+				const MeshDraw& draw = scene->draws[i];
 				VkAccelerationStructureInstanceKHR instance = {};
-				fillInstanceRT(instance, draw, uint32_t(animation.drawIndex), blasAddresses[draw.meshIndex]);
-
-				memcpy(static_cast<VkAccelerationStructureInstanceKHR*>(tlasInstanceBuffer.data) + animation.drawIndex, &instance, sizeof(VkAccelerationStructureInstanceKHR));
+				fillInstanceRT(instance, draw, uint32_t(i), blasAddresses[draw.meshIndex]);
+				memcpy(static_cast<VkAccelerationStructureInstanceKHR*>(tlasInstanceBuffer.data) + i, &instance, sizeof(VkAccelerationStructureInstanceKHR));
 			}
 		}
+		scene->transformsGpuDirty = false;
 	}
 
 	uint8_t frameOffset = frameIndex % MAX_FRAMES;
@@ -3709,7 +3776,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			ImGui::Separator();
 			ImGui::Spacing();
 			if (scene)
-				DrawGltfDocumentTree(scene->gltfDocument);
+				DrawGltfDocumentTree(*scene);
 		}
 
 		ImGui::End();
