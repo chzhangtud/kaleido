@@ -1,6 +1,9 @@
 #include "scene.h"
+#include "scene_transforms.h"
 #include "common.h"
 #include "config.h"
+
+#include <glm/gtc/type_ptr.hpp>
 
 #include <fast_obj.h>
 #include <cgltf.h>
@@ -529,12 +532,11 @@ static void FillGltfDocumentOutline(cgltf_data* data, GltfDocumentOutline& out)
 	}
 }
 
-bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<SceneTextureSource>& sceneTextures, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast, bool clrt, GltfDocumentOutline* outGltfDocument)
+bool loadScene(Scene& scene, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast, bool clrt)
 {
 	clock_t timer = clock();
 
-	if (outGltfDocument)
-		*outGltfDocument = GltfDocumentOutline{};
+	scene.gltfDocument = GltfDocumentOutline{};
 
 #if defined(__ANDROID__)
 	// define Android callback
@@ -631,16 +633,20 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 		return false;
 	}
 
+	scene.draws.clear();
+	scene.animations.clear();
+	scene.sceneTextures.clear();
+
 	std::vector<std::pair<unsigned int, unsigned int>> primitives;
 	std::vector<cgltf_material*> primitiveMaterials;
 
-	size_t firstMeshOffset = geometry.meshes.size();
+	size_t firstMeshOffset = scene.geometry.meshes.size();
 
 	for (size_t i = 0; i < data->meshes_count; ++i)
 	{
 		const cgltf_mesh& mesh = data->meshes[i];
 
-		size_t meshOffset = geometry.meshes.size();
+		size_t meshOffset = scene.geometry.meshes.size();
 
 		for (size_t pi = 0; pi < mesh.primitives_count; ++pi)
 		{
@@ -653,18 +659,50 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 
 			std::vector<uint32_t> indices(prim.indices->count);
 			cgltf_accessor_unpack_indices(prim.indices, indices.data(), 4, indices.size());
-			appendMesh(geometry, vertices, indices, buildMeshlets, fast, clrt);
+			appendMesh(scene.geometry, vertices, indices, buildMeshlets, fast, clrt);
 			primitiveMaterials.push_back(prim.material);
 		}
 
-		primitives.push_back(std::make_pair(unsigned(meshOffset), unsigned(geometry.meshes.size() - meshOffset)));
+		primitives.push_back(std::make_pair(unsigned(meshOffset), unsigned(scene.geometry.meshes.size() - meshOffset)));
 	}
 
-	assert(primitiveMaterials.size() + firstMeshOffset == geometry.meshes.size());
+	assert(primitiveMaterials.size() + firstMeshOffset == scene.geometry.meshes.size());
 
-	std::vector<int> nodeDraws(data->nodes_count, -1); // for animations
+	ClearSceneTransformData(scene);
+	scene.transformNodes.resize(data->nodes_count);
+	scene.drawsForNode.assign(data->nodes_count, {});
 
-	size_t materialOffset = materialDb.Size();
+	for (size_t i = 0; i < data->nodes_count; ++i)
+	{
+		const cgltf_node* node = &data->nodes[i];
+		TransformNode& tn = scene.transformNodes[i];
+		tn.parent = node->parent ? int32_t(cgltf_node_index(data, node->parent)) : -1;
+		tn.children.clear();
+		for (cgltf_size c = 0; c < node->children_count; ++c)
+			tn.children.push_back(uint32_t(cgltf_node_index(data, node->children[c])));
+		float localMat[16]{};
+		cgltf_node_transform_local(node, localMat);
+		tn.local = glm::make_mat4(localMat);
+		tn.world = glm::mat4(1.f);
+		tn.worldDirty = true;
+		tn.visible = true;
+	}
+
+	scene.transformRootNodes.clear();
+	{
+		const cgltf_scene* activeScene = nullptr;
+		if (data->scene)
+			activeScene = data->scene;
+		else if (data->scenes_count > 0)
+			activeScene = &data->scenes[0];
+		if (activeScene)
+		{
+			for (cgltf_size r = 0; r < activeScene->nodes_count; ++r)
+				scene.transformRootNodes.push_back(uint32_t(cgltf_node_index(data, activeScene->nodes[r])));
+		}
+	}
+
+	size_t materialOffset = scene.materialDb.Size();
 	assert(materialOffset > 0); // index 0 = dummy materials
 
 	for (size_t i = 0; i < data->nodes_count; ++i)
@@ -673,25 +711,12 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 
 		if (node->mesh)
 		{
-			float matrix[16];
-			cgltf_node_transform_world(node, matrix);
-
-			float translation[3];
-			float rotation[4];
-			float scale[3];
-			decomposeTransform(translation, rotation, scale, matrix);
-
-			// TODO: better warnings for non-uniform or negative scale
 			std::pair<unsigned int, unsigned int> range = primitives[cgltf_mesh_index(data, node->mesh)];
 
 			for (unsigned int j = 0; j < range.second; ++j)
 			{
 				MeshDraw draw = {};
-				const float uniformScale = std::max(scale[0], std::max(scale[1], scale[2]));
-				draw.world = MeshDrawWorldFromUniformTRS(
-				    vec3(translation[0], translation[1], translation[2]),
-				    uniformScale,
-				    quat(rotation[0], rotation[1], rotation[2], rotation[3]));
+				draw.world = glm::mat4(1.f);
 				draw.gltfNodeIndex = uint32_t(i);
 				draw.meshIndex = range.first + j;
 
@@ -699,20 +724,26 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 
 				draw.materialIndex = material ? materialOffset + int(cgltf_material_index(data, material)) : 0;
 
-				// postPass must match renderer cull/render passes: only 0 (opaque) and 1 (GBuffer Transparency) are implemented.
 				if (material && MaterialNeedsTransparencyPass(*material))
 					draw.postPass = 1;
 
-				nodeDraws[i] = int(draws.size());
-
-				draws.push_back(draw);
+				const uint32_t drawIndex = uint32_t(scene.draws.size());
+				scene.draws.push_back(draw);
+				scene.drawsForNode[i].push_back(drawIndex);
 			}
 		}
+	}
+
+	FlushSceneTransforms(scene);
+
+	for (size_t i = 0; i < data->nodes_count; ++i)
+	{
+		const cgltf_node* node = &data->nodes[i];
 
 		if (node->camera)
 		{
 			float matrix[16];
-			cgltf_node_transform_world(node, matrix);
+			memcpy(matrix, glm::value_ptr(scene.transformNodes[i].world), sizeof(matrix));
 
 			float translation[3];
 			float rotation[4];
@@ -721,27 +752,26 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 
 			assert(node->camera->type == cgltf_camera_type_perspective);
 
-			camera.position = vec3(translation[0], translation[1], translation[2]);
-			camera.orientation = quat(rotation[0], rotation[1], rotation[2], rotation[3]);
-			euler = glm::degrees(glm::eulerAngles(camera.orientation)); // pitch, yaw, roll
-			camera.fovY = node->camera->data.perspective.yfov;
+			scene.camera.position = vec3(translation[0], translation[1], translation[2]);
+			scene.camera.orientation = quat(rotation[0], rotation[1], rotation[2], rotation[3]);
+			euler = glm::degrees(glm::eulerAngles(scene.camera.orientation));
+			scene.camera.fovY = node->camera->data.perspective.yfov;
 		}
 
 		if (node->light && node->light->type == cgltf_light_type_directional)
 		{
-			float matrix[16];
-			cgltf_node_transform_world(node, matrix);
-			sunDirection = vec3(matrix[8], matrix[9], matrix[10]);
+			const glm::mat4& W = scene.transformNodes[i].world;
+			scene.sunDirection = vec3(W[2][0], W[2][1], W[2][2]);
 		}
 	}
 
-	int textureOffset = 1 + int(sceneTextures.size());
+	int textureOffset = 1 + int(scene.sceneTextures.size());
 
 	for (size_t i = 0; i < data->materials_count; ++i)
 	{
 		cgltf_material* material = &data->materials[i];
 		PBRMaterial pbrMaterial = BuildPbrMaterial(data, *material, textureOffset);
-		materialDb.Add(std::make_unique<PBRMaterial>(std::move(pbrMaterial)));
+		scene.materialDb.Add(std::make_unique<PBRMaterial>(std::move(pbrMaterial)));
 	}
 
 	for (size_t i = 0; i < data->textures_count; ++i)
@@ -794,7 +824,7 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 			tex.path = std::string(path) + " [invalid image " + std::to_string(i) + "]";
 		}
 
-		sceneTextures.emplace_back(std::move(tex));
+		scene.sceneTextures.emplace_back(std::move(tex));
 	}
 
 	std::vector<cgltf_animation_sampler*> samplersT(data->nodes_count);
@@ -826,12 +856,6 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 	{
 		if (!samplersR[i] && !samplersT[i] && !samplersS[i])
 			continue;
-
-		if (nodeDraws[i] == -1)
-		{
-			LOGW("skipping animation for node %d without draw\n", int(i));
-			continue;
-		}
 
 		cgltf_accessor* input = 0;
 		if (samplersT[i])
@@ -867,7 +891,7 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 		cgltf_accessor_unpack_floats(input, times.data(), times.size());
 
 		Animation animation = {};
-		animation.drawIndex = nodeDraws[i];
+		animation.gltfNodeIndex = uint32_t(i);
 		animation.startTime = times[0];
 		animation.period = times[1] - times[0];
 
@@ -891,57 +915,58 @@ bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<Mes
 			cgltf_accessor_unpack_floats(samplersS[i]->output, valuesS.data(), valuesS.size());
 		}
 
-		cgltf_node nodeCopy = data->nodes[i];
-
 		for (size_t j = 0; j < input->count; ++j)
 		{
+			cgltf_node nodeCopy = data->nodes[i];
+
 			if (samplersT[i])
+			{
 				memcpy(nodeCopy.translation, &valuesT[j * 3], 3 * sizeof(float));
+				nodeCopy.has_translation = true;
+			}
 
 			if (samplersR[i])
+			{
 				memcpy(nodeCopy.rotation, &valuesR[j * 4], 4 * sizeof(float));
+				nodeCopy.has_rotation = true;
+			}
 
 			if (samplersS[i])
+			{
 				memcpy(nodeCopy.scale, &valuesS[j * 3], 3 * sizeof(float));
-
-			float matrix[16];
-			cgltf_node_transform_world(&nodeCopy, matrix);
-
-			float translation[3];
-			float rotation[4];
-			float scale[3];
-			decomposeTransform(translation, rotation, scale, matrix);
+				nodeCopy.has_scale = true;
+			}
 
 			Keyframe kf = {};
-			kf.translation = vec3(translation[0], translation[1], translation[2]);
-			kf.rotation = quat(rotation[0], rotation[1], rotation[2], rotation[3]);
-			kf.scale = std::max(scale[0], std::max(scale[1], scale[2]));
+			kf.translation = nodeCopy.has_translation ? vec3(nodeCopy.translation[0], nodeCopy.translation[1], nodeCopy.translation[2]) : vec3(0.f);
+			kf.rotation = nodeCopy.has_rotation ? quat(nodeCopy.rotation[0], nodeCopy.rotation[1], nodeCopy.rotation[2], nodeCopy.rotation[3])
+			                                      : quat(1.f, 0.f, 0.f, 0.f);
+			kf.scale = nodeCopy.has_scale ? vec3(nodeCopy.scale[0], nodeCopy.scale[1], nodeCopy.scale[2]) : vec3(1.f, 1.f, 1.f);
 
 			animation.keyframes.push_back(kf);
 		}
 
-		animations.push_back(std::move(animation));
+		scene.animations.push_back(std::move(animation));
 	}
 
 	LOGI("Loaded %s: %d meshes, %d draws, %d animations, %d vertices in %.2f sec",
-	    path, int(geometry.meshes.size()), int(draws.size()), int(animations.size()), int(geometry.vertices.size()),
+	    path, int(scene.geometry.meshes.size()), int(scene.draws.size()), int(scene.animations.size()), int(scene.geometry.vertices.size()),
 	    double(clock() - timer) / CLOCKS_PER_SEC);
 
 	if (buildMeshlets)
 	{
 		unsigned int meshletVtxs = 0, meshletTris = 0;
 
-		for (Meshlet& meshlet : geometry.meshlets)
+		for (Meshlet& meshlet : scene.geometry.meshlets)
 		{
 			meshletVtxs += meshlet.vertexCount;
 			meshletTris += meshlet.triangleCount;
 		}
 
-		LOGI("Meshlets: %d meshlets, %d triangles, %d vertex refs", int(geometry.meshlets.size()), int(meshletTris), int(meshletVtxs));
+		LOGI("Meshlets: %d meshlets, %d triangles, %d vertex refs", int(scene.geometry.meshlets.size()), int(meshletTris), int(meshletVtxs));
 	}
 
-	if (outGltfDocument)
-		FillGltfDocumentOutline(data, *outGltfDocument);
+	FillGltfDocumentOutline(data, scene.gltfDocument);
 
 	return true;
 }
@@ -969,22 +994,19 @@ void SortSceneDrawsByMaterialKey(Scene& scene)
 	    { return materialKeyForDraw(draws[a].materialIndex) < materialKeyForDraw(draws[b].materialIndex); });
 
 	std::vector<MeshDraw> sorted(n);
-	std::vector<uint32_t> oldToNew(n);
 	for (size_t k = 0; k < n; ++k)
-	{
-		const uint32_t oldIdx = order[k];
-		sorted[k] = draws[oldIdx];
-		oldToNew[oldIdx] = uint32_t(k);
-	}
+		sorted[k] = draws[order[k]];
 	draws.swap(sorted);
 
-	for (Animation& anim : scene.animations)
+	// Remap draw indices per glTF node after reordering draws.
+	std::vector<std::vector<uint32_t>> newDrawsForNode(scene.transformNodes.size());
+	for (uint32_t newIdx = 0; newIdx < uint32_t(draws.size()); ++newIdx)
 	{
-		if (anim.drawIndex < oldToNew.size())
-			anim.drawIndex = oldToNew[anim.drawIndex];
-		else
-			LOGW("Animation drawIndex %u out of range after material sort; skipped remap", anim.drawIndex);
+		const uint32_t nodeIdx = draws[newIdx].gltfNodeIndex;
+		if (nodeIdx < newDrawsForNode.size())
+			newDrawsForNode[nodeIdx].push_back(newIdx);
 	}
+	scene.drawsForNode.swap(newDrawsForNode);
 }
 
 void RebuildMaterialDrawBatches(Scene& scene)

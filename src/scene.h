@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "material_types.h"
 #include <stdint.h>
+#include <optional>
 #include <vector>
 #include <string>
 #include <memory>
@@ -105,17 +106,17 @@ struct Camera
 
 struct Keyframe
 {
-	vec3 translation;
-	float scale;
-	quat rotation;
+	vec3 translation{};
+	quat rotation{ 1.f, 0.f, 0.f, 0.f };
+	vec3 scale{ 1.f, 1.f, 1.f };
 };
 
 struct Animation
 {
-	uint32_t drawIndex;
+	uint32_t gltfNodeIndex = 0;
 
-	float startTime;
-	float period;
+	float startTime = 0.f;
+	float period = 0.f;
 	std::vector<Keyframe> keyframes;
 };
 
@@ -149,6 +150,16 @@ struct GltfDocumentOutline
 	std::vector<std::string> meshNames;
 };
 
+struct TransformNode
+{
+	int32_t parent = -1;
+	std::vector<uint32_t> children;
+	glm::mat4 local{ 1.f };
+	glm::mat4 world{ 1.f };
+	bool worldDirty = true;
+	bool visible = true;
+};
+
 struct Scene
 {
 	Scene(const char* _path);
@@ -159,6 +170,11 @@ struct Scene
 	std::vector<Animation> animations;
 	std::vector<SceneTextureSource> sceneTextures;
 	GltfDocumentOutline gltfDocument;
+	std::vector<TransformNode> transformNodes;
+	std::vector<uint32_t> transformRootNodes;
+	std::vector<std::vector<uint32_t>> drawsForNode;
+	bool transformsGpuDirty = false;
+	std::optional<uint32_t> uiSelectedGltfNode;
 	vec3 sunDirection{ 1.0f };
 	uint32_t meshletVisibilityCount{ 0u };
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet{};
@@ -172,7 +188,7 @@ struct Scene
 };
 
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false, bool clrt = false);
-bool loadScene(Geometry& geometry, MaterialDatabase& materialDb, std::vector<MeshDraw>& draws, std::vector<SceneTextureSource>& sceneTextures, std::vector<Animation>& animations, Camera& camera, vec3& sunDirection, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false, bool clrt = false, GltfDocumentOutline* outGltfDocument = nullptr);
+bool loadScene(Scene& scene, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false, bool clrt = false);
 
 void SortSceneDrawsByMaterialKey(Scene& scene);
 void RebuildMaterialDrawBatches(Scene& scene);

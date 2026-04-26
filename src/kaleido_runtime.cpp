@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "editor_scene_io.h"
+#include "scene_transforms.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -26,6 +27,8 @@ bool IsSceneStateFilePath(const std::string& path)
 
 void BootstrapEditorEmptyScene(const std::shared_ptr<Scene>& scene)
 {
+	ClearSceneTransformData(*scene);
+	scene->draws.clear();
 	// Keep one degenerate mesh/draw so GPU buffer uploads stay valid while rendering an "empty" scene.
 	scene->geometry.vertices.resize(1);
 	scene->geometry.indices = { 0, 0, 0 };
@@ -58,6 +61,12 @@ void BootstrapEditorEmptyScene(const std::shared_ptr<Scene>& scene)
 	draw.meshIndex = 0;
 	draw.materialIndex = 0;
 	scene->draws.push_back(draw);
+
+	scene->transformNodes.resize(1);
+	scene->transformNodes[0] = TransformNode{};
+	scene->transformRootNodes = { 0 };
+	scene->drawsForNode.assign(1, std::vector<uint32_t>{ 0 });
+	FlushSceneTransforms(*scene);
 }
 
 bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::shared_ptr<Scene>& targetScene, VulkanContext* vContext)
@@ -66,6 +75,7 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 	targetScene->materialDb.Clear();
 	targetScene->materialDb.Add(std::make_unique<PBRMaterial>(PBRMaterial::CreateDefault()));
 	targetScene->gltfDocument = GltfDocumentOutline{};
+	ClearSceneTransformData(*targetScene);
 	targetScene->path.clear();
 
 	targetScene->camera.position = { 14.5f, 3.f, 10.f };
@@ -86,7 +96,7 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 		if (IsSceneAssetPath(config.modelPath))
 		{
 			glm::vec3 euler(0.f);
-			if (!loadScene(targetScene->geometry, targetScene->materialDb, targetScene->draws, targetScene->sceneTextures, targetScene->animations, targetScene->camera, targetScene->sunDirection, config.modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled, &targetScene->gltfDocument))
+			if (!loadScene(*targetScene, config.modelPath.c_str(), vContext->meshShadingSupported, euler, fastMode, clusterRTEnabled))
 			{
 				LOGE("Error: scene %s failed to load", config.modelPath.c_str());
 				return false;
