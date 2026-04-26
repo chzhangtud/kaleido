@@ -58,6 +58,31 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 
 Then build `kaleido_standalone` (and related targets) from Visual Studio or CMake.
 
+### External glTF assets (desktop / editor)
+
+Large models are kept **outside** this repository (for example next to the clone). Editor scene files under `testcases/` store `modelPath` as a **path relative to the assets root**, not as machine-specific absolute paths.
+
+**Assets root resolution (first match wins):**
+
+1. Environment variable `KALEIDO_ASSETS_ROOT` — must point to a directory that contains asset folders (e.g. `ABeautifulGame/ABeautifulGame.gltf` under that root).
+2. If unset, the runtime falls back to **`<repository>/../assets`** (sibling folder named `assets` next to the kaleido repo).
+
+Example layout:
+
+```text
+CMakeRepos/
+  kaleido/          <- this repository (CMAKE_SOURCE_DIR)
+  assets/           <- default assets root: ../assets from the repo
+    ABeautifulGame/
+      ABeautifulGame.gltf
+```
+
+**PowerShell (optional override):**
+
+```powershell
+$env:KALEIDO_ASSETS_ROOT="D:\path\to\your\assets"
+```
+
 ### Android
 
 Open the `KaleidoAndroid` project in Android Studio.

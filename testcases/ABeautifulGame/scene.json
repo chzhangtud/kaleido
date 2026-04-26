@@ -1,0 +1,48 @@
+{
+  "format": "kaleido_editor_scene",
+  "version": 1,
+  "modelPath": "ABeautifulGame/ABeautifulGame.gltf",
+  "camera": {
+    "position": [
+      0.4691586196422577,
+      0.1584404557943344,
+      -0.029237886890769005
+    ],
+    "eulerDegrees": [
+      -14.400050163269043,
+      -269.80029296875,
+      0.0
+    ],
+    "fovY": 1.2217304706573486,
+    "znear": 0.10000000149011612,
+    "moveSpeed": 0.20000000298023224,
+    "dollyZoomEnabled": false,
+    "dollyZoomRefDistance": 5.0
+  },
+  "renderSettings": {
+    "meshShadingEnabled": true,
+    "taskShadingEnabled": false,
+    "cullingEnabled": true,
+    "occlusionEnabled": true,
+    "clusterOcclusionEnabled": true,
+    "shadowEnabled": true,
+    "shadowQuality": 1,
+    "shadowBlurEnabled": true,
+    "shadowCheckerboard": false,
+    "taaEnabled": true,
+    "taaBlendAlpha": 0.10000000149011612,
+    "screenSpaceRefractionEnabled": true,
+    "lodEnabled": true,
+    "debugLodStep": 2,
+    "animationEnabled": false,
+    "reloadShaders": false,
+    "debugGuiMode": 1,
+    "debugSleep": false,
+    "gbufferDebugViewMode": 0,
+    "clusterRTEnabled": false
+  },
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  }
+}

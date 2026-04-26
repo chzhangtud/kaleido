@@ -169,6 +169,8 @@ else()
     message(STATUS "Release mode enabled: assert is disabled.")
 endif()
 
+target_compile_definitions(kaleido_runtime_core PRIVATE "KALEIDO_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\"")
+
 target_compile_definitions(kaleido_runtime_core PRIVATE ${KALEIDO_COMMON_DEFINITIONS})
 target_compile_definitions(kaleido_standalone PRIVATE ${KALEIDO_COMMON_DEFINITIONS})
 if(TARGET kaleido_editor)

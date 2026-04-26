@@ -1,6 +1,7 @@
 build/
 build_ninja/
 build_tests/
+build_*/
 .vs/
 debug-*.log
 src/shaders/*.spv

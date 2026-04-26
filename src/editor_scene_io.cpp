@@ -1,5 +1,7 @@
 #include "editor_scene_io.h"
 
+#include "asset_paths.h"
+
 #include <fstream>
 #include <sstream>
 
@@ -114,7 +116,10 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.Key("version");
 	writer.Uint(3);
 	writer.Key("modelPath");
-	writer.String(snapshot.modelPath.c_str());
+	{
+		const std::string serializable = MakeModelPathForSerialization(snapshot.modelPath);
+		writer.String(serializable.c_str());
+	}
 
 	writer.Key("camera");
 	writer.StartObject();
@@ -276,7 +281,7 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 	}
 
 	EditorSceneSnapshot snapshot{};
-	snapshot.modelPath = modelPathIt->value.GetString();
+	snapshot.modelPath = ResolveModelPath(modelPathIt->value.GetString());
 
 	const auto cameraIt = document.FindMember("camera");
 	if (cameraIt != document.MemberEnd() && cameraIt->value.IsObject())
