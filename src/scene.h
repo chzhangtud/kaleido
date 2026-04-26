@@ -11,6 +11,7 @@
 #include "common.h"
 #include "resources.h"
 #include <cstddef>
+#include <cstring>
 
 struct alignas(16) Meshlet
 {
@@ -72,7 +73,8 @@ struct MeshLod
 	float error;
 };
 
-struct alignas(16) Mesh
+// std430 layout for GPU mesh buffer (must match src/shaders/mesh.h struct Mesh).
+struct alignas(16) GpuMeshStd430
 {
 	vec3 center;
 	float radius;
@@ -84,6 +86,27 @@ struct alignas(16) Mesh
 
 	MeshLod lods[8];
 };
+
+struct alignas(16) Mesh
+{
+	vec3 center;
+	float radius;
+
+	uint32_t vertexOffset;
+	uint32_t vertexCount;
+	uint32_t lodCount;
+	uint32_t placeHolder;
+
+	MeshLod lods[8];
+
+	// CPU-only object-space bounds (not uploaded to GPU Mesh std430; see GpuMeshStd430).
+	vec3 aabbMin{};
+	vec3 aabbMax{};
+};
+
+static_assert(sizeof(GpuMeshStd430) == 192, "GpuMeshStd430 must match GLSL Mesh std430 size");
+static_assert(sizeof(Mesh) > sizeof(GpuMeshStd430), "Mesh carries extra CPU fields after GpuMeshStd430 prefix");
+static_assert(offsetof(Mesh, aabbMin) == sizeof(GpuMeshStd430), "GpuMesh prefix must alias Mesh for upload memcpy");
 
 struct Geometry
 {
@@ -175,6 +198,9 @@ struct Scene
 	std::vector<std::vector<uint32_t>> drawsForNode;
 	bool transformsGpuDirty = false;
 	std::optional<uint32_t> uiSelectedGltfNode;
+	// Editor overlays (default off for image regression; see docs/superpowers/specs/2026-04-26-scene-tree-selection-outline-aabb-design.md §8).
+	bool uiEnableSelectionOutline = false;
+	bool uiShowSelectedSubtreeAabb = false;
 	vec3 sunDirection{ 1.0f };
 	uint32_t meshletVisibilityCount{ 0u };
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet{};
@@ -189,6 +215,17 @@ struct Scene
 
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false, bool clrt = false);
 bool loadScene(Scene& scene, const char* path, bool buildMeshlets, glm::vec3& euler, bool fast = false, bool clrt = false);
+
+void CollectDrawIndicesInNodeSubtree(const Scene& scene, uint32_t rootNode, std::vector<uint32_t>& outDraws);
+void WorldAabbFromMeshAndDraw(const Mesh& mesh, const glm::mat4& world, glm::vec3& outMin, glm::vec3& outMax);
+bool UnionWorldAabbForDraws(const Scene& scene, const std::vector<uint32_t>& drawIndices, glm::vec3& outMin, glm::vec3& outMax);
+
+inline GpuMeshStd430 PackGpuMeshStd430(const Mesh& m)
+{
+	GpuMeshStd430 g;
+	memcpy(&g, &m, sizeof(GpuMeshStd430));
+	return g;
+}
 
 void SortSceneDrawsByMaterialKey(Scene& scene);
 void RebuildMaterialDrawBatches(Scene& scene);

@@ -187,6 +187,24 @@ static void appendMesh(Geometry& result, std::vector<Vertex>& vertices, std::vec
 		positions[i] = vec3(meshopt_dequantizeHalf(v.vx), meshopt_dequantizeHalf(v.vy), meshopt_dequantizeHalf(v.vz));
 	}
 
+	if (positions.empty())
+	{
+		mesh.aabbMin = vec3(0.f);
+		mesh.aabbMax = vec3(0.f);
+	}
+	else
+	{
+		vec3 bbmin = positions[0];
+		vec3 bbmax = positions[0];
+		for (const vec3& p : positions)
+		{
+			bbmin = glm::min(bbmin, p);
+			bbmax = glm::max(bbmax, p);
+		}
+		mesh.aabbMin = bbmin;
+		mesh.aabbMax = bbmax;
+	}
+
 	std::vector<vec3> normals(vertices.size());
 	for (size_t i = 0; i < vertices.size(); ++i)
 	{
@@ -1049,4 +1067,97 @@ void RebuildMaterialDrawBatches(Scene& scene)
 Scene::Scene(const char* _path)
     : path(_path)
 {
+}
+
+void CollectDrawIndicesInNodeSubtree(const Scene& scene, const uint32_t rootNode, std::vector<uint32_t>& outDraws)
+{
+	outDraws.clear();
+	if (scene.transformNodes.empty() || rootNode >= scene.transformNodes.size())
+		return;
+
+	std::vector<uint32_t> stack;
+	stack.push_back(rootNode);
+	while (!stack.empty())
+	{
+		const uint32_t n = stack.back();
+		stack.pop_back();
+
+		if (n < scene.drawsForNode.size())
+		{
+			for (const uint32_t d : scene.drawsForNode[n])
+			{
+				if (d < scene.draws.size())
+					outDraws.push_back(d);
+			}
+		}
+
+		if (n >= scene.transformNodes.size())
+			continue;
+		for (const uint32_t c : scene.transformNodes[n].children)
+		{
+			if (c < scene.transformNodes.size())
+				stack.push_back(c);
+		}
+	}
+}
+
+void WorldAabbFromMeshAndDraw(const Mesh& mesh, const glm::mat4& world, glm::vec3& outMin, glm::vec3& outMax)
+{
+	const glm::vec3 bmin(mesh.aabbMin.x, mesh.aabbMin.y, mesh.aabbMin.z);
+	const glm::vec3 bmax(mesh.aabbMax.x, mesh.aabbMax.y, mesh.aabbMax.z);
+	const glm::vec3 corners[8] = {
+		glm::vec3(bmin.x, bmin.y, bmin.z),
+		glm::vec3(bmax.x, bmin.y, bmin.z),
+		glm::vec3(bmin.x, bmax.y, bmin.z),
+		glm::vec3(bmax.x, bmax.y, bmin.z),
+		glm::vec3(bmin.x, bmin.y, bmax.z),
+		glm::vec3(bmax.x, bmin.y, bmax.z),
+		glm::vec3(bmin.x, bmax.y, bmax.z),
+		glm::vec3(bmax.x, bmax.y, bmax.z),
+	};
+
+	bool first = true;
+	for (const glm::vec3& c : corners)
+	{
+		const glm::vec4 wp = world * glm::vec4(c, 1.f);
+		const glm::vec3 p = glm::vec3(wp.x, wp.y, wp.z) / wp.w;
+		if (first)
+		{
+			outMin = outMax = p;
+			first = false;
+		}
+		else
+		{
+			outMin = glm::min(outMin, p);
+			outMax = glm::max(outMax, p);
+		}
+	}
+}
+
+bool UnionWorldAabbForDraws(const Scene& scene, const std::vector<uint32_t>& drawIndices, glm::vec3& outMin, glm::vec3& outMax)
+{
+	bool have = false;
+	for (const uint32_t di : drawIndices)
+	{
+		if (di >= scene.draws.size())
+			continue;
+		const MeshDraw& d = scene.draws[di];
+		if (d.meshIndex >= scene.geometry.meshes.size())
+			continue;
+		const Mesh& mesh = scene.geometry.meshes[d.meshIndex];
+		glm::vec3 mn, mx;
+		WorldAabbFromMeshAndDraw(mesh, d.world, mn, mx);
+		if (!have)
+		{
+			outMin = mn;
+			outMax = mx;
+			have = true;
+		}
+		else
+		{
+			outMin = glm::min(outMin, mn);
+			outMax = glm::max(outMax, mx);
+		}
+	}
+	return have;
 }

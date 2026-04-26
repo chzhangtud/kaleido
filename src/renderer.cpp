@@ -14,8 +14,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <string_view>
+#include <vector>
 #if defined(WIN32)
 #include <windows.h>
 #include <commdlg.h>
@@ -278,6 +280,47 @@ static std::string BuildGltfNodeLabel(const GltfDocumentOutline& doc, const Gltf
 	return label;
 }
 
+static uint32_t FillEditorOutlineMeshDrawCommands(const Scene& scene, const std::vector<uint32_t>& drawIndices, MeshDrawCommand* out, const uint32_t maxOut)
+{
+	uint32_t n = 0;
+	for (const uint32_t di : drawIndices)
+	{
+		if (n >= maxOut || di >= scene.draws.size())
+			continue;
+		const MeshDraw& md = scene.draws[di];
+		if (md.meshIndex >= scene.geometry.meshes.size())
+			continue;
+		const Mesh& mesh = scene.geometry.meshes[md.meshIndex];
+		const MeshLod& lod0 = mesh.lods[0];
+		if (lod0.indexCount == 0u)
+			continue;
+		MeshDrawCommand cmd{};
+		cmd.drawId = di;
+		cmd.indirect.indexCount = lod0.indexCount;
+		cmd.indirect.instanceCount = 1u;
+		cmd.indirect.firstIndex = lod0.indexOffset;
+		cmd.indirect.vertexOffset = int32_t(mesh.vertexOffset);
+		cmd.indirect.firstInstance = 0u;
+		out[n++] = cmd;
+	}
+	return n;
+}
+
+static ImVec2 EditorWorldToViewportImagePixels(const mat4& view, const mat4& proj, const vec3& world, const ImVec2& imgMin, const ImVec2& imgMax)
+{
+	const vec4 clip = proj * view * vec4(world, 1.f);
+	if (std::abs(clip.w) < 1e-6f)
+		return ImVec2(-1e10f, -1e10f);
+	const float invW = 1.f / clip.w;
+	const float ndcx = clip.x * invW;
+	const float ndcy = clip.y * invW;
+	const float w = imgMax.x - imgMin.x;
+	const float h = imgMax.y - imgMin.y;
+	const float px = (ndcx * 0.5f + 0.5f) * w;
+	const float py = (-ndcy * 0.5f + 0.5f) * h;
+	return ImVec2(imgMin.x + px, imgMin.y + py);
+}
+
 static void DrawGltfOutlineNode(Scene& scene, const GltfDocumentOutline& doc, uint32_t nodeIdx)
 {
 	if (size_t(nodeIdx) >= doc.nodes.size())
@@ -366,13 +409,10 @@ static void DrawGltfDocumentTree(Scene& scene)
 
 		ImGui::Separator();
 		ImGui::TextUnformatted("Node transform (local)");
-		ImGui::DragFloat3("Translation", &translation.x, 0.01f);
-		const bool trDone = ImGui::IsItemDeactivatedAfterEdit();
-		ImGui::DragFloat3("Rotation (deg)", &s_inspectorEulerDeg.x, 0.5f);
-		const bool rotDone = ImGui::IsItemDeactivatedAfterEdit();
-		ImGui::DragFloat3("Scale", &scale.x, 0.01f);
-		const bool scDone = ImGui::IsItemDeactivatedAfterEdit();
-		if (trDone || rotDone || scDone)
+		const bool trChanged = ImGui::DragFloat3("Translation", &translation.x, 0.01f);
+		const bool rotChanged = ImGui::DragFloat3("Rotation (deg)", &s_inspectorEulerDeg.x, 0.5f);
+		const bool scChanged = ImGui::DragFloat3("Scale", &scale.x, 0.01f);
+		if (trChanged || rotChanged || scChanged)
 		{
 			const glm::mat4 rx = glm::rotate(glm::mat4(1.f), glm::radians(s_inspectorEulerDeg.x), glm::vec3(1.f, 0.f, 0.f));
 			const glm::mat4 ry = glm::rotate(glm::mat4(1.f), glm::radians(s_inspectorEulerDeg.y), glm::vec3(0.f, 1.f, 0.f));
@@ -383,6 +423,10 @@ static void DrawGltfDocumentTree(Scene& scene)
 			FlushSceneTransforms(scene);
 		}
 	}
+
+	ImGui::Separator();
+	ImGui::Checkbox("Selection outline (subtree)", &scene.uiEnableSelectionOutline);
+	ImGui::Checkbox("Show selected subtree AABB (union)", &scene.uiShowSelectedSubtreeAabb);
 }
 
 // Halton low-discrepancy sequence in [0, 1) for subpixel jitter (bases 2 and 3).
@@ -567,6 +611,10 @@ static bool g_editorViewportInputMode = false;
 static bool g_editorViewportRectValid = false;
 static ImVec2 g_editorViewportRectMin = ImVec2(0.f, 0.f);
 static ImVec2 g_editorViewportRectMax = ImVec2(0.f, 0.f);
+
+// Last frame's camera matrices for editor viewport UI overlays (AABB lines), matching rendered globals.
+static mat4 g_editorOverlayLastView{ 1.f };
+static mat4 g_editorOverlayLastProjection{ 1.f };
 
 static bool IsPointInsideEditorViewport(float x, float y)
 {
@@ -1102,6 +1150,8 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 
 	meshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["mesh.vert"], &shaderSet["mesh.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
 
+	meshSelectionOutlineProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["mesh.vert"], &shaderSet["mesh_selection_outline.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
+
 	transparencyBlendMeshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["mesh.vert"], &shaderSet["transparency_blend.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
 
 	meshtaskProgram = {};
@@ -1172,6 +1222,18 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 
 		replace(meshTransparencyBlendPipeline, createGraphicsPipeline(device, pipelineCache, sceneColorBlendRenderingInfo, transparencyBlendMeshProgram,
 		                                           { { /* LATE= */ VK_FALSE }, { /* TASK= */ VK_FALSE }, { /* POST= */ VK_TRUE } }, transparencyBlendRaster));
+
+		{
+			VkPipelineRenderingCreateInfo editorOutlineRenderingInfo{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+			editorOutlineRenderingInfo.colorAttachmentCount = 1;
+			editorOutlineRenderingInfo.pColorAttachmentFormats = &sceneColorFormat;
+			editorOutlineRenderingInfo.depthAttachmentFormat = VK_FORMAT_UNDEFINED;
+			GraphicsPipelineExtraState outlineRaster{};
+			outlineRaster.alphaBlendFirstAttachment = true;
+			outlineRaster.depthWrite = false;
+			outlineRaster.depthTestEnable = false;
+			replace(meshSelectionOutlineEditorPipeline, createGraphicsPipeline(device, pipelineCache, editorOutlineRenderingInfo, meshSelectionOutlineProgram, {}, outlineRaster));
+		}
 
 		if (wireframeDebugSupported)
 		{
@@ -1438,6 +1500,8 @@ void VulkanContext::ResetSceneResourcesForReload()
 		tlasInstanceBuffer = {};
 	}
 
+	resourceManager.DestroyBuffer(outlineDccb);
+	resourceManager.DestroyBuffer(outlineDcb);
 	resourceManager.DestroyBuffer(dccb);
 	resourceManager.DestroyBuffer(dcb);
 	resourceManager.DestroyBuffer(dvb);
@@ -1451,6 +1515,8 @@ void VulkanContext::ResetSceneResourcesForReload()
 	resourceManager.DestroyBuffer(ccb);
 	resourceManager.DestroyBuffer(ib);
 	resourceManager.DestroyBuffer(vb);
+	outlineDccb = {};
+	outlineDcb = {};
 	dccb = {};
 	dcb = {};
 	dvb = {};
@@ -1599,7 +1665,12 @@ void VulkanContext::InitResources()
 	        ? VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
 	        : 0;
 
-	resourceManager.CreateBuffer(mb, scene->geometry.meshes.size() * sizeof(Mesh), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	const size_t meshCount = scene->geometry.meshes.size();
+	std::vector<GpuMeshStd430> gpuMeshes(meshCount);
+	for (size_t i = 0; i < meshCount; ++i)
+		gpuMeshes[i] = PackGpuMeshStd430(scene->geometry.meshes[i]);
+
+	resourceManager.CreateBuffer(mb, meshCount * sizeof(GpuMeshStd430), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	resourceManager.CreateBuffer(mtb, scene->materialDb.gpuMaterials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
@@ -1615,7 +1686,7 @@ void VulkanContext::InitResources()
 	VkCommandPool initCommandPool = commandPools[0];
 	VkCommandBuffer initCommandBuffer = commandBuffers[0];
 
-	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mb, scratch, scene->geometry.meshes.data(), scene->geometry.meshes.size() * sizeof(Mesh));
+	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mb, scratch, gpuMeshes.data(), gpuMeshes.size() * sizeof(GpuMeshStd430));
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mtb, scratch, scene->materialDb.gpuMaterials.data(), scene->materialDb.gpuMaterials.size() * sizeof(Material));
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, vb, scratch, scene->geometry.vertices.data(), scene->geometry.vertices.size() * sizeof(Vertex));
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, ib, scratch, scene->geometry.indices.data(), scene->geometry.indices.size() * sizeof(uint32_t));
@@ -1633,6 +1704,14 @@ void VulkanContext::InitResources()
 	resourceManager.CreateBuffer(dcb, TASK_WGLIMIT * sizeof(MeshTaskCommand), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	resourceManager.CreateBuffer(dccb, 16, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	const uint32_t outlineIndirectMax = std::max(1u, uint32_t(scene->draws.size()));
+	resourceManager.CreateBuffer(outlineDcb, outlineIndirectMax * sizeof(MeshDrawCommand),
+	    VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+	    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	resourceManager.CreateBuffer(outlineDccb, 16,
+	    VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+	    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	// TODO: there's a way to implement cluster visibility persistence *without* using bitwise storage at all, which may be beneficial on the balance, so we should try that.
 	// *if* we do that, we can drop meshletVisibilityOffset et al from everywhere
@@ -2401,6 +2480,16 @@ bool VulkanContext::DrawFrame()
 		debugView = 0u;
 	globals.gbufferDebugMode = debugView;
 	globals.sunDirection = scene->sunDirection;
+	globals.selectionOutlinePass = 0;
+	globals.selectionOutlineWidth = 0.f;
+
+#if defined(WIN32)
+	if (editorViewportMode)
+	{
+		g_editorOverlayLastView = view;
+		g_editorOverlayLastProjection = projectionJittered;
+	}
+#endif
 
 	const mat4 inverseViewProjection = inverse(projectionJittered * view);
 
@@ -3226,6 +3315,86 @@ bool VulkanContext::DrawFrame()
 	PrepareRenderGraphPassContext(rgContext, commandBuffer, frameIndex, imageIndex);
 	rg.execute(rgContext);
 
+#if defined(WIN32)
+	if (editorViewportMode && finalOutputImage && meshSelectionOutlineEditorPipeline && scene->uiEnableSelectionOutline
+	    && scene->uiSelectedGltfNode.has_value() && outlineDcb.buffer && outlineDccb.buffer)
+	{
+		thread_local std::vector<uint32_t> s_subtreeDraws;
+		CollectDrawIndicesInNodeSubtree(*scene, *scene->uiSelectedGltfNode, s_subtreeDraws);
+		const uint32_t maxCmd = std::max(1u, uint32_t(scene->draws.size()));
+		if (!s_subtreeDraws.empty())
+		{
+			auto* const cmds = reinterpret_cast<MeshDrawCommand*>(outlineDcb.data);
+			const uint32_t outlineCount = FillEditorOutlineMeshDrawCommands(*scene, s_subtreeDraws, cmds, maxCmd);
+			if (outlineCount > 0u)
+			{
+				*reinterpret_cast<uint32_t*>(outlineDccb.data) = outlineCount;
+
+				VkImageMemoryBarrier2 toColorAttach = imageBarrier(finalOutputImage->image,
+				    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+				    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+				    VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
+
+				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &toColorAttach);
+
+				VkRenderingAttachmentInfo colorAttach{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+				colorAttach.imageView = finalOutputImageView;
+				colorAttach.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+				colorAttach.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+				colorAttach.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+				VkRenderingInfo ri{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+				ri.renderArea.offset = { 0, 0 };
+				ri.renderArea.extent = { renderWidth, renderHeight };
+				ri.layerCount = 1;
+				ri.colorAttachmentCount = 1;
+				ri.pColorAttachments = &colorAttach;
+				ri.pDepthAttachment = nullptr;
+
+				vkCmdBeginRendering(commandBuffer, &ri);
+
+				VkViewport viewport{ 0.f, float(renderHeight), float(renderWidth), -float(renderHeight), 0.f, 1.f };
+				VkRect2D scissor{ { 0, 0 }, { renderWidth, renderHeight } };
+				vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+				vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+				vkCmdSetCullMode(commandBuffer, VK_CULL_MODE_FRONT_BIT);
+				vkCmdSetDepthBias(commandBuffer, 0.f, 0.f, 0.f);
+
+				Globals outlineGlobals = globals;
+				outlineGlobals.selectionOutlinePass = 1u;
+				outlineGlobals.selectionOutlineWidth = 0.02f;
+
+				vkCmdBindPipeline(commandBuffer, meshSelectionOutlineProgram.bindPoint, meshSelectionOutlineEditorPipeline);
+				DescriptorInfo outlineDescriptors[] = { outlineDcb.buffer, db.buffer, vb.buffer, DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), DescriptorInfo(), textureSampler, mtb.buffer };
+				const size_t dsi = 2;
+				if (pushDescriptorSupported)
+				{
+					vkCmdPushDescriptorSetWithTemplate(commandBuffer, meshSelectionOutlineProgram.updateTemplate, meshSelectionOutlineProgram.layout, 0, outlineDescriptors);
+					vkCmdBindDescriptorSets(commandBuffer, meshSelectionOutlineProgram.bindPoint, meshSelectionOutlineProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+				}
+				else
+				{
+					vkUpdateDescriptorSetWithTemplateKHR(device, meshSets[frameOffset][dsi], meshSelectionOutlineProgram.updateTemplate, outlineDescriptors);
+					vkCmdBindDescriptorSets(commandBuffer, meshSelectionOutlineProgram.bindPoint, meshSelectionOutlineProgram.layout, 0, 1, &meshSets[frameOffset][dsi], 0, nullptr);
+					vkCmdBindDescriptorSets(commandBuffer, meshSelectionOutlineProgram.bindPoint, meshSelectionOutlineProgram.layout, 1, 1, &scene->textureSet.second, 0, nullptr);
+				}
+
+				vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+				vkCmdPushConstants(commandBuffer, meshSelectionOutlineProgram.layout, meshSelectionOutlineProgram.pushConstantStages, 0, sizeof(outlineGlobals), &outlineGlobals);
+				vkCmdDrawIndexedIndirectCount(commandBuffer, outlineDcb.buffer, offsetof(MeshDrawCommand, indirect), outlineDccb.buffer, 0, maxCmd, sizeof(MeshDrawCommand));
+
+				vkCmdEndRendering(commandBuffer);
+
+				VkImageMemoryBarrier2 toGeneral = imageBarrier(finalOutputImage->image,
+				    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+				    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
+
+				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 1, &toGeneral);
+			}
+		}
+	}
+#endif
+
 	static double cullGPUTime = 0.0;
 	static double pyramidGPUTime = 0.0;
 	static double culllateGPUTime = 0.0;
@@ -3802,6 +3971,52 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 		if (editorViewportDescriptorSet != VK_NULL_HANDLE)
 		{
 			ImGui::Image((ImTextureID)editorViewportDescriptorSet, viewportSize, ImVec2(0, 0), ImVec2(1, 1));
+			const ImVec2 imgMin = ImGui::GetItemRectMin();
+			const ImVec2 imgMax = ImGui::GetItemRectMax();
+			if (scene && scene->uiShowSelectedSubtreeAabb && scene->uiSelectedGltfNode.has_value() && !scene->transformNodes.empty()
+			    && *scene->uiSelectedGltfNode < scene->transformNodes.size() && nextWidth > 0u && nextHeight > 0u)
+			{
+				thread_local std::vector<uint32_t> s_aabbDraws;
+				CollectDrawIndicesInNodeSubtree(*scene, *scene->uiSelectedGltfNode, s_aabbDraws);
+				glm::vec3 mn{}, mx{};
+				if (UnionWorldAabbForDraws(*scene, s_aabbDraws, mn, mx))
+				{
+					const float diag = glm::length(mx - mn);
+					if (diag > 1e-8f)
+					{
+						const vec3 c[8] = {
+							vec3(mn.x, mn.y, mn.z),
+							vec3(mx.x, mn.y, mn.z),
+							vec3(mn.x, mx.y, mn.z),
+							vec3(mx.x, mx.y, mn.z),
+							vec3(mn.x, mn.y, mx.z),
+							vec3(mx.x, mn.y, mx.z),
+							vec3(mn.x, mx.y, mx.z),
+							vec3(mx.x, mx.y, mx.z),
+						};
+						ImDrawList* dl = ImGui::GetWindowDrawList();
+						const ImU32 col = IM_COL32(255, 235, 60, 255);
+						auto line3d = [&](int a, int b) {
+							const ImVec2 pa = EditorWorldToViewportImagePixels(g_editorOverlayLastView, g_editorOverlayLastProjection, c[a], imgMin, imgMax);
+							const ImVec2 pb = EditorWorldToViewportImagePixels(g_editorOverlayLastView, g_editorOverlayLastProjection, c[b], imgMin, imgMax);
+							if (pa.x > -1e9f && pb.x > -1e9f)
+								dl->AddLine(pa, pb, col, 1.5f);
+						};
+						line3d(0, 1);
+						line3d(1, 3);
+						line3d(3, 2);
+						line3d(2, 0);
+						line3d(4, 5);
+						line3d(5, 7);
+						line3d(7, 6);
+						line3d(6, 4);
+						line3d(0, 4);
+						line3d(1, 5);
+						line3d(2, 6);
+						line3d(3, 7);
+					}
+				}
+			}
 		}
 		else
 		{
@@ -4131,6 +4346,8 @@ void VulkanContext::Release()
 	if (depthTargetHandle.IsValid())
 		resourceManager.ReleaseTexture(depthTargetHandle);
 
+	resourceManager.DestroyBuffer(outlineDccb);
+	resourceManager.DestroyBuffer(outlineDcb);
 	resourceManager.DestroyBuffer(dccb);
 	resourceManager.DestroyBuffer(dcb);
 	resourceManager.DestroyBuffer(dvb);
@@ -4182,6 +4399,7 @@ void VulkanContext::Release()
 		vkDestroyPipeline(device, pipeline, 0);
 
 	destroyProgram(device, meshProgram, descriptorPool);
+	destroyProgram(device, meshSelectionOutlineProgram, descriptorPool);
 	destroyProgram(device, meshtaskProgram, descriptorPool);
 	destroyProgram(device, debugtextProgram, descriptorPool);
 	destroyProgram(device, drawcullProgram, descriptorPool);

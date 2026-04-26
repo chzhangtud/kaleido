@@ -52,6 +52,11 @@ struct Globals
 	// Filled for transparency alpha-blend pass when screen-space refraction is off; unused elsewhere.
 	vec3 sunDirection;
 	float sunPad;
+	// 0 = normal mesh pass; 1 = editor selection inverted-hull outline (vertex extrusion in world space along normal).
+	uint selectionOutlinePass;
+	float selectionOutlineWidth;
+	uint selectionOutlinePad0;
+	uint selectionOutlinePad1;
 };
 
 struct MeshLod

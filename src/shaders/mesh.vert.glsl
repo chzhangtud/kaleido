@@ -58,6 +58,11 @@ void main()
 	transformWorldTBN(W, normal, tangent.xyz, oN, oT);
 	normal = oN;
 	tangent.xyz = oT;
+	if (globals.selectionOutlinePass != 0u)
+	{
+		vec3 nrm = normalize(normal);
+		wpos += nrm * globals.selectionOutlineWidth;
+	}
 	gl_Position = globals.projection * (globals.cullData.view * vec4(wpos, 1));
 
     out_drawId = drawId;

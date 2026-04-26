@@ -107,6 +107,10 @@ struct alignas(16) Globals
 	uint32_t gbufferDebugMode;
 	vec3 sunDirection{};
 	float sunPad = 0.f;
+	uint32_t selectionOutlinePass = 0;
+	float selectionOutlineWidth = 0.f;
+	uint32_t selectionOutlinePad0 = 0;
+	uint32_t selectionOutlinePad1 = 0;
 };
 
 struct alignas(16) ShadowData
@@ -383,6 +387,7 @@ public:
 	VkPipeline clusterWirePipeline = 0;
 	VkPipeline clusterpostWirePipeline = 0;
 	VkPipeline meshTransparencyBlendPipeline = 0;
+	VkPipeline meshSelectionOutlineEditorPipeline = 0;
 	VkPipeline meshtaskTransparencyBlendPipeline = 0;
 	VkPipeline clusterTransparencyBlendPipeline = 0;
 	VkPipeline finalPipeline = 0;
@@ -403,6 +408,7 @@ public:
 	Program clustercullProgram{};
 	Program depthreduceProgram{};
 	Program meshProgram{};
+	Program meshSelectionOutlineProgram{};
 	Program meshtaskProgram{};
 	Program clusterProgram{};
 	Program transparencyBlendMeshProgram{};
@@ -452,6 +458,8 @@ public:
 	Buffer dvb{};
 	Buffer dcb{};
 	Buffer dccb{};
+	Buffer outlineDcb{};
+	Buffer outlineDccb{};
 	Buffer mvb{};
 	Buffer cib{};
 	Buffer ccb{};

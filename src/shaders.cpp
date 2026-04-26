@@ -730,7 +730,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	createInfo.pMultisampleState = &multisampleState;
 
 	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-	depthStencilState.depthTestEnable = VK_TRUE;
+	depthStencilState.depthTestEnable = extra.depthTestEnable ? VK_TRUE : VK_FALSE;
 	depthStencilState.depthWriteEnable = extra.depthWrite ? VK_TRUE : VK_FALSE;
 	depthStencilState.depthCompareOp = VK_COMPARE_OP_GREATER; // we are currently use inverse z.
 	createInfo.pDepthStencilState = &depthStencilState;
@@ -822,6 +822,7 @@ VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache,
 #endif
 
 	std::vector<VkSpecializationMapEntry> specializationEntries;
+	VkSpecializationInfo specializationInfo{};
 
 	if (!pushconstants.empty())
 	{
@@ -829,7 +830,6 @@ VkPipeline createComputePipeline(VkDevice device, VkPipelineCache pipelineCache,
 		for (size_t i = 0; i < pushconstants.size(); ++i)
 			specializationEntries.push_back({ uint32_t(i), uint32_t(i * sizeof(PushConst)), sizeof(PushConst) });
 
-		VkSpecializationInfo specializationInfo = {};
 		specializationInfo.mapEntryCount = uint32_t(specializationEntries.size());
 		specializationInfo.pMapEntries = specializationEntries.data();
 		specializationInfo.dataSize = sizeof(PushConst) * pushconstants.size();

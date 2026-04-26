@@ -77,6 +77,7 @@ struct GraphicsPipelineExtraState
 	VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
 	bool alphaBlendFirstAttachment = false;
 	bool depthWrite = true;
+	bool depthTestEnable = true;
 };
 
 VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, const VkPipelineRenderingCreateInfo& renderingInfo, const Program& program, std::vector<PushConst> pushconstants = {}, const GraphicsPipelineExtraState& extra = {});
