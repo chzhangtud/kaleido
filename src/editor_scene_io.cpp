@@ -3,6 +3,8 @@
 #include <fstream>
 #include <sstream>
 
+#include <glm/gtc/type_ptr.hpp>
+
 #include "rapidjson/document.h"
 #include "rapidjson/error/en.h"
 #include "rapidjson/prettywriter.h"
@@ -73,6 +75,31 @@ void ReadUint32Positive(const rapidjson::Value& obj, const char* key, uint32_t& 
 	else if (v.IsInt() && v.GetInt() > 0)
 		target = static_cast<uint32_t>(v.GetInt());
 }
+
+template <typename Writer>
+void WriteMat4ColumnMajor(Writer& writer, const mat4& m)
+{
+	writer.StartArray();
+	const float* p = glm::value_ptr(m);
+	for (int i = 0; i < 16; ++i)
+		writer.Double(static_cast<double>(p[i]));
+	writer.EndArray();
+}
+
+bool ReadMat4ColumnMajor(const rapidjson::Value& arr, mat4& outM)
+{
+	if (!arr.IsArray() || arr.Size() != 16)
+		return false;
+	float c[16];
+	for (rapidjson::SizeType i = 0; i < 16; ++i)
+	{
+		if (!arr[i].IsNumber())
+			return false;
+		c[i] = static_cast<float>(arr[i].GetDouble());
+	}
+	outM = glm::make_mat4(c);
+	return true;
+}
 } // namespace
 
 bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorSceneSnapshot& snapshot, std::string* outError)
@@ -85,7 +112,7 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.Key("format");
 	writer.String("kaleido_editor_scene");
 	writer.Key("version");
-	writer.Uint(1);
+	writer.Uint(3);
 	writer.Key("modelPath");
 	writer.String(snapshot.modelPath.c_str());
 
@@ -159,6 +186,28 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 		writer.Uint(snapshot.viewportHeight);
 		writer.EndObject();
 	}
+
+	writer.Key("editorUi");
+	writer.StartObject();
+	writer.Key("selectedGltfNode");
+	if (snapshot.editorUi.selectedGltfNode.has_value())
+		writer.Uint(*snapshot.editorUi.selectedGltfNode);
+	else
+		writer.Null();
+	writer.Key("selectionOutlineEnabled");
+	writer.Bool(snapshot.editorUi.selectionOutlineEnabled);
+	writer.Key("showSelectedSubtreeAabb");
+	writer.Bool(snapshot.editorUi.showSelectedSubtreeAabb);
+	writer.EndObject();
+
+	writer.Key("transforms");
+	writer.StartObject();
+	writer.Key("nodeLocalMatrices");
+	writer.StartArray();
+	for (const mat4& m : snapshot.transformNodeLocals)
+		WriteMat4ColumnMajor(writer, m);
+	writer.EndArray();
+	writer.EndObject();
 
 	writer.EndObject();
 
@@ -300,6 +349,48 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 		{
 			snapshot.viewportWidth = vw;
 			snapshot.viewportHeight = vh;
+		}
+	}
+
+	const auto editorUiIt = document.FindMember("editorUi");
+	if (editorUiIt != document.MemberEnd() && editorUiIt->value.IsObject())
+	{
+		const rapidjson::Value& eu = editorUiIt->value;
+		ReadBool(eu, "selectionOutlineEnabled", snapshot.editorUi.selectionOutlineEnabled);
+		ReadBool(eu, "showSelectedSubtreeAabb", snapshot.editorUi.showSelectedSubtreeAabb);
+		const auto selIt = eu.FindMember("selectedGltfNode");
+		if (selIt != eu.MemberEnd())
+		{
+			if (selIt->value.IsNull())
+				snapshot.editorUi.selectedGltfNode.reset();
+			else if (selIt->value.IsUint())
+				snapshot.editorUi.selectedGltfNode = selIt->value.GetUint();
+			else if (selIt->value.IsInt() && selIt->value.GetInt() >= 0)
+				snapshot.editorUi.selectedGltfNode = static_cast<uint32_t>(selIt->value.GetInt());
+		}
+	}
+
+	const auto transformsIt = document.FindMember("transforms");
+	if (transformsIt != document.MemberEnd() && transformsIt->value.IsObject())
+	{
+		const rapidjson::Value& tf = transformsIt->value;
+		const auto matricesIt = tf.FindMember("nodeLocalMatrices");
+		if (matricesIt != tf.MemberEnd() && matricesIt->value.IsArray())
+		{
+			const rapidjson::Value& matrices = matricesIt->value;
+			snapshot.transformNodeLocals.clear();
+			snapshot.transformNodeLocals.reserve(matrices.Size());
+			for (rapidjson::SizeType i = 0; i < matrices.Size(); ++i)
+			{
+				mat4 m{};
+				if (!ReadMat4ColumnMajor(matrices[i], m))
+				{
+					if (outError)
+						*outError = "transforms.nodeLocalMatrices[" + std::to_string(i) + "] must be an array of 16 numbers (column-major mat4).";
+					return false;
+				}
+				snapshot.transformNodeLocals.push_back(m);
+			}
 		}
 	}
 

@@ -324,6 +324,8 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 	{
 		ApplyEditorRenderSettings(bootSnapshot.renderSettings);
 		ApplyEditorCameraState(*scene, bootSnapshot.camera);
+		ApplyEditorSceneUiState(*scene, bootSnapshot.editorUi);
+		ApplyEditorTransformNodeLocals(*scene, bootSnapshot.transformNodeLocals);
 	}
 
 	if (!config.autoDumpExrPath.empty() && vContext->IsEditorViewportMode())
@@ -397,6 +399,8 @@ bool KaleidoRuntime::RenderFrame()
 		{
 			ApplyEditorRenderSettings(pendingSnapshot->renderSettings);
 			ApplyEditorCameraState(*scene, pendingSnapshot->camera);
+			ApplyEditorSceneUiState(*scene, pendingSnapshot->editorUi);
+			ApplyEditorTransformNodeLocals(*scene, pendingSnapshot->transformNodeLocals);
 #if defined(WIN32)
 			if (vContext->IsEditorViewportMode() && pendingSnapshot->viewportWidth > 0u && pendingSnapshot->viewportHeight > 0u)
 			{

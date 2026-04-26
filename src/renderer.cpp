@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <string_view>
 #include <vector>
@@ -304,21 +305,6 @@ static uint32_t FillEditorOutlineMeshDrawCommands(const Scene& scene, const std:
 		out[n++] = cmd;
 	}
 	return n;
-}
-
-static ImVec2 EditorWorldToViewportImagePixels(const mat4& view, const mat4& proj, const vec3& world, const ImVec2& imgMin, const ImVec2& imgMax)
-{
-	const vec4 clip = proj * view * vec4(world, 1.f);
-	if (std::abs(clip.w) < 1e-6f)
-		return ImVec2(-1e10f, -1e10f);
-	const float invW = 1.f / clip.w;
-	const float ndcx = clip.x * invW;
-	const float ndcy = clip.y * invW;
-	const float w = imgMax.x - imgMin.x;
-	const float h = imgMax.y - imgMin.y;
-	const float px = (ndcx * 0.5f + 0.5f) * w;
-	const float py = (-ndcy * 0.5f + 0.5f) * h;
-	return ImVec2(imgMin.x + px, imgMin.y + py);
 }
 
 static void DrawGltfOutlineNode(Scene& scene, const GltfDocumentOutline& doc, uint32_t nodeIdx)
@@ -612,10 +598,6 @@ static bool g_editorViewportRectValid = false;
 static ImVec2 g_editorViewportRectMin = ImVec2(0.f, 0.f);
 static ImVec2 g_editorViewportRectMax = ImVec2(0.f, 0.f);
 
-// Last frame's camera matrices for editor viewport UI overlays (AABB lines), matching rendered globals.
-static mat4 g_editorOverlayLastView{ 1.f };
-static mat4 g_editorOverlayLastProjection{ 1.f };
-
 static bool IsPointInsideEditorViewport(float x, float y)
 {
 	if (!g_editorViewportInputMode || !g_editorViewportRectValid)
@@ -897,6 +879,62 @@ void ApplyEditorCameraState(Scene& scene, const EditorCameraState& state)
 	cameraDirty = false;
 }
 
+EditorSceneUiState CaptureEditorSceneUiState(const Scene& scene)
+{
+	EditorSceneUiState ui{};
+	ui.selectedGltfNode = scene.uiSelectedGltfNode;
+	ui.selectionOutlineEnabled = scene.uiEnableSelectionOutline;
+	ui.showSelectedSubtreeAabb = scene.uiShowSelectedSubtreeAabb;
+	return ui;
+}
+
+void ApplyEditorSceneUiState(Scene& scene, const EditorSceneUiState& ui)
+{
+	scene.uiEnableSelectionOutline = ui.selectionOutlineEnabled;
+	scene.uiShowSelectedSubtreeAabb = ui.showSelectedSubtreeAabb;
+	if (!ui.selectedGltfNode.has_value())
+	{
+		scene.uiSelectedGltfNode.reset();
+		return;
+	}
+	const uint32_t nodeIdx = *ui.selectedGltfNode;
+	if (scene.gltfDocument.nodes.empty() || nodeIdx >= scene.gltfDocument.nodes.size())
+	{
+		LOGW("Editor scene state: selectedGltfNode %u is invalid for this scene (gltf node count %zu); clearing selection.",
+		    nodeIdx, scene.gltfDocument.nodes.size());
+		scene.uiSelectedGltfNode.reset();
+		return;
+	}
+	scene.uiSelectedGltfNode = nodeIdx;
+}
+
+std::vector<mat4> CaptureEditorTransformNodeLocals(const Scene& scene)
+{
+	std::vector<mat4> out;
+	out.reserve(scene.transformNodes.size());
+	for (const TransformNode& tn : scene.transformNodes)
+		out.push_back(tn.local);
+	return out;
+}
+
+void ApplyEditorTransformNodeLocals(Scene& scene, const std::vector<mat4>& locals)
+{
+	if (locals.empty())
+		return;
+	if (locals.size() != scene.transformNodes.size())
+	{
+		LOGW("Editor scene state: transform count mismatch (snapshot %zu vs scene %zu); ignoring saved transforms.",
+		    locals.size(), scene.transformNodes.size());
+		return;
+	}
+	for (size_t i = 0; i < locals.size(); ++i)
+		scene.transformNodes[i].local = locals[i];
+	for (size_t i = 0; i < scene.transformNodes.size(); ++i)
+		scene.transformNodes[i].worldDirty = true;
+	FlushSceneTransforms(scene);
+	scene.transformsGpuDirty = true;
+}
+
 mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
 {
 	float f = 1.0f / tanf(fovY / 2.0f);
@@ -1152,6 +1190,10 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 
 	meshSelectionOutlineProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["mesh.vert"], &shaderSet["mesh_selection_outline.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
 
+#if defined(WIN32)
+	editorAabbLineProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["editor_aabb_line.vert"], &shaderSet["editor_aabb_line.frag"] }, sizeof(EditorAabbLinePush), pushDescriptorSupported, descriptorPool);
+#endif
+
 	transparencyBlendMeshProgram = createProgram(device, VK_PIPELINE_BIND_POINT_GRAPHICS, { &shaderSet["mesh.vert"], &shaderSet["transparency_blend.frag"] }, sizeof(Globals), pushDescriptorSupported, descriptorPool, textureSetLayout);
 
 	meshtaskProgram = {};
@@ -1234,6 +1276,22 @@ void VulkanContext::InitVulkan(ANativeWindow* _window)
 			outlineRaster.depthTestEnable = false;
 			replace(meshSelectionOutlineEditorPipeline, createGraphicsPipeline(device, pipelineCache, editorOutlineRenderingInfo, meshSelectionOutlineProgram, {}, outlineRaster));
 		}
+
+#if defined(WIN32)
+		{
+			VkPipelineRenderingCreateInfo editorAabbRenderingInfo{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+			editorAabbRenderingInfo.colorAttachmentCount = 1;
+			editorAabbRenderingInfo.pColorAttachmentFormats = &sceneColorFormat;
+			editorAabbRenderingInfo.depthAttachmentFormat = depthFormat;
+			GraphicsPipelineExtraState aabbLineRaster{};
+			aabbLineRaster.primitiveTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+			aabbLineRaster.vertexInputWorldPositionVec3 = true;
+			aabbLineRaster.disableBackfaceCull = true;
+			aabbLineRaster.depthWrite = false;
+			aabbLineRaster.depthTestEnable = true;
+			replace(editorAabbLinePipeline, createGraphicsPipeline(device, pipelineCache, editorAabbRenderingInfo, editorAabbLineProgram, {}, aabbLineRaster));
+		}
+#endif
 
 		if (wireframeDebugSupported)
 		{
@@ -1712,6 +1770,14 @@ void VulkanContext::InitResources()
 	resourceManager.CreateBuffer(outlineDccb, 16,
 	    VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 	    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+#if defined(WIN32)
+	if (!editorAabbLineVb.buffer)
+	{
+		resourceManager.CreateBuffer(editorAabbLineVb, 24u * 3u * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+		    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	}
+#endif
 
 	// TODO: there's a way to implement cluster visibility persistence *without* using bitwise storage at all, which may be beneficial on the balance, so we should try that.
 	// *if* we do that, we can drop meshletVisibilityOffset et al from everywhere
@@ -2482,14 +2548,6 @@ bool VulkanContext::DrawFrame()
 	globals.sunDirection = scene->sunDirection;
 	globals.selectionOutlinePass = 0;
 	globals.selectionOutlineWidth = 0.f;
-
-#if defined(WIN32)
-	if (editorViewportMode)
-	{
-		g_editorOverlayLastView = view;
-		g_editorOverlayLastProjection = projectionJittered;
-	}
-#endif
 
 	const mat4 inverseViewProjection = inverse(projectionJittered * view);
 
@@ -3393,6 +3451,125 @@ bool VulkanContext::DrawFrame()
 			}
 		}
 	}
+
+	if (editorViewportMode && finalOutputImage && editorAabbLinePipeline && editorAabbLineProgram.layout && editorAabbLineVb.buffer && depthTarget
+	    && scene->uiShowSelectedSubtreeAabb && scene->uiSelectedGltfNode.has_value() && !scene->transformNodes.empty()
+	    && *scene->uiSelectedGltfNode < scene->transformNodes.size() && editorAabbLineVb.data)
+	{
+		thread_local std::vector<uint32_t> s_aabbDraws;
+		CollectDrawIndicesInNodeSubtree(*scene, *scene->uiSelectedGltfNode, s_aabbDraws);
+		glm::vec3 mn{}, mx{};
+		if (!s_aabbDraws.empty() && UnionWorldAabbForDraws(*scene, s_aabbDraws, mn, mx))
+		{
+			const float diag = glm::length(mx - mn);
+			if (diag > 1e-8f)
+			{
+				const vec3 c[8] = {
+					vec3(mn.x, mn.y, mn.z),
+					vec3(mx.x, mn.y, mn.z),
+					vec3(mn.x, mx.y, mn.z),
+					vec3(mx.x, mx.y, mn.z),
+					vec3(mn.x, mn.y, mx.z),
+					vec3(mx.x, mn.y, mx.z),
+					vec3(mn.x, mx.y, mx.z),
+					vec3(mx.x, mx.y, mx.z),
+				};
+				vec3 verts[24];
+				uint32_t k = 0;
+				auto edge = [&](int a, int b) {
+					verts[k++] = c[a];
+					verts[k++] = c[b];
+				};
+				edge(0, 1);
+				edge(1, 3);
+				edge(3, 2);
+				edge(2, 0);
+				edge(4, 5);
+				edge(5, 7);
+				edge(7, 6);
+				edge(6, 4);
+				edge(0, 4);
+				edge(1, 5);
+				edge(2, 6);
+				edge(3, 7);
+
+				memcpy(editorAabbLineVb.data, verts, sizeof(verts));
+
+				VkBufferMemoryBarrier2 vbBarrier = bufferBarrier(editorAabbLineVb.buffer,
+				    VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_WRITE_BIT,
+				    VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+
+				VkImageMemoryBarrier2 toAttach[2];
+				toAttach[0] = imageBarrier(finalOutputImage->image,
+				    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+				    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+				    VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
+				toAttach[1] = imageBarrier(depthTarget->image,
+				    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+				    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+				    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 1, &vbBarrier, 2, toAttach);
+
+				VkRenderingAttachmentInfo colorAttach{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+				colorAttach.imageView = finalOutputImageView;
+				colorAttach.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+				colorAttach.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+				colorAttach.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+				VkRenderingAttachmentInfo depthAttach{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+				depthAttach.imageView = depthTarget->imageView;
+				depthAttach.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+				depthAttach.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+				depthAttach.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+				VkRenderingInfo aabbRi{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+				aabbRi.renderArea.offset = { 0, 0 };
+				aabbRi.renderArea.extent = { renderWidth, renderHeight };
+				aabbRi.layerCount = 1;
+				aabbRi.colorAttachmentCount = 1;
+				aabbRi.pColorAttachments = &colorAttach;
+				aabbRi.pDepthAttachment = &depthAttach;
+
+				vkCmdBeginRendering(commandBuffer, &aabbRi);
+
+				VkViewport viewport{ 0.f, float(renderHeight), float(renderWidth), -float(renderHeight), 0.f, 1.f };
+				VkRect2D scissor{ { 0, 0 }, { renderWidth, renderHeight } };
+				vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+				vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+				vkCmdSetCullMode(commandBuffer, VK_CULL_MODE_NONE);
+				vkCmdSetDepthBias(commandBuffer, 0.f, 0.f, 0.f);
+
+				EditorAabbLinePush aabbPush{};
+				aabbPush.view = view;
+				aabbPush.projection = projectionJittered;
+				aabbPush.lineColor = vec4(1.f, 235.f / 255.f, 60.f / 255.f, 1.f);
+
+				vkCmdBindPipeline(commandBuffer, editorAabbLineProgram.bindPoint, editorAabbLinePipeline);
+				VkBuffer vb = editorAabbLineVb.buffer;
+				VkDeviceSize vbOffset = 0;
+				vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vb, &vbOffset);
+				vkCmdPushConstants(commandBuffer, editorAabbLineProgram.layout, editorAabbLineProgram.pushConstantStages, 0, sizeof(aabbPush), &aabbPush);
+				vkCmdDraw(commandBuffer, 24, 1, 0, 0);
+
+				vkCmdEndRendering(commandBuffer);
+
+				VkImageMemoryBarrier2 afterAabb[2];
+				afterAabb[0] = imageBarrier(finalOutputImage->image,
+				    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+				    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
+				afterAabb[1] = imageBarrier(depthTarget->image,
+				    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+				    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+				    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+				    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, 2, afterAabb);
+			}
+		}
+	}
 #endif
 
 	static double cullGPUTime = 0.0;
@@ -3873,6 +4050,8 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 						snapshot.modelPath = scene->path;
 						snapshot.camera = CaptureEditorCameraState(*scene);
 						snapshot.renderSettings = CaptureEditorRenderSettings();
+						snapshot.editorUi = CaptureEditorSceneUiState(*scene);
+						snapshot.transformNodeLocals = CaptureEditorTransformNodeLocals(*scene);
 						if (editorViewportWidth > 0u && editorViewportHeight > 0u)
 						{
 							snapshot.viewportWidth = editorViewportWidth;
@@ -3971,52 +4150,6 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 		if (editorViewportDescriptorSet != VK_NULL_HANDLE)
 		{
 			ImGui::Image((ImTextureID)editorViewportDescriptorSet, viewportSize, ImVec2(0, 0), ImVec2(1, 1));
-			const ImVec2 imgMin = ImGui::GetItemRectMin();
-			const ImVec2 imgMax = ImGui::GetItemRectMax();
-			if (scene && scene->uiShowSelectedSubtreeAabb && scene->uiSelectedGltfNode.has_value() && !scene->transformNodes.empty()
-			    && *scene->uiSelectedGltfNode < scene->transformNodes.size() && nextWidth > 0u && nextHeight > 0u)
-			{
-				thread_local std::vector<uint32_t> s_aabbDraws;
-				CollectDrawIndicesInNodeSubtree(*scene, *scene->uiSelectedGltfNode, s_aabbDraws);
-				glm::vec3 mn{}, mx{};
-				if (UnionWorldAabbForDraws(*scene, s_aabbDraws, mn, mx))
-				{
-					const float diag = glm::length(mx - mn);
-					if (diag > 1e-8f)
-					{
-						const vec3 c[8] = {
-							vec3(mn.x, mn.y, mn.z),
-							vec3(mx.x, mn.y, mn.z),
-							vec3(mn.x, mx.y, mn.z),
-							vec3(mx.x, mx.y, mn.z),
-							vec3(mn.x, mn.y, mx.z),
-							vec3(mx.x, mn.y, mx.z),
-							vec3(mn.x, mx.y, mx.z),
-							vec3(mx.x, mx.y, mx.z),
-						};
-						ImDrawList* dl = ImGui::GetWindowDrawList();
-						const ImU32 col = IM_COL32(255, 235, 60, 255);
-						auto line3d = [&](int a, int b) {
-							const ImVec2 pa = EditorWorldToViewportImagePixels(g_editorOverlayLastView, g_editorOverlayLastProjection, c[a], imgMin, imgMax);
-							const ImVec2 pb = EditorWorldToViewportImagePixels(g_editorOverlayLastView, g_editorOverlayLastProjection, c[b], imgMin, imgMax);
-							if (pa.x > -1e9f && pb.x > -1e9f)
-								dl->AddLine(pa, pb, col, 1.5f);
-						};
-						line3d(0, 1);
-						line3d(1, 3);
-						line3d(3, 2);
-						line3d(2, 0);
-						line3d(4, 5);
-						line3d(5, 7);
-						line3d(7, 6);
-						line3d(6, 4);
-						line3d(0, 4);
-						line3d(1, 5);
-						line3d(2, 6);
-						line3d(3, 7);
-					}
-				}
-			}
 		}
 		else
 		{
@@ -4348,6 +4481,9 @@ void VulkanContext::Release()
 
 	resourceManager.DestroyBuffer(outlineDccb);
 	resourceManager.DestroyBuffer(outlineDcb);
+#if defined(WIN32)
+	resourceManager.DestroyBuffer(editorAabbLineVb);
+#endif
 	resourceManager.DestroyBuffer(dccb);
 	resourceManager.DestroyBuffer(dcb);
 	resourceManager.DestroyBuffer(dvb);
@@ -4400,6 +4536,9 @@ void VulkanContext::Release()
 
 	destroyProgram(device, meshProgram, descriptorPool);
 	destroyProgram(device, meshSelectionOutlineProgram, descriptorPool);
+#if defined(WIN32)
+	destroyProgram(device, editorAabbLineProgram, descriptorPool);
+#endif
 	destroyProgram(device, meshtaskProgram, descriptorPool);
 	destroyProgram(device, debugtextProgram, descriptorPool);
 	destroyProgram(device, drawcullProgram, descriptorPool);

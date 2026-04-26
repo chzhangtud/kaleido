@@ -75,6 +75,9 @@ std::pair<VkDescriptorPool, VkDescriptorSet> createDescriptorArray(VkDevice devi
 struct GraphicsPipelineExtraState
 {
 	VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
+	VkPrimitiveTopology primitiveTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	bool vertexInputWorldPositionVec3 = false;
+	bool disableBackfaceCull = false;
 	bool alphaBlendFirstAttachment = false;
 	bool depthWrite = true;
 	bool depthTestEnable = true;

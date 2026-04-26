@@ -1,6 +1,8 @@
 build/
 build_ninja/
+build_tests/
 .vs/
 debug-*.log
 src/shaders/*.spv
 .cursor/
+*imgui.ini

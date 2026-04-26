@@ -702,14 +702,19 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	createInfo.pStages = stages.data();
 
 	VkPipelineVertexInputStateCreateInfo vertexInput = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+	VkVertexInputBindingDescription posBinding{ 0, sizeof(float) * 3, VK_VERTEX_INPUT_RATE_VERTEX };
+	VkVertexInputAttributeDescription posAttribute{ 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 };
+	if (extra.vertexInputWorldPositionVec3)
+	{
+		vertexInput.vertexBindingDescriptionCount = 1;
+		vertexInput.pVertexBindingDescriptions = &posBinding;
+		vertexInput.vertexAttributeDescriptionCount = 1;
+		vertexInput.pVertexAttributeDescriptions = &posAttribute;
+	}
 	createInfo.pVertexInputState = &vertexInput;
 
-	// TODO: temporary, legacy FFP IA
-	VkVertexInputBindingDescription stream = { 0, 8 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX };
-	VkVertexInputAttributeDescription attrs[3] = {};
-
 	VkPipelineInputAssemblyStateCreateInfo inputAssembly = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
-	inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	inputAssembly.topology = extra.primitiveTopology;
 	createInfo.pInputAssemblyState = &inputAssembly;
 
 	VkPipelineViewportStateCreateInfo viewportState = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
@@ -721,7 +726,10 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
 	rasterizationState.lineWidth = 1.f;
 	rasterizationState.polygonMode = extra.polygonMode;
 	rasterizationState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-	rasterizationState.cullMode = extra.polygonMode == VK_POLYGON_MODE_LINE ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+	if (extra.disableBackfaceCull)
+		rasterizationState.cullMode = VK_CULL_MODE_NONE;
+	else
+		rasterizationState.cullMode = extra.polygonMode == VK_POLYGON_MODE_LINE ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
 	rasterizationState.depthBiasEnable = true;
 	createInfo.pRasterizationState = &rasterizationState;
 

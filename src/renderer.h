@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #if defined(_WIN32)
 #include <iostream>
@@ -111,6 +112,14 @@ struct alignas(16) Globals
 	float selectionOutlineWidth = 0.f;
 	uint32_t selectionOutlinePad0 = 0;
 	uint32_t selectionOutlinePad1 = 0;
+};
+
+// Editor: world-space AABB wireframe drawn after the main frame with depth testing.
+struct alignas(16) EditorAabbLinePush
+{
+	mat4 view;
+	mat4 projection;
+	vec4 lineColor;
 };
 
 struct alignas(16) ShadowData
@@ -228,6 +237,10 @@ EditorRenderSettings CaptureEditorRenderSettings();
 void ApplyEditorRenderSettings(const EditorRenderSettings& settings);
 EditorCameraState CaptureEditorCameraState(const Scene& scene);
 void ApplyEditorCameraState(Scene& scene, const EditorCameraState& state);
+EditorSceneUiState CaptureEditorSceneUiState(const Scene& scene);
+void ApplyEditorSceneUiState(Scene& scene, const EditorSceneUiState& ui);
+std::vector<mat4> CaptureEditorTransformNodeLocals(const Scene& scene);
+void ApplyEditorTransformNodeLocals(Scene& scene, const std::vector<mat4>& locals);
 
 inline static const size_t gbufferCount = 3;
 
@@ -388,6 +401,9 @@ public:
 	VkPipeline clusterpostWirePipeline = 0;
 	VkPipeline meshTransparencyBlendPipeline = 0;
 	VkPipeline meshSelectionOutlineEditorPipeline = 0;
+#if defined(WIN32)
+	VkPipeline editorAabbLinePipeline = 0;
+#endif
 	VkPipeline meshtaskTransparencyBlendPipeline = 0;
 	VkPipeline clusterTransparencyBlendPipeline = 0;
 	VkPipeline finalPipeline = 0;
@@ -409,6 +425,9 @@ public:
 	Program depthreduceProgram{};
 	Program meshProgram{};
 	Program meshSelectionOutlineProgram{};
+#if defined(WIN32)
+	Program editorAabbLineProgram{};
+#endif
 	Program meshtaskProgram{};
 	Program clusterProgram{};
 	Program transparencyBlendMeshProgram{};
@@ -460,6 +479,9 @@ public:
 	Buffer dccb{};
 	Buffer outlineDcb{};
 	Buffer outlineDccb{};
+#if defined(WIN32)
+	Buffer editorAabbLineVb{};
+#endif
 	Buffer mvb{};
 	Buffer cib{};
 	Buffer ccb{};

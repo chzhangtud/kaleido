@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <optional>
+
 #include "math.h"
 
 struct EditorRenderSettings
@@ -35,4 +38,12 @@ struct EditorCameraState
 	float moveSpeed = 5.0f;
 	bool dollyZoomEnabled = false;
 	float dollyZoomRefDistance = 5.0f;
+};
+
+// Scene-tree selection and editor visualization toggles (mirrors `Scene` editor fields).
+struct EditorSceneUiState
+{
+	std::optional<uint32_t> selectedGltfNode;
+	bool selectionOutlineEnabled = false;
+	bool showSelectedSubtreeAabb = false;
 };
