@@ -41,6 +41,7 @@ void MaterialDatabase::Clear()
 	entries.clear();
 	gpuMaterials.clear();
 	materialKeys.clear();
+	gpuDirty = false;
 }
 
 uint32_t MaterialDatabase::Add(std::unique_ptr<MaterialClass> material)
@@ -49,6 +50,7 @@ uint32_t MaterialDatabase::Add(std::unique_ptr<MaterialClass> material)
 	materialKeys.push_back(material->GetMaterialKey());
 	gpuMaterials.push_back(material->ToGpuMaterial());
 	entries.push_back(std::move(material));
+	gpuDirty = false;
 	return uint32_t(gpuMaterials.size() - 1);
 }
 

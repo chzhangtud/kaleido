@@ -25,6 +25,18 @@ void WriteVec3(Writer& writer, const char* key, const vec3& v)
 	writer.EndArray();
 }
 
+template <typename Writer>
+void WriteVec4(Writer& writer, const char* key, const vec4& v)
+{
+	writer.Key(key);
+	writer.StartArray();
+	writer.Double(v.x);
+	writer.Double(v.y);
+	writer.Double(v.z);
+	writer.Double(v.w);
+	writer.EndArray();
+}
+
 void AppendParseError(std::string& message, rapidjson::ParseResult parseResult)
 {
 	message = "JSON parse failed: ";
@@ -42,6 +54,19 @@ bool ReadVec3(const rapidjson::Value& value, vec3& outValue)
 	    static_cast<float>(value[0].GetDouble()),
 	    static_cast<float>(value[1].GetDouble()),
 	    static_cast<float>(value[2].GetDouble()));
+	return true;
+}
+
+bool ReadVec4(const rapidjson::Value& value, vec4& outValue)
+{
+	if (!value.IsArray() || value.Size() != 4 || !value[0].IsNumber() || !value[1].IsNumber() || !value[2].IsNumber() || !value[3].IsNumber())
+		return false;
+
+	outValue = vec4(
+	    static_cast<float>(value[0].GetDouble()),
+	    static_cast<float>(value[1].GetDouble()),
+	    static_cast<float>(value[2].GetDouble()),
+	    static_cast<float>(value[3].GetDouble()));
 	return true;
 }
 
@@ -114,7 +139,7 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.Key("format");
 	writer.String("kaleido_editor_scene");
 	writer.Key("version");
-	writer.Uint(3);
+	writer.Uint(4);
 	writer.Key("modelPath");
 	{
 		const std::string serializable = MakeModelPathForSerialization(snapshot.modelPath);
@@ -214,6 +239,20 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.EndArray();
 	writer.EndObject();
 
+	writer.Key("materialOverrides");
+	writer.StartArray();
+	for (const EditorMaterialOverride& ov : snapshot.materialOverrides)
+	{
+		writer.StartObject();
+		writer.Key("gltfMaterialIndex");
+		writer.Uint(ov.gltfMaterialIndex);
+		WriteVec4(writer, "baseColorFactor", ov.baseColorFactor);
+		WriteVec4(writer, "pbrFactor", ov.pbrFactor);
+		WriteVec3(writer, "emissiveFactor", ov.emissiveFactor);
+		writer.EndObject();
+	}
+	writer.EndArray();
+
 	writer.EndObject();
 
 	std::ofstream out(sceneFilePath, std::ios::binary | std::ios::trunc);
@@ -282,6 +321,11 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 
 	EditorSceneSnapshot snapshot{};
 	snapshot.modelPath = ResolveModelPath(modelPathIt->value.GetString());
+
+	int sceneVersion = 3;
+	const auto versionIt = document.FindMember("version");
+	if (versionIt != document.MemberEnd() && versionIt->value.IsInt())
+		sceneVersion = versionIt->value.GetInt();
 
 	const auto cameraIt = document.FindMember("camera");
 	if (cameraIt != document.MemberEnd() && cameraIt->value.IsObject())
@@ -395,6 +439,67 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 					return false;
 				}
 				snapshot.transformNodeLocals.push_back(m);
+			}
+		}
+	}
+
+	if (sceneVersion >= 4)
+	{
+		const auto overridesIt = document.FindMember("materialOverrides");
+		if (overridesIt != document.MemberEnd())
+		{
+			if (!overridesIt->value.IsArray())
+			{
+				if (outError)
+					*outError = "materialOverrides must be an array.";
+				return false;
+			}
+
+			snapshot.materialOverrides.clear();
+			snapshot.materialOverrides.reserve(overridesIt->value.Size());
+			for (rapidjson::SizeType i = 0; i < overridesIt->value.Size(); ++i)
+			{
+				const rapidjson::Value& item = overridesIt->value[i];
+				if (!item.IsObject())
+				{
+					if (outError)
+						*outError = "materialOverrides[" + std::to_string(i) + "] must be an object.";
+					return false;
+				}
+
+				const auto idxIt = item.FindMember("gltfMaterialIndex");
+				const auto baseColorIt = item.FindMember("baseColorFactor");
+				const auto pbrIt = item.FindMember("pbrFactor");
+				const auto emissiveIt = item.FindMember("emissiveFactor");
+				if (idxIt == item.MemberEnd() || !idxIt->value.IsUint() ||
+				    baseColorIt == item.MemberEnd() || pbrIt == item.MemberEnd() || emissiveIt == item.MemberEnd())
+				{
+					if (outError)
+						*outError = "materialOverrides[" + std::to_string(i) + "] is missing required fields.";
+					return false;
+				}
+
+				EditorMaterialOverride ov{};
+				ov.gltfMaterialIndex = idxIt->value.GetUint();
+				if (!ReadVec4(baseColorIt->value, ov.baseColorFactor))
+				{
+					if (outError)
+						*outError = "materialOverrides[" + std::to_string(i) + "].baseColorFactor must be an array with four numbers.";
+					return false;
+				}
+				if (!ReadVec4(pbrIt->value, ov.pbrFactor))
+				{
+					if (outError)
+						*outError = "materialOverrides[" + std::to_string(i) + "].pbrFactor must be an array with four numbers.";
+					return false;
+				}
+				if (!ReadVec3(emissiveIt->value, ov.emissiveFactor))
+				{
+					if (outError)
+						*outError = "materialOverrides[" + std::to_string(i) + "].emissiveFactor must be an array with three numbers.";
+					return false;
+				}
+				snapshot.materialOverrides.push_back(ov);
 			}
 		}
 	}

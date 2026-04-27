@@ -5,6 +5,14 @@
 
 #include "editor_scene_state.h"
 
+struct EditorMaterialOverride
+{
+	uint32_t gltfMaterialIndex = 0;
+	vec4 baseColorFactor = vec4(1.f);
+	vec4 pbrFactor = vec4(1.f);
+	vec3 emissiveFactor = vec3(0.f);
+};
+
 struct EditorSceneSnapshot
 {
 	std::string modelPath;
@@ -17,6 +25,8 @@ struct EditorSceneSnapshot
 	// Per gltf node local TRS matrices (column-major), same length/order as `Scene::transformNodes` after load.
 	// Empty = omit / legacy file (keep transforms from the gltf).
 	std::vector<mat4> transformNodeLocals;
+	// Overrides keyed by glTF material index in the loaded model.
+	std::vector<EditorMaterialOverride> materialOverrides;
 };
 
 bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorSceneSnapshot& snapshot, std::string* outError);

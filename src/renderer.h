@@ -30,6 +30,7 @@
 #include "scene.h"
 #include "scenert.h"
 #include "editor_scene_state.h"
+#include "editor_scene_io.h"
 
 static bool meshShadingEnabled = true;
 static bool cullingEnabled = true;
@@ -241,6 +242,8 @@ EditorSceneUiState CaptureEditorSceneUiState(const Scene& scene);
 void ApplyEditorSceneUiState(Scene& scene, const EditorSceneUiState& ui);
 std::vector<mat4> CaptureEditorTransformNodeLocals(const Scene& scene);
 void ApplyEditorTransformNodeLocals(Scene& scene, const std::vector<mat4>& locals);
+std::vector<EditorMaterialOverride> CaptureEditorMaterialOverrides(const Scene& scene);
+void ApplyEditorMaterialOverrides(Scene& scene, const std::vector<EditorMaterialOverride>& overrides);
 
 inline static const size_t gbufferCount = 3;
 

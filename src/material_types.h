@@ -79,6 +79,7 @@ struct MaterialDatabase
 	std::vector<std::unique_ptr<MaterialClass>> entries;
 	std::vector<Material> gpuMaterials;
 	std::vector<MaterialKey> materialKeys;
+	bool gpuDirty = false;
 
 	void Clear();
 	uint32_t Add(std::unique_ptr<MaterialClass> material);

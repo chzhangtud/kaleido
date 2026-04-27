@@ -321,17 +321,158 @@ static void DrawGltfOutlineNode(Scene& scene, const GltfDocumentOutline& doc, ui
 	{
 		ImGui::TreeNodeEx("gleaf", baseFlags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | (selected ? ImGuiTreeNodeFlags_Selected : 0), "%s", label.c_str());
 		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+		{
 			scene.uiSelectedGltfNode = nodeIdx;
+			scene.uiSelectedMaterialIndex.reset();
+		}
 	}
 	else if (ImGui::TreeNodeEx("gnode", baseFlags | (selected ? ImGuiTreeNodeFlags_Selected : 0), "%s", label.c_str()))
 	{
 		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+		{
 			scene.uiSelectedGltfNode = nodeIdx;
+			scene.uiSelectedMaterialIndex.reset();
+		}
 		for (uint32_t c : node.children)
 			DrawGltfOutlineNode(scene, doc, c);
 		ImGui::TreePop();
 	}
 	ImGui::PopID();
+}
+
+static bool IsNearlyEqual(float a, float b, float eps = 1e-5f)
+{
+	return fabsf(a - b) <= eps;
+}
+
+static bool MaterialFactorsDiffer(const PBRMaterial& a, const PBRMaterial& b)
+{
+	const vec4& c0 = a.data.baseColorFactor;
+	const vec4& c1 = b.data.baseColorFactor;
+	const vec4& p0 = a.data.pbrFactor;
+	const vec4& p1 = b.data.pbrFactor;
+	if (!IsNearlyEqual(c0.x, c1.x) || !IsNearlyEqual(c0.y, c1.y) || !IsNearlyEqual(c0.z, c1.z) || !IsNearlyEqual(c0.w, c1.w))
+		return true;
+	if (!IsNearlyEqual(p0.x, p1.x) || !IsNearlyEqual(p0.y, p1.y) || !IsNearlyEqual(p0.z, p1.z) || !IsNearlyEqual(p0.w, p1.w))
+		return true;
+	return !IsNearlyEqual(a.data.emissiveFactor[0], b.data.emissiveFactor[0]) ||
+	       !IsNearlyEqual(a.data.emissiveFactor[1], b.data.emissiveFactor[1]) ||
+	       !IsNearlyEqual(a.data.emissiveFactor[2], b.data.emissiveFactor[2]);
+}
+
+static void DrawMaterialDock(Scene& scene)
+{
+	if (!ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
+		return;
+	if (!scene.gltfDocument.loaded)
+	{
+		ImGui::TextDisabled("Load a .gltf/.glb and select a mesh node.");
+		return;
+	}
+	if (!scene.uiSelectedGltfNode.has_value())
+	{
+		ImGui::TextDisabled("Select a node in Scene tree.");
+		return;
+	}
+
+	const uint32_t nodeIdx = *scene.uiSelectedGltfNode;
+	if (nodeIdx >= scene.drawsForNode.size() || scene.drawsForNode[nodeIdx].empty())
+	{
+		ImGui::TextDisabled("Selected node has no mesh draws.");
+		return;
+	}
+
+	std::vector<uint32_t> materialIndices;
+	materialIndices.reserve(scene.drawsForNode[nodeIdx].size());
+	for (uint32_t drawIndex : scene.drawsForNode[nodeIdx])
+	{
+		if (drawIndex >= scene.draws.size())
+			continue;
+		const uint32_t materialIndex = scene.draws[drawIndex].materialIndex;
+		if (std::find(materialIndices.begin(), materialIndices.end(), materialIndex) == materialIndices.end())
+			materialIndices.push_back(materialIndex);
+	}
+	if (materialIndices.empty())
+	{
+		ImGui::TextDisabled("Selected node has no editable materials.");
+		return;
+	}
+
+	uint32_t materialIndex = materialIndices.front();
+	if (scene.uiSelectedMaterialIndex.has_value())
+	{
+		const auto it = std::find(materialIndices.begin(), materialIndices.end(), *scene.uiSelectedMaterialIndex);
+		if (it != materialIndices.end())
+			materialIndex = *it;
+	}
+	scene.uiSelectedMaterialIndex = materialIndex;
+
+	if (materialIndices.size() > 1)
+	{
+		int comboIndex = 0;
+		for (size_t i = 0; i < materialIndices.size(); ++i)
+		{
+			if (materialIndices[i] == materialIndex)
+			{
+				comboIndex = int(i);
+				break;
+			}
+		}
+		std::vector<std::string> labels;
+		std::vector<const char*> cstrs;
+		labels.reserve(materialIndices.size());
+		cstrs.reserve(materialIndices.size());
+		for (uint32_t idx : materialIndices)
+		{
+			labels.push_back("material #" + std::to_string(idx));
+			cstrs.push_back(labels.back().c_str());
+		}
+		if (ImGui::Combo("Material", &comboIndex, cstrs.data(), int(cstrs.size())))
+		{
+			materialIndex = materialIndices[size_t(comboIndex)];
+			scene.uiSelectedMaterialIndex = materialIndex;
+		}
+	}
+
+	if (materialIndex >= scene.materialDb.entries.size() || materialIndex >= scene.materialDb.gpuMaterials.size())
+	{
+		ImGui::TextDisabled("Material index %u is out of range.", materialIndex);
+		return;
+	}
+	PBRMaterial* pbr = dynamic_cast<PBRMaterial*>(scene.materialDb.entries[materialIndex].get());
+	if (!pbr)
+	{
+		ImGui::TextDisabled("Material #%u is not a PBR material.", materialIndex);
+		return;
+	}
+
+	bool changed = false;
+	changed |= ImGui::ColorEdit4("Base Color", &pbr->data.baseColorFactor.x);
+
+	if (pbr->data.workflow == 1)
+	{
+		changed |= ImGui::DragFloat("Metallic", &pbr->data.pbrFactor.z, 0.01f, 0.f, 1.f, "%.3f");
+		changed |= ImGui::DragFloat("Roughness", &pbr->data.pbrFactor.w, 0.01f, 0.f, 1.f, "%.3f");
+	}
+	else
+	{
+		changed |= ImGui::DragFloat4("Spec/Gloss (pbrFactor)", &pbr->data.pbrFactor.x, 0.01f, 0.f, 1.f, "%.3f");
+	}
+
+	float emissive[3] = { pbr->data.emissiveFactor[0], pbr->data.emissiveFactor[1], pbr->data.emissiveFactor[2] };
+	if (ImGui::ColorEdit3("Emissive", emissive))
+	{
+		pbr->data.emissiveFactor[0] = emissive[0];
+		pbr->data.emissiveFactor[1] = emissive[1];
+		pbr->data.emissiveFactor[2] = emissive[2];
+		changed = true;
+	}
+
+	if (changed)
+	{
+		scene.materialDb.gpuMaterials[materialIndex] = pbr->ToGpuMaterial();
+		scene.materialDb.gpuDirty = true;
+	}
 }
 
 static void DrawGltfDocumentTree(Scene& scene)
@@ -372,6 +513,8 @@ static void DrawGltfDocumentTree(Scene& scene)
 
 		ImGui::TreePop();
 	}
+
+	DrawMaterialDock(scene);
 
 	if (scene.uiSelectedGltfNode.has_value() && !scene.transformNodes.empty() &&
 	    *scene.uiSelectedGltfNode < scene.transformNodes.size())
@@ -895,6 +1038,7 @@ void ApplyEditorSceneUiState(Scene& scene, const EditorSceneUiState& ui)
 	if (!ui.selectedGltfNode.has_value())
 	{
 		scene.uiSelectedGltfNode.reset();
+		scene.uiSelectedMaterialIndex.reset();
 		return;
 	}
 	const uint32_t nodeIdx = *ui.selectedGltfNode;
@@ -903,6 +1047,7 @@ void ApplyEditorSceneUiState(Scene& scene, const EditorSceneUiState& ui)
 		LOGW("Editor scene state: selectedGltfNode %u is invalid for this scene (gltf node count %zu); clearing selection.",
 		    nodeIdx, scene.gltfDocument.nodes.size());
 		scene.uiSelectedGltfNode.reset();
+		scene.uiSelectedMaterialIndex.reset();
 		return;
 	}
 	scene.uiSelectedGltfNode = nodeIdx;
@@ -933,6 +1078,73 @@ void ApplyEditorTransformNodeLocals(Scene& scene, const std::vector<mat4>& local
 		scene.transformNodes[i].worldDirty = true;
 	FlushSceneTransforms(scene);
 	scene.transformsGpuDirty = true;
+}
+
+std::vector<EditorMaterialOverride> CaptureEditorMaterialOverrides(const Scene& scene)
+{
+	std::vector<EditorMaterialOverride> out;
+	const uint32_t count = std::min(scene.gltfMaterialCount, uint32_t(scene.gltfMaterialDefaults.size()));
+	out.reserve(count);
+
+	for (uint32_t gltfIndex = 0; gltfIndex < count; ++gltfIndex)
+	{
+		const std::optional<uint32_t> materialIndex = scene.GltfMaterialIndexToMaterialIndex(gltfIndex);
+		if (!materialIndex.has_value())
+			continue;
+		if (*materialIndex >= scene.materialDb.entries.size())
+			continue;
+		const PBRMaterial* current = dynamic_cast<const PBRMaterial*>(scene.materialDb.entries[*materialIndex].get());
+		if (!current)
+			continue;
+		const PBRMaterial& initial = scene.gltfMaterialDefaults[gltfIndex];
+		if (!MaterialFactorsDiffer(*current, initial))
+			continue;
+
+		EditorMaterialOverride ov{};
+		ov.gltfMaterialIndex = gltfIndex;
+		ov.baseColorFactor = current->data.baseColorFactor;
+		ov.pbrFactor = current->data.pbrFactor;
+		ov.emissiveFactor = vec3(current->data.emissiveFactor[0], current->data.emissiveFactor[1], current->data.emissiveFactor[2]);
+		out.push_back(ov);
+	}
+
+	return out;
+}
+
+void ApplyEditorMaterialOverrides(Scene& scene, const std::vector<EditorMaterialOverride>& overrides)
+{
+	bool applied = false;
+	for (const EditorMaterialOverride& ov : overrides)
+	{
+		const std::optional<uint32_t> materialIndex = scene.GltfMaterialIndexToMaterialIndex(ov.gltfMaterialIndex);
+		if (!materialIndex.has_value())
+		{
+			LOGW("Editor scene state: gltfMaterialIndex %u is invalid for this scene; override ignored.", ov.gltfMaterialIndex);
+			continue;
+		}
+		if (*materialIndex >= scene.materialDb.entries.size() || *materialIndex >= scene.materialDb.gpuMaterials.size())
+		{
+			LOGW("Editor scene state: material index %u out of range; override ignored.", *materialIndex);
+			continue;
+		}
+		PBRMaterial* pbr = dynamic_cast<PBRMaterial*>(scene.materialDb.entries[*materialIndex].get());
+		if (!pbr)
+		{
+			LOGW("Editor scene state: material index %u is not PBR; override ignored.", *materialIndex);
+			continue;
+		}
+
+		pbr->data.baseColorFactor = ov.baseColorFactor;
+		pbr->data.pbrFactor = ov.pbrFactor;
+		pbr->data.emissiveFactor[0] = ov.emissiveFactor.x;
+		pbr->data.emissiveFactor[1] = ov.emissiveFactor.y;
+		pbr->data.emissiveFactor[2] = ov.emissiveFactor.z;
+		scene.materialDb.gpuMaterials[*materialIndex] = pbr->ToGpuMaterial();
+		applied = true;
+	}
+
+	if (applied)
+		scene.materialDb.gpuDirty = true;
 }
 
 mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
@@ -1629,12 +1841,14 @@ void VulkanContext::PrepareRenderGraphPassContext(RGPassContext& out, VkCommandB
 		Image* editorTarget = resourceManager.GetTexture(editorViewportTargetHandle);
 		if (editorTarget)
 		{
-			RegisterRenderGraphExternalImage("FinalColor", editorTarget->image, TextureFormat::RGBA8_UNorm, TextureUsage::Storage | TextureUsage::Sampled);
+			RegisterRenderGraphExternalImage("FinalColor", editorTarget->image, TextureFormat::RGBA8_UNorm,
+			    TextureUsage::Storage | TextureUsage::Sampled | TextureUsage::ColorAttachment);
 		}
 	}
 	else
 	{
-		RegisterRenderGraphExternalImage("FinalColor", swapchain.images[swapchainImageIndex], TextureFormat::RGBA8_UNorm, TextureUsage::Storage | TextureUsage::Sampled);
+		RegisterRenderGraphExternalImage("FinalColor", swapchain.images[swapchainImageIndex], TextureFormat::RGBA8_UNorm,
+		    TextureUsage::Storage | TextureUsage::Sampled | TextureUsage::ColorAttachment);
 	}
 
 	out.insertImageBarriers = [this](VkCommandBuffer cb, const std::vector<RGImageBarrier>& barriers)
@@ -1730,7 +1944,8 @@ void VulkanContext::InitResources()
 
 	resourceManager.CreateBuffer(mb, meshCount * sizeof(GpuMeshStd430), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	resourceManager.CreateBuffer(mtb, scene->materialDb.gpuMaterials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	resourceManager.CreateBuffer(mtb, scene->materialDb.gpuMaterials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+	    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	resourceManager.CreateBuffer(vb, scene->geometry.vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	resourceManager.CreateBuffer(ib, scene->geometry.indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -1745,7 +1960,14 @@ void VulkanContext::InitResources()
 	VkCommandBuffer initCommandBuffer = commandBuffers[0];
 
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mb, scratch, gpuMeshes.data(), gpuMeshes.size() * sizeof(GpuMeshStd430));
-	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mtb, scratch, scene->materialDb.gpuMaterials.data(), scene->materialDb.gpuMaterials.size() * sizeof(Material));
+	if (mtb.data)
+	{
+		memcpy(mtb.data, scene->materialDb.gpuMaterials.data(), scene->materialDb.gpuMaterials.size() * sizeof(Material));
+	}
+	else
+	{
+		uploadBuffer(device, initCommandPool, initCommandBuffer, queue, mtb, scratch, scene->materialDb.gpuMaterials.data(), scene->materialDb.gpuMaterials.size() * sizeof(Material));
+	}
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, vb, scratch, scene->geometry.vertices.data(), scene->geometry.vertices.size() * sizeof(Vertex));
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, ib, scratch, scene->geometry.indices.data(), scene->geometry.indices.size() * sizeof(uint32_t));
 
@@ -2289,7 +2511,7 @@ bool VulkanContext::DrawFrame()
 			viewportDesc.mipLevels = 1;
 			viewportDesc.format = TextureFormat::RGBA8_UNorm;
 			// TransferSrc is required for vkCmdCopyImageToBuffer (viewport EXR/PNG dump readback).
-			viewportDesc.usage = TextureUsage::Storage | TextureUsage::Sampled | TextureUsage::TransferSrc;
+			viewportDesc.usage = TextureUsage::Storage | TextureUsage::Sampled | TextureUsage::TransferSrc | TextureUsage::ColorAttachment;
 			editorViewportTargetHandle = resourceManager.CreateTexture(viewportDesc, /* transient= */ false);
 		}
 
@@ -2373,6 +2595,20 @@ bool VulkanContext::DrawFrame()
 			}
 		}
 		scene->transformsGpuDirty = false;
+	}
+
+	if (editorViewportMode && scene->materialDb.gpuDirty && mtb.buffer && !scene->materialDb.gpuMaterials.empty())
+	{
+		if (mtb.data)
+		{
+			memcpy(mtb.data, scene->materialDb.gpuMaterials.data(), scene->materialDb.gpuMaterials.size() * sizeof(Material));
+		}
+		else
+		{
+			uploadBuffer(device, commandPools[0], commandBuffers[0], queue, mtb, scratch,
+			    scene->materialDb.gpuMaterials.data(), scene->materialDb.gpuMaterials.size() * sizeof(Material));
+		}
+		scene->materialDb.gpuDirty = false;
 	}
 
 	uint8_t frameOffset = frameIndex % MAX_FRAMES;
@@ -4052,6 +4288,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 						snapshot.renderSettings = CaptureEditorRenderSettings();
 						snapshot.editorUi = CaptureEditorSceneUiState(*scene);
 						snapshot.transformNodeLocals = CaptureEditorTransformNodeLocals(*scene);
+						snapshot.materialOverrides = CaptureEditorMaterialOverrides(*scene);
 						if (editorViewportWidth > 0u && editorViewportHeight > 0u)
 						{
 							snapshot.viewportWidth = editorViewportWidth;

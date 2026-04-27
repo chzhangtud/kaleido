@@ -196,8 +196,12 @@ struct Scene
 	std::vector<TransformNode> transformNodes;
 	std::vector<uint32_t> transformRootNodes;
 	std::vector<std::vector<uint32_t>> drawsForNode;
+	uint32_t gltfMaterialBaseIndex = 0;
+	uint32_t gltfMaterialCount = 0;
+	std::vector<PBRMaterial> gltfMaterialDefaults;
 	bool transformsGpuDirty = false;
 	std::optional<uint32_t> uiSelectedGltfNode;
+	std::optional<uint32_t> uiSelectedMaterialIndex;
 	// Editor overlays (default off for image regression; see docs/superpowers/specs/2026-04-26-scene-tree-selection-outline-aabb-design.md §8).
 	bool uiEnableSelectionOutline = false;
 	bool uiShowSelectedSubtreeAabb = false;
@@ -211,6 +215,8 @@ struct Scene
 	uint32_t meshPostPasses = 0;
 
 	Camera camera;
+
+	std::optional<uint32_t> GltfMaterialIndexToMaterialIndex(uint32_t gltfMatIdx) const;
 };
 
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets, bool fast = false, bool clrt = false);

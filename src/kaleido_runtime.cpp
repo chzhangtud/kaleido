@@ -74,7 +74,12 @@ bool BuildSceneContentFromConfig(const KaleidoLaunchConfig& config, const std::s
 	// material index 0 is always dummy
 	targetScene->materialDb.Clear();
 	targetScene->materialDb.Add(std::make_unique<PBRMaterial>(PBRMaterial::CreateDefault()));
+	targetScene->materialDb.gpuDirty = false;
 	targetScene->gltfDocument = GltfDocumentOutline{};
+	targetScene->gltfMaterialBaseIndex = 0;
+	targetScene->gltfMaterialCount = 0;
+	targetScene->gltfMaterialDefaults.clear();
+	targetScene->uiSelectedMaterialIndex.reset();
 	ClearSceneTransformData(*targetScene);
 	targetScene->path.clear();
 
@@ -326,6 +331,7 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 		ApplyEditorCameraState(*scene, bootSnapshot.camera);
 		ApplyEditorSceneUiState(*scene, bootSnapshot.editorUi);
 		ApplyEditorTransformNodeLocals(*scene, bootSnapshot.transformNodeLocals);
+		ApplyEditorMaterialOverrides(*scene, bootSnapshot.materialOverrides);
 	}
 
 	if (!config.autoDumpExrPath.empty() && vContext->IsEditorViewportMode())
@@ -401,6 +407,7 @@ bool KaleidoRuntime::RenderFrame()
 			ApplyEditorCameraState(*scene, pendingSnapshot->camera);
 			ApplyEditorSceneUiState(*scene, pendingSnapshot->editorUi);
 			ApplyEditorTransformNodeLocals(*scene, pendingSnapshot->transformNodeLocals);
+			ApplyEditorMaterialOverrides(*scene, pendingSnapshot->materialOverrides);
 #if defined(WIN32)
 			if (vContext->IsEditorViewportMode() && pendingSnapshot->viewportWidth > 0u && pendingSnapshot->viewportHeight > 0u)
 			{

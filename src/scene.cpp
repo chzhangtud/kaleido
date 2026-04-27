@@ -722,6 +722,10 @@ bool loadScene(Scene& scene, const char* path, bool buildMeshlets, glm::vec3& eu
 
 	size_t materialOffset = scene.materialDb.Size();
 	assert(materialOffset > 0); // index 0 = dummy materials
+	scene.gltfMaterialBaseIndex = uint32_t(materialOffset);
+	scene.gltfMaterialCount = uint32_t(data->materials_count);
+	scene.gltfMaterialDefaults.clear();
+	scene.gltfMaterialDefaults.reserve(data->materials_count);
 
 	for (size_t i = 0; i < data->nodes_count; ++i)
 	{
@@ -789,6 +793,7 @@ bool loadScene(Scene& scene, const char* path, bool buildMeshlets, glm::vec3& eu
 	{
 		cgltf_material* material = &data->materials[i];
 		PBRMaterial pbrMaterial = BuildPbrMaterial(data, *material, textureOffset);
+		scene.gltfMaterialDefaults.push_back(pbrMaterial);
 		scene.materialDb.Add(std::make_unique<PBRMaterial>(std::move(pbrMaterial)));
 	}
 
@@ -1067,6 +1072,16 @@ void RebuildMaterialDrawBatches(Scene& scene)
 Scene::Scene(const char* _path)
     : path(_path)
 {
+}
+
+std::optional<uint32_t> Scene::GltfMaterialIndexToMaterialIndex(uint32_t gltfMatIdx) const
+{
+	if (gltfMatIdx >= gltfMaterialCount)
+		return std::nullopt;
+	const uint64_t materialIndex = uint64_t(gltfMaterialBaseIndex) + uint64_t(gltfMatIdx);
+	if (materialIndex >= materialDb.entries.size())
+		return std::nullopt;
+	return uint32_t(materialIndex);
 }
 
 void CollectDrawIndicesInNodeSubtree(const Scene& scene, const uint32_t rootNode, std::vector<uint32_t>& outDraws)
