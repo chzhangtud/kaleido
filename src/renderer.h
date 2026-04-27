@@ -31,6 +31,7 @@
 #include "scenert.h"
 #include "editor_scene_state.h"
 #include "editor_scene_io.h"
+#include "rendergraph_viz.h"
 
 static bool meshShadingEnabled = true;
 static bool cullingEnabled = true;
@@ -298,6 +299,8 @@ public:
 	bool ConsumeEditorSceneLoadRequest(std::string& outScenePath);
 	// For CLI/automation: after enough frames, submit an EXR viewport dump, then set window should close on success.
 	void SetAutoExitAfterExrDump(const std::string& exrPath, uint32_t frameDelay);
+	// For CLI/automation: dump live RenderGraph snapshot (DOT/JSON) after enough frames.
+	void SetAutoDumpRenderGraph(const std::string& dotPath, const std::string& jsonPath, uint32_t frameDelay);
 	void ResetSceneResourcesForReload();
 
 	bool DrawFrame();
@@ -552,6 +555,10 @@ public:
 	uint64_t autoDumpExrFireAtFrame = UINT64_MAX;
 	bool autoExrFired = false;
 	bool pendingAutoExitFromExr = false;
+	std::string autoDumpRenderGraphDotPathPending;
+	std::string autoDumpRenderGraphJsonPathPending;
+	uint64_t autoDumpRenderGraphFireAtFrame = UINT64_MAX;
+	bool autoRenderGraphDumpFired = false;
 	bool frameResourcesInitialized = false;
 };
 

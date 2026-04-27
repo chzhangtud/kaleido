@@ -228,6 +228,14 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.Bool(snapshot.editorUi.selectionOutlineEnabled);
 	writer.Key("showSelectedSubtreeAabb");
 	writer.Bool(snapshot.editorUi.showSelectedSubtreeAabb);
+	writer.Key("visualizeRenderGraph");
+	writer.Bool(snapshot.editorUi.visualizeRenderGraph);
+	writer.Key("renderGraphVisualizerWindowOpen");
+	writer.Bool(snapshot.editorUi.renderGraphVisualizerWindowOpen);
+	writer.Key("renderGraphVisualizerMode");
+	writer.Int(snapshot.editorUi.renderGraphVisualizerMode);
+	writer.Key("renderGraphVisualizerImportedPath");
+	writer.String(snapshot.editorUi.renderGraphVisualizerImportedPath.c_str());
 	writer.EndObject();
 
 	writer.Key("transforms");
@@ -423,6 +431,12 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 		const rapidjson::Value& eu = editorUiIt->value;
 		ReadBool(eu, "selectionOutlineEnabled", snapshot.editorUi.selectionOutlineEnabled);
 		ReadBool(eu, "showSelectedSubtreeAabb", snapshot.editorUi.showSelectedSubtreeAabb);
+		ReadBool(eu, "visualizeRenderGraph", snapshot.editorUi.visualizeRenderGraph);
+		ReadBool(eu, "renderGraphVisualizerWindowOpen", snapshot.editorUi.renderGraphVisualizerWindowOpen);
+		ReadInt(eu, "renderGraphVisualizerMode", snapshot.editorUi.renderGraphVisualizerMode);
+		const auto importedPathIt = eu.FindMember("renderGraphVisualizerImportedPath");
+		if (importedPathIt != eu.MemberEnd() && importedPathIt->value.IsString())
+			snapshot.editorUi.renderGraphVisualizerImportedPath = importedPathIt->value.GetString();
 		const auto selIt = eu.FindMember("selectedGltfNode");
 		if (selIt != eu.MemberEnd())
 		{

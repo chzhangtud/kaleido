@@ -338,6 +338,10 @@ int KaleidoRuntime::Initialize(const KaleidoLaunchConfig& config)
 	{
 		vContext->SetAutoExitAfterExrDump(config.autoDumpExrPath, config.autoDumpExrFrameDelay);
 	}
+	if ((!config.autoDumpRenderGraphDotPath.empty() || !config.autoDumpRenderGraphJsonPath.empty()) && vContext->IsEditorViewportMode())
+	{
+		vContext->SetAutoDumpRenderGraph(config.autoDumpRenderGraphDotPath, config.autoDumpRenderGraphJsonPath, config.autoDumpRenderGraphFrameDelay);
+	}
 
 	vContext->InitResources();
 	activeConfig = config;

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 #include "math.h"
 
@@ -46,4 +47,8 @@ struct EditorSceneUiState
 	std::optional<uint32_t> selectedGltfNode;
 	bool selectionOutlineEnabled = false;
 	bool showSelectedSubtreeAabb = false;
+	bool visualizeRenderGraph = false;
+	bool renderGraphVisualizerWindowOpen = false;
+	int renderGraphVisualizerMode = 0; // 0 = live, 1 = imported
+	std::string renderGraphVisualizerImportedPath;
 };

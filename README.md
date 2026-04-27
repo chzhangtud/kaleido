@@ -101,6 +101,21 @@ kaleido_standalone.exe -h
 kaleido_standalone.exe path\to\scene.gltf
 ```
 
+#### Editor automation (`kaleido_editor`)
+
+`kaleido_editor` supports viewport dump and RenderGraph snapshot export for regression automation:
+
+```powershell
+.\build\Debug\kaleido_editor.exe "testcases\ABeautifulGame\scene.json" `
+  --auto-dump-exr "$env:TEMP\kaleido_view.png" `
+  --auto-dump-rendergraph-json "$env:TEMP\kaleido_rg.json" `
+  --auto-dump-rendergraph-dot "$env:TEMP\kaleido_rg.dot" `
+  --auto-dump-frames 64 `
+  --auto-dump-rendergraph-frames 64
+```
+
+Editor UI also provides a `Visualize RenderGraph` toggle in the `Rendering` panel and a `RenderGraph Visualizer` window with Live/Imported mode, DOT/JSON export, and JSON import.
+
 #### RenderGraph barrier debug (cross-platform)
 
 Set `RG_BARRIER_DEBUG=1` to print auto-generated RenderGraph barriers.

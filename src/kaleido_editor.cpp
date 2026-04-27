@@ -42,6 +42,18 @@ public:
 			{
 				config.autoDumpExrFrameDelay = uint32_t(atoi(argv[++i]));
 			}
+			else if (strcmp(argv[i], "--auto-dump-rendergraph-dot") == 0 && i + 1 < argc)
+			{
+				config.autoDumpRenderGraphDotPath = argv[++i];
+			}
+			else if (strcmp(argv[i], "--auto-dump-rendergraph-json") == 0 && i + 1 < argc)
+			{
+				config.autoDumpRenderGraphJsonPath = argv[++i];
+			}
+			else if (strcmp(argv[i], "--auto-dump-rendergraph-frames") == 0 && i + 1 < argc)
+			{
+				config.autoDumpRenderGraphFrameDelay = uint32_t(atoi(argv[++i]));
+			}
 			else if ((strcmp(argv[i], "-viewportW") == 0 || strcmp(argv[i], "--viewport-width") == 0) && i + 1 < argc)
 			{
 				const int v = atoi(argv[++i]);
@@ -70,6 +82,12 @@ public:
 				else if (strcmp(argv[i], "--load-scene-state") == 0 && i + 1 < argc)
 					++i;
 				else if (strcmp(argv[i], "--auto-dump-frames") == 0 && i + 1 < argc)
+					++i;
+				else if (strcmp(argv[i], "--auto-dump-rendergraph-dot") == 0 && i + 1 < argc)
+					++i;
+				else if (strcmp(argv[i], "--auto-dump-rendergraph-json") == 0 && i + 1 < argc)
+					++i;
+				else if (strcmp(argv[i], "--auto-dump-rendergraph-frames") == 0 && i + 1 < argc)
 					++i;
 				else if ((strcmp(argv[i], "-viewportW") == 0 || strcmp(argv[i], "--viewport-width") == 0) && i + 1 < argc)
 					++i;
@@ -131,7 +149,9 @@ int main(int argc, const char** argv)
 	// Unattended automation: avoid blocking WER/abort UI when the process faults.
 	for (int i = 1; i < argc; ++i)
 	{
-		if (strcmp(argv[i], "--auto-dump-exr") == 0)
+		if (strcmp(argv[i], "--auto-dump-exr") == 0 ||
+		    strcmp(argv[i], "--auto-dump-rendergraph-dot") == 0 ||
+		    strcmp(argv[i], "--auto-dump-rendergraph-json") == 0)
 		{
 			SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 			_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);

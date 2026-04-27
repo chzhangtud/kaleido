@@ -205,6 +205,10 @@ struct Scene
 	// Editor overlays (default off for image regression; see docs/superpowers/specs/2026-04-26-scene-tree-selection-outline-aabb-design.md §8).
 	bool uiEnableSelectionOutline = false;
 	bool uiShowSelectedSubtreeAabb = false;
+	bool uiVisualizeRenderGraph = false;
+	bool uiRenderGraphWindowOpen = false;
+	int uiRenderGraphViewMode = 0; // 0 = live, 1 = imported
+	std::string uiRenderGraphImportedPath;
 	vec3 sunDirection{ 1.0f };
 	uint32_t meshletVisibilityCount{ 0u };
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet{};

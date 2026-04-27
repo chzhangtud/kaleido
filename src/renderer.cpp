@@ -2,6 +2,7 @@
 #include "tools.h"
 #include "RenderBackend.h"
 #include "RenderGraph.h"
+#include "rendergraph_viz.h"
 #include "editor_scene_io.h"
 #include "scene_transforms.h"
 
@@ -17,6 +18,8 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string_view>
 #include <vector>
 #if defined(WIN32)
@@ -53,6 +56,44 @@ bool PathEndsWithExtensionIgnoreCase(std::string_view path, std::string_view ext
 		if (a != b)
 			return false;
 	}
+	return true;
+}
+
+RenderGraphVizSnapshot gRenderGraphLiveSnapshot{};
+RenderGraphVizSnapshot gRenderGraphImportedSnapshot{};
+bool gRenderGraphImportedSnapshotValid = false;
+
+bool WriteTextFileUtf8(const std::string& path, const std::string& text, std::string* outError)
+{
+	std::ofstream out(path, std::ios::binary | std::ios::trunc);
+	if (!out.is_open())
+	{
+		if (outError)
+			*outError = "failed to open output file";
+		return false;
+	}
+	out.write(text.data(), static_cast<std::streamsize>(text.size()));
+	if (!out.good())
+	{
+		if (outError)
+			*outError = "failed to write output file";
+		return false;
+	}
+	return true;
+}
+
+bool ReadTextFileUtf8(const std::string& path, std::string& outText, std::string* outError)
+{
+	std::ifstream in(path, std::ios::binary);
+	if (!in.is_open())
+	{
+		if (outError)
+			*outError = "failed to open input file";
+		return false;
+	}
+	std::ostringstream ss;
+	ss << in.rdbuf();
+	outText = ss.str();
 	return true;
 }
 
@@ -1130,6 +1171,10 @@ EditorSceneUiState CaptureEditorSceneUiState(const Scene& scene)
 	ui.selectedGltfNode = scene.uiSelectedGltfNode;
 	ui.selectionOutlineEnabled = scene.uiEnableSelectionOutline;
 	ui.showSelectedSubtreeAabb = scene.uiShowSelectedSubtreeAabb;
+	ui.visualizeRenderGraph = scene.uiVisualizeRenderGraph;
+	ui.renderGraphVisualizerWindowOpen = scene.uiRenderGraphWindowOpen;
+	ui.renderGraphVisualizerMode = scene.uiRenderGraphViewMode;
+	ui.renderGraphVisualizerImportedPath = scene.uiRenderGraphImportedPath;
 	return ui;
 }
 
@@ -1137,6 +1182,25 @@ void ApplyEditorSceneUiState(Scene& scene, const EditorSceneUiState& ui)
 {
 	scene.uiEnableSelectionOutline = ui.selectionOutlineEnabled;
 	scene.uiShowSelectedSubtreeAabb = ui.showSelectedSubtreeAabb;
+	scene.uiVisualizeRenderGraph = ui.visualizeRenderGraph;
+	scene.uiRenderGraphWindowOpen = ui.renderGraphVisualizerWindowOpen;
+	scene.uiRenderGraphViewMode = std::max(0, std::min(ui.renderGraphVisualizerMode, 1));
+	scene.uiRenderGraphImportedPath = ui.renderGraphVisualizerImportedPath;
+	gRenderGraphImportedSnapshotValid = false;
+	if (!scene.uiRenderGraphImportedPath.empty())
+	{
+		std::string importedJson;
+		std::string error;
+		if (ReadTextFileUtf8(scene.uiRenderGraphImportedPath, importedJson, &error) &&
+		    DeserializeRenderGraphVizFromJson(importedJson, gRenderGraphImportedSnapshot, error))
+		{
+			gRenderGraphImportedSnapshotValid = true;
+		}
+		else
+		{
+			LOGW("RenderGraph visualizer import skipped for %s: %s", scene.uiRenderGraphImportedPath.c_str(), error.c_str());
+		}
+	}
 	if (!ui.selectedGltfNode.has_value())
 	{
 		scene.uiSelectedGltfNode.reset();
@@ -1804,6 +1868,16 @@ void VulkanContext::SetAutoExitAfterExrDump(const std::string& exrPath, uint32_t
 	autoDumpExrPathPending = exrPath;
 	autoDumpExrFireAtFrame = uint64_t(frameDelay);
 	autoExrFired = false;
+}
+
+void VulkanContext::SetAutoDumpRenderGraph(const std::string& dotPath, const std::string& jsonPath, uint32_t frameDelay)
+{
+	if (!editorViewportMode || (dotPath.empty() && jsonPath.empty()))
+		return;
+	autoDumpRenderGraphDotPathPending = dotPath;
+	autoDumpRenderGraphJsonPathPending = jsonPath;
+	autoDumpRenderGraphFireAtFrame = uint64_t(frameDelay);
+	autoRenderGraphDumpFired = false;
 }
 
 void VulkanContext::ProcessCompletedViewportDump(uint32_t frameSlot)
@@ -3742,6 +3816,40 @@ bool VulkanContext::DrawFrame()
 				vkCmdWriteTimestamp(ctx.commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1); });
 	}
 
+	gRenderGraphLiveSnapshot = BuildRenderGraphVizSnapshot(rg, frameIndex);
+	if (!autoRenderGraphDumpFired && frameIndex >= autoDumpRenderGraphFireAtFrame &&
+	    (!autoDumpRenderGraphDotPathPending.empty() || !autoDumpRenderGraphJsonPathPending.empty()))
+	{
+		std::string error;
+		if (!autoDumpRenderGraphJsonPathPending.empty())
+		{
+			std::string json;
+			if (SerializeRenderGraphVizToJson(gRenderGraphLiveSnapshot, json, &error) &&
+			    WriteTextFileUtf8(autoDumpRenderGraphJsonPathPending, json, &error))
+			{
+				LOGI("Auto dump RenderGraph JSON saved: %s", autoDumpRenderGraphJsonPathPending.c_str());
+			}
+			else
+			{
+				LOGE("Auto dump RenderGraph JSON failed: %s", error.c_str());
+			}
+		}
+		if (!autoDumpRenderGraphDotPathPending.empty())
+		{
+			std::string dot;
+			if (SerializeRenderGraphVizToDot(gRenderGraphLiveSnapshot, dot, &error) &&
+			    WriteTextFileUtf8(autoDumpRenderGraphDotPathPending, dot, &error))
+			{
+				LOGI("Auto dump RenderGraph DOT saved: %s", autoDumpRenderGraphDotPathPending.c_str());
+			}
+			else
+			{
+				LOGE("Auto dump RenderGraph DOT failed: %s", error.c_str());
+			}
+		}
+		autoRenderGraphDumpFired = true;
+	}
+
 	RGPassContext rgContext{};
 	PrepareRenderGraphPassContext(rgContext, commandBuffer, frameIndex, imageIndex);
 	rg.execute(rgContext);
@@ -4328,6 +4436,8 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			if (!wireframeDebugSupported)
 				ImGui::TextDisabled("Wireframe needs GPU fillModeNonSolid.");
 			ImGui::Text("Cluster Ray Tracing Enabled: %s", clusterRTEnabled ? "ON" : "OFF");
+			if (ImGui::Checkbox("Visualize RenderGraph", &scene->uiVisualizeRenderGraph) && scene->uiVisualizeRenderGraph)
+				scene->uiRenderGraphWindowOpen = true;
 		}
 
 		if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
@@ -4533,6 +4643,121 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 			ImGui::Text("Viewport rendering target is preparing...");
 		}
 		ImGui::End();
+
+		if (scene && scene->uiVisualizeRenderGraph)
+		{
+			bool windowOpen = scene->uiRenderGraphWindowOpen;
+			if (windowOpen)
+			{
+				if (ImGui::Begin("RenderGraph Visualizer", &windowOpen))
+				{
+					int mode = std::max(0, std::min(scene->uiRenderGraphViewMode, 1));
+					const char* modeItems[] = { "Live", "Imported" };
+					if (ImGui::Combo("Mode", &mode, modeItems, IM_ARRAYSIZE(modeItems)))
+						scene->uiRenderGraphViewMode = mode;
+
+					if (ImGui::Button("Use Live Snapshot"))
+						scene->uiRenderGraphViewMode = 0;
+
+					ImGui::SameLine();
+					if (ImGui::Button("Freeze Live Snapshot"))
+					{
+						gRenderGraphImportedSnapshot = gRenderGraphLiveSnapshot;
+						gRenderGraphImportedSnapshotValid = true;
+						scene->uiRenderGraphViewMode = 1;
+					}
+
+				static char importPathBuf[512] = "";
+					static std::string cachedImportedPath;
+					if (cachedImportedPath != scene->uiRenderGraphImportedPath && scene->uiRenderGraphImportedPath.size() < sizeof(importPathBuf))
+					{
+						strncpy(importPathBuf, scene->uiRenderGraphImportedPath.c_str(), sizeof(importPathBuf));
+						importPathBuf[sizeof(importPathBuf) - 1] = '\0';
+						cachedImportedPath = scene->uiRenderGraphImportedPath;
+					}
+					if (ImGui::InputText("Import/Export JSON Path", importPathBuf, sizeof(importPathBuf)))
+					{
+						scene->uiRenderGraphImportedPath = importPathBuf;
+						cachedImportedPath = scene->uiRenderGraphImportedPath;
+					}
+
+				RenderGraphVizSnapshot* currentSnapshot = &gRenderGraphLiveSnapshot;
+				if (scene->uiRenderGraphViewMode == 1 && gRenderGraphImportedSnapshotValid)
+					currentSnapshot = &gRenderGraphImportedSnapshot;
+
+				if (ImGui::Button("Export DOT"))
+				{
+					const std::string outPath = scene->uiRenderGraphImportedPath.empty() ? "rendergraph_snapshot.dot" : scene->uiRenderGraphImportedPath + ".dot";
+					std::string dot;
+					std::string error;
+					if (SerializeRenderGraphVizToDot(*currentSnapshot, dot, &error) && WriteTextFileUtf8(outPath, dot, &error))
+						LOGI("RenderGraph visualizer exported DOT: %s", outPath.c_str());
+					else
+						LOGE("RenderGraph visualizer export DOT failed: %s", error.c_str());
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Export JSON"))
+				{
+					const std::string outPath = scene->uiRenderGraphImportedPath.empty() ? "rendergraph_snapshot.json" : scene->uiRenderGraphImportedPath;
+					std::string json;
+					std::string error;
+					if (SerializeRenderGraphVizToJson(*currentSnapshot, json, &error) && WriteTextFileUtf8(outPath, json, &error))
+						LOGI("RenderGraph visualizer exported JSON: %s", outPath.c_str());
+					else
+						LOGE("RenderGraph visualizer export JSON failed: %s", error.c_str());
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Import JSON"))
+				{
+					std::string json;
+					std::string error;
+					if (scene->uiRenderGraphImportedPath.empty())
+					{
+						LOGW("RenderGraph visualizer import skipped: path is empty.");
+					}
+					else if (!ReadTextFileUtf8(scene->uiRenderGraphImportedPath, json, &error))
+					{
+						LOGE("RenderGraph visualizer import failed: %s", error.c_str());
+					}
+					else if (!DeserializeRenderGraphVizFromJson(json, gRenderGraphImportedSnapshot, error))
+					{
+						LOGE("RenderGraph visualizer JSON parse failed: %s", error.c_str());
+					}
+					else
+					{
+						gRenderGraphImportedSnapshotValid = true;
+						scene->uiRenderGraphViewMode = 1;
+						LOGI("RenderGraph visualizer imported snapshot from %s", scene->uiRenderGraphImportedPath.c_str());
+					}
+				}
+
+				const RenderGraphVizSnapshot& show = (scene->uiRenderGraphViewMode == 1 && gRenderGraphImportedSnapshotValid)
+				                                      ? gRenderGraphImportedSnapshot
+				                                      : gRenderGraphLiveSnapshot;
+				ImGui::Text("frame=%llu, passes=%d, resources=%d, edges=%d",
+				    static_cast<unsigned long long>(show.frameIndex),
+				    int(show.passes.size()),
+				    int(show.resources.size()),
+				    int(show.edges.size()));
+				if (ImGui::TreeNode("Passes"))
+				{
+					for (const auto& pass : show.passes)
+						ImGui::BulletText("%u | topo=%u | %s", pass.index, pass.topoOrder, pass.name.c_str());
+					ImGui::TreePop();
+				}
+					if (ImGui::TreeNode("Edges"))
+					{
+						for (const auto& edge : show.edges)
+							ImGui::BulletText("%s -> %s (%s %s)", edge.from.c_str(), edge.to.c_str(), edge.type.c_str(), edge.state.c_str());
+						ImGui::TreePop();
+					}
+				}
+				ImGui::End();
+			}
+			scene->uiRenderGraphWindowOpen = windowOpen;
+			if (!windowOpen)
+				scene->uiVisualizeRenderGraph = false;
+		}
 		return;
 	}
 

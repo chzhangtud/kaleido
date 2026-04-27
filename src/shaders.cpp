@@ -571,6 +571,8 @@ static VkDescriptorUpdateTemplate createUpdateTemplate(VkDevice device, VkPipeli
 	}
 
 	*pushDescriptorCount = uint32_t(entries.size());
+	if (entries.empty())
+		return VK_NULL_HANDLE;
 
 	VkDescriptorUpdateTemplateCreateInfo createInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
 
@@ -890,7 +892,7 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 	assert(program.layout);
 
 	program.updateTemplate = createUpdateTemplate(device, bindPoint, program.layout, shaders, pushDescriptorSupported, program.descriptorSetLayout, &program.pushDescriptorCount);
-	assert(program.updateTemplate);
+	assert(program.updateTemplate || program.pushDescriptorCount == 0);
 
 	program.pushConstantSize = uint32_t(pushConstantSize);
 
@@ -925,7 +927,8 @@ Program createProgram(VkDevice device, VkPipelineBindPoint bindPoint, Shaders sh
 
 void destroyProgram(VkDevice device, Program& program, VkDescriptorPool descriptorPool)
 {
-	vkDestroyDescriptorUpdateTemplate(device, program.updateTemplate, 0);
+	if (program.updateTemplate)
+		vkDestroyDescriptorUpdateTemplate(device, program.updateTemplate, 0);
 	vkDestroyPipelineLayout(device, program.layout, 0);
 	vkDestroyDescriptorSetLayout(device, program.descriptorSetLayout, 0);
 }

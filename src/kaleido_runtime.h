@@ -33,6 +33,11 @@ struct KaleidoLaunchConfig
 	std::string autoDumpExrPath;
 	// Number of render frames to wait after Initialize before scheduling the auto dump.
 	uint32_t autoDumpExrFrameDelay = 64;
+	// Optional: for automation - dump current RenderGraph visualization snapshot to DOT/JSON.
+	std::string autoDumpRenderGraphDotPath;
+	std::string autoDumpRenderGraphJsonPath;
+	// Number of render frames to wait before RenderGraph dump.
+	uint32_t autoDumpRenderGraphFrameDelay = 64;
 	// Win32 editor: initial 3D viewport render resolution (0 = derive from window / ImGui layout).
 	uint32_t editorInitialViewportWidth = 0;
 	uint32_t editorInitialViewportHeight = 0;

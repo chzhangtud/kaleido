@@ -1,0 +1,65 @@
+{
+    "materialOverrides":  [
+
+                          ],
+    "viewport":  {
+                     "height":  1080,
+                     "width":  1920
+                 },
+    "version":  5,
+    "format":  "kaleido_editor_scene",
+    "camera":  {
+                   "position":  [
+                                    0.46915861964225769,
+                                    0.15844045579433441,
+                                    -0.029237886890769005
+                                ],
+                   "fovY":  1.2217304706573486,
+                   "moveSpeed":  0.20000000298023224,
+                   "dollyZoomRefDistance":  5,
+                   "eulerDegrees":  [
+                                        -14.400050163269043,
+                                        -269.80029296875,
+                                        0
+                                    ],
+                   "dollyZoomEnabled":  false,
+                   "znear":  0.10000000149011612
+               },
+    "modelPath":  "ABeautifulGame/ABeautifulGame.gltf",
+    "renderSettings":  {
+                           "clusterOcclusionEnabled":  true,
+                           "occlusionEnabled":  true,
+                           "shadowCheckerboard":  false,
+                           "shadowBlurEnabled":  true,
+                           "cullingEnabled":  true,
+                           "clusterRTEnabled":  false,
+                           "meshShadingEnabled":  true,
+                           "debugSleep":  false,
+                           "shadowEnabled":  true,
+                           "screenSpaceRefractionEnabled":  true,
+                           "taskShadingEnabled":  false,
+                           "taaBlendAlpha":  0.10000000149011612,
+                           "gbufferDebugViewMode":  0,
+                           "debugLodStep":  2,
+                           "animationEnabled":  false,
+                           "shadowQuality":  1,
+                           "lodEnabled":  true,
+                           "debugGuiMode":  1,
+                           "reloadShaders":  false,
+                           "taaEnabled":  true
+                       },
+    "editorUi":  {
+                     "renderGraphVisualizerMode":  0,
+                     "showSelectedSubtreeAabb":  false,
+                     "selectionOutlineEnabled":  false,
+                     "visualizeRenderGraph":  true,
+                     "renderGraphVisualizerImportedPath":  "",
+                     "renderGraphVisualizerWindowOpen":  true,
+                     "selectedGltfNode":  null
+                 },
+    "transforms":  {
+                       "nodeLocalMatrices":  [
+
+                                             ]
+                   }
+}

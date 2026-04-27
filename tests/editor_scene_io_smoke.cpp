@@ -45,6 +45,10 @@ int main()
 	snapshot.camera.moveSpeed = 4.f;
 	snapshot.renderSettings.taaEnabled = false;
 	snapshot.transformNodeLocals.push_back(mat4(1.f));
+	snapshot.editorUi.visualizeRenderGraph = true;
+	snapshot.editorUi.renderGraphVisualizerWindowOpen = true;
+	snapshot.editorUi.renderGraphVisualizerMode = 1;
+	snapshot.editorUi.renderGraphVisualizerImportedPath = "tmp/rendergraph.json";
 
 	EditorMaterialOverride ov{};
 	ov.gltfMaterialIndex = 2u;
@@ -93,6 +97,13 @@ int main()
 	{
 		fprintf(stderr, "material override index mismatch\n");
 		return 5;
+	}
+	if (!loaded.editorUi.visualizeRenderGraph || !loaded.editorUi.renderGraphVisualizerWindowOpen ||
+	    loaded.editorUi.renderGraphVisualizerMode != 1 ||
+	    loaded.editorUi.renderGraphVisualizerImportedPath != "tmp/rendergraph.json")
+	{
+		fprintf(stderr, "editor ui rendergraph state mismatch\n");
+		return 15;
 	}
 	if (!ContainsText(savedText, "\"emissiveStrength\""))
 	{
