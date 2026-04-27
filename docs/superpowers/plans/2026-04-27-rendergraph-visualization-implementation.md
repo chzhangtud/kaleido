@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在 `kaleido_editor` 中新增 RenderGraph 可视化开关与窗口，支持 DOT/JSON 导出、JSON 导入回放、scene Save/Restore 状态持久化，并接入 testcase 回归流程。
+**Goal:** 在 `kaleido_editor` 中新增 RenderGraph“连连看”节点图可视化开关与窗口（基于公开 ImGui Node Graph 实现），支持 DOT/JSON 导出、JSON 导入回放、scene Save/Restore 状态持久化，并接入 testcase 回归流程。
 
-**Architecture:** 采用“采集快照（RenderGraph -> VizSnapshot）+ 序列化（DOT/JSON）+ UI 展示（Live/Imported）”三层设计。运行态渲染图与导入图统一投影到同一 `RenderGraphVizSnapshot` 模型，保证导出、导入、显示和测试都使用同一数据语义。默认关闭可视化，避免影响既有视口回归。
+**Architecture:** 采用“采集快照（RenderGraph -> VizSnapshot）+ 序列化（DOT/JSON）+ NodeGraph UI 展示（Live/Imported）”三层设计。运行态渲染图与导入图统一投影到同一 `RenderGraphVizSnapshot` 模型，保证导出、导入、显示和测试都使用同一数据语义。默认关闭可视化，避免影响既有视口回归。
 
 **Tech Stack:** C++17, Dear ImGui, RapidJSON, existing `RenderGraph`, existing editor scene I/O, Python3 + Pillow (for existing viewport regression), Python script for graph-export compare.
 
@@ -18,6 +18,7 @@
 - `src/rendergraph_viz.cpp`：从 `RenderGraph` 构建 snapshot、DOT/JSON 序列化、JSON 反序列化。
 - `scripts/compare_rendergraph_json.py`：导出 JSON 稳定比较脚本。
 - `scripts/compare_rendergraph_dot.py`：导出 DOT 规范化比较脚本。
+- `external/imnodes/*`：Node Graph 库（首选 submodule；受限时 vendor 镜像）。
 - `testcases/ABeautifulGame_RenderGraph_Visualization/scene.json`：新场景（开启可视化开关状态）。
 - `testcases/ABeautifulGame_RenderGraph_Visualization/scene.png`：视口 golden。
 - `testcases/ABeautifulGame_RenderGraph_Visualization/rendergraph.expected.json`：图结构 golden。
@@ -28,7 +29,9 @@
 - `src/scene.h`：新增 editor UI 状态字段（RenderGraph 可视化开关与窗口模式）。
 - `src/editor_scene_state.h`：扩展 `EditorSceneUiState` 字段。
 - `src/editor_scene_io.h` / `src/editor_scene_io.cpp`：Scene JSON 读写新增字段。
-- `src/renderer.cpp`：新增 checkbox、可视化窗口、导入导出按钮与状态同步。
+- `src/renderer.cpp`：新增 checkbox、`imnodes` 可视化窗口、导入导出按钮与状态同步。
+- `external/CMakeLists.txt`：新增 `imnodes` target 并链接现有 `imgui`。
+- `CMakeLists.txt`：将 `imnodes` 加入主工程链接。
 - `src/kaleido_editor.cpp`：新增 CLI 参数（自动导出 RenderGraph 文件，供 testcase 自动化）。
 - `src/kaleido_runtime.h` / `src/kaleido_runtime.cpp`：必要时传递自动导出参数到 runtime。
 - `README.md`：补充 RenderGraph 可视化与回归说明。
@@ -81,7 +84,38 @@
 
 ---
 
-## 2. Task 2: 实现 RenderGraph -> Snapshot 构建与稳定排序
+## 2. Task 2: 引入 Node Graph 依赖并打通构建
+
+**Files:**
+
+- Create: `external/imnodes/imnodes.h`, `external/imnodes/imnodes.cpp`, `external/imnodes/LICENSE.md`（或 submodule gitlink）
+- Modify: `.gitmodules`（若网络允许 submodule）, `external/CMakeLists.txt`, `CMakeLists.txt`
+- Test: Debug 编译
+
+- [ ] **Step 1: 红（先失败）**
+
+  在 `renderer.cpp` 引入 `imnodes.h` 并调用 `ImNodes::CreateContext()`，确认编译失败（依赖尚未接入）。
+
+- [ ] **Step 2: 绿（接入依赖）**
+
+  - 优先：`git submodule add https://github.com/Nelarius/imnodes.git external/imnodes`
+  - 受限：vendor 同版本源码到 `external/imnodes/`，并保留 LICENSE。
+  - 在 CMake 中新增 `imnodes` 静态库，包含 `imnodes.cpp`，`target_link_libraries(imnodes PUBLIC imgui)`。
+  - 主工程链接 `imnodes`。
+
+- [ ] **Step 3: 编译验证**
+
+  Run: `cmake --build d:\CMakeRepos\kaleido\build_tests --config Debug --target kaleido_editor`  
+  Expected: PASS。
+
+- [ ] **Step 4: 提交**
+
+  `git add .gitmodules external/imnodes external/CMakeLists.txt CMakeLists.txt`  
+  `git commit -m "build(editor): integrate imnodes dependency for rendergraph graph view"`
+
+---
+
+## 3. Task 3: 实现 RenderGraph -> Snapshot 构建与稳定排序
 
 **Files:**
 
@@ -128,7 +162,7 @@
 
 ---
 
-## 3. Task 3: 实现 DOT/JSON 导出与 JSON 导入
+## 4. Task 4: 实现 DOT/JSON 导出与 JSON 导入
 
 **Files:**
 
@@ -184,7 +218,7 @@
 
 ---
 
-## 4. Task 4: Editor UI 勾选开关与可视化窗口
+## 5. Task 5: Editor UI 勾选开关与节点连线窗口（imnodes）
 
 **Files:**
 
@@ -208,7 +242,7 @@
   - 模式切换（Live/Imported）
   - Export DOT / Export JSON
   - Import JSON
-  - 节点列表与简化图视图
+  - `imnodes` 节点连线图（pass/resource 节点与依赖连线）
 
 - [ ] **Step 4: 接通实时快照**
 
@@ -217,7 +251,7 @@
 
 - [ ] **Step 5: 手测**
 
-  场景：启动 editor -> 勾选 -> 窗口出现 -> 导出 DOT/JSON -> 导入 JSON -> 显示切换正常。
+  场景：启动 editor -> 勾选 -> 节点图窗口出现 -> 可平移缩放/节点可见 -> 导出 DOT/JSON -> 导入 JSON -> 显示切换正常。
 
 - [ ] **Step 6: 编译验证**
 
@@ -231,7 +265,7 @@
 
 ---
 
-## 5. Task 5: Scene Save/Restore 序列化兼容
+## 6. Task 6: Scene Save/Restore 序列化兼容
 
 **Files:**
 
@@ -274,7 +308,7 @@
 
 ---
 
-## 6. Task 6: CLI 自动导出与 testcase 自动化接入
+## 7. Task 7: CLI 自动导出与 testcase 自动化接入
 
 **Files:**
 
@@ -320,7 +354,7 @@
 
 ---
 
-## 7. Task 7: 全量回归与收尾
+## 8. Task 8: 全量回归与收尾
 
 **Files:**
 
@@ -356,10 +390,11 @@
 
 ---
 
-## 8. 质量门禁（必须同时满足）
+## 9. 质量门禁（必须同时满足）
 
 1. `Visualize RenderGraph` checkbox 可控且默认关闭。
 2. Live/Imported 模式可切换且逻辑清晰。
+2.1 RenderGraph 窗口展示“连连看”节点图（非纯文本列表）。
 3. DOT 可由通用工具（Graphviz）打开。
 4. JSON 可成功导入并回放。
 5. Save/Restore 恢复可视化相关 UI 状态。
@@ -369,7 +404,7 @@
 
 ---
 
-## 9. 风险与回滚
+## 10. 风险与回滚
 
 - 风险：导出内容包含不稳定字段导致回归波动。  
   对策：规范化排序 + compare 脚本忽略非确定性字段。
@@ -379,10 +414,12 @@
   对策：统一到同一帧触发点，按固定顺序导出并一次性退出。
 - 风险：导入无效 JSON 导致 UI 状态污染。  
   对策：导入失败时保留上次快照并弹错误信息，不覆盖当前有效状态。
+- 风险：目标机器无法 `git submodule add` GitHub。  
+  对策：使用 vendor 镜像目录保持 API 与目录一致，后续网络恢复后可替换为 submodule。
 
 ---
 
-## 10. 自检结果
+## 11. 自检结果
 
 - Spec 覆盖项均有对应任务（UI、导出、导入、序列化、测试）。
 - 无 `TODO/TBD` 占位符。
@@ -390,8 +427,9 @@
 
 ---
 
-## 11. 修订记录
+## 12. 修订记录
 
 - **R1**：确定模块分层、文件清单与主干任务拆分。
 - **R2**：补充 CLI 自动导出、testcase 三重回归链路。
 - **R3**：补充稳定性门禁（连续 3 次一致）、导入失败保护和收尾策略。
+- **R4**：升级为 imnodes 节点连线可视化路线，并加入 submodule/vendor 双路径集成。

@@ -130,6 +130,16 @@ endif()
 )
 target_compile_definitions(imgui PRIVATE VK_NO_PROTOTYPES) # for avoid conflict when using volk
 
+# imnodes - Dear ImGui node editor helper
+add_library(imnodes STATIC
+    ${CMAKE_CURRENT_LIST_DIR}/imnodes/imnodes.cpp
+)
+target_include_directories(imnodes PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/imnodes
+    ${CMAKE_CURRENT_LIST_DIR}/imgui
+)
+target_link_libraries(imnodes PUBLIC imgui)
+
 if (MSVC)
     set_property(TARGET glfw PROPERTY FOLDER "external/glfw")
     set_property(TARGET update_mappings PROPERTY FOLDER "external/glfw")
@@ -149,4 +159,5 @@ if (MSVC)
     set_property(TARGET obj_basisu_cbind PROPERTY FOLDER "external/ktx")
     set_property(TARGET objUtil PROPERTY FOLDER "external/ktx")
     set_property(TARGET imgui PROPERTY FOLDER "external")
+    set_property(TARGET imnodes PROPERTY FOLDER "external")
 endif()

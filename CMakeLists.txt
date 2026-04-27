@@ -91,6 +91,7 @@ set(KALEIDO_LINK_LIBS
     stb_image
     ktx
     imgui
+    imnodes
     rapidjson
 )
 

@@ -5,6 +5,7 @@
 #include "rendergraph_viz.h"
 #include "editor_scene_io.h"
 #include "scene_transforms.h"
+#include "imnodes.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -21,6 +22,7 @@
 #include <fstream>
 #include <sstream>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 #if defined(WIN32)
 #include <windows.h>
@@ -62,6 +64,133 @@ bool PathEndsWithExtensionIgnoreCase(std::string_view path, std::string_view ext
 RenderGraphVizSnapshot gRenderGraphLiveSnapshot{};
 RenderGraphVizSnapshot gRenderGraphImportedSnapshot{};
 bool gRenderGraphImportedSnapshotValid = false;
+bool gRenderGraphNodeEditorInitialized = false;
+uint64_t gRenderGraphNodeEditorLayoutSignature = 0;
+
+int MakeImnodesId(std::string_view text)
+{
+	// Stable 31-bit FNV-1a hash for imnodes integer IDs.
+	uint32_t hash = 2166136261u;
+	for (char ch : text)
+	{
+		hash ^= static_cast<uint8_t>(ch);
+		hash *= 16777619u;
+	}
+	hash &= 0x7fffffffu;
+	if (hash == 0)
+		hash = 1;
+	return static_cast<int>(hash);
+}
+
+uint64_t BuildRenderGraphLayoutSignature(const RenderGraphVizSnapshot& snapshot)
+{
+	uint64_t sig = snapshot.passes.size() * 1315423911ull + snapshot.resources.size() * 2654435761ull + snapshot.edges.size();
+	for (const auto& pass : snapshot.passes)
+		sig ^= uint64_t(MakeImnodesId(pass.id)) * 1099511628211ull;
+	for (const auto& resource : snapshot.resources)
+		sig ^= uint64_t(MakeImnodesId(resource.id)) * 1469598103934665603ull;
+	return sig;
+}
+
+void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot)
+{
+	if (!gRenderGraphNodeEditorInitialized)
+	{
+		ImNodes::CreateContext();
+		ImNodes::StyleColorsDark();
+		gRenderGraphNodeEditorInitialized = true;
+	}
+
+	const uint64_t signature = BuildRenderGraphLayoutSignature(snapshot);
+	const bool relayout = (signature != gRenderGraphNodeEditorLayoutSignature);
+	gRenderGraphNodeEditorLayoutSignature = signature;
+
+	ImNodes::BeginNodeEditor();
+
+	std::unordered_set<std::string> passIds;
+	std::unordered_set<std::string> resourceIds;
+	passIds.reserve(snapshot.passes.size());
+	resourceIds.reserve(snapshot.resources.size());
+	for (const auto& pass : snapshot.passes)
+		passIds.insert(pass.id);
+	for (const auto& resource : snapshot.resources)
+		resourceIds.insert(resource.id);
+
+	const float passX = 80.0f;
+	const float resourceX = 580.0f;
+	for (size_t i = 0; i < snapshot.passes.size(); ++i)
+	{
+		const auto& pass = snapshot.passes[i];
+		const int nodeId = MakeImnodesId(std::string("node:pass:") + pass.id);
+		const int inAttrId = MakeImnodesId(std::string("attr-in:pass:") + pass.id);
+		const int outAttrId = MakeImnodesId(std::string("attr-out:pass:") + pass.id);
+
+		if (relayout)
+			ImNodes::SetNodeEditorSpacePos(nodeId, ImVec2(passX, 60.0f + 110.0f * float(i)));
+
+		ImNodes::BeginNode(nodeId);
+		ImNodes::BeginNodeTitleBar();
+		ImGui::TextUnformatted(pass.name.c_str());
+		ImNodes::EndNodeTitleBar();
+
+		ImNodes::BeginInputAttribute(inAttrId);
+		ImGui::TextUnformatted("In");
+		ImNodes::EndInputAttribute();
+		ImGui::Text("index=%u topo=%u", pass.index, pass.topoOrder);
+		ImNodes::BeginOutputAttribute(outAttrId);
+		ImGui::Indent(40.0f);
+		ImGui::TextUnformatted("Out");
+		ImNodes::EndOutputAttribute();
+		ImNodes::EndNode();
+	}
+
+	for (size_t i = 0; i < snapshot.resources.size(); ++i)
+	{
+		const auto& resource = snapshot.resources[i];
+		const int nodeId = MakeImnodesId(std::string("node:res:") + resource.id);
+		const int inAttrId = MakeImnodesId(std::string("attr-in:res:") + resource.id);
+		const int outAttrId = MakeImnodesId(std::string("attr-out:res:") + resource.id);
+
+		if (relayout)
+			ImNodes::SetNodeEditorSpacePos(nodeId, ImVec2(resourceX, 60.0f + 100.0f * float(i)));
+
+		ImNodes::BeginNode(nodeId);
+		ImNodes::BeginNodeTitleBar();
+		ImGui::TextUnformatted(resource.id.c_str());
+		ImNodes::EndNodeTitleBar();
+		ImNodes::BeginInputAttribute(inAttrId);
+		ImGui::TextUnformatted("In");
+		ImNodes::EndInputAttribute();
+		ImGui::Text("%s", resource.kind.c_str());
+		ImNodes::BeginOutputAttribute(outAttrId);
+		ImGui::Indent(40.0f);
+		ImGui::TextUnformatted("Out");
+		ImNodes::EndOutputAttribute();
+		ImNodes::EndNode();
+	}
+
+	for (const auto& edge : snapshot.edges)
+	{
+		const bool fromIsPass = passIds.find(edge.from) != passIds.end();
+		const bool fromIsResource = resourceIds.find(edge.from) != resourceIds.end();
+		const bool toIsPass = passIds.find(edge.to) != passIds.end();
+		const bool toIsResource = resourceIds.find(edge.to) != resourceIds.end();
+		if ((!fromIsPass && !fromIsResource) || (!toIsPass && !toIsResource))
+			continue;
+
+		const int fromAttr = fromIsPass
+		                         ? MakeImnodesId(std::string("attr-out:pass:") + edge.from)
+		                         : MakeImnodesId(std::string("attr-out:res:") + edge.from);
+		const int toAttr = toIsPass
+		                       ? MakeImnodesId(std::string("attr-in:pass:") + edge.to)
+		                       : MakeImnodesId(std::string("attr-in:res:") + edge.to);
+		const int linkId = MakeImnodesId(std::string("link:") + edge.from + "->" + edge.to + "#" + edge.type + "#" + edge.state);
+		ImNodes::Link(linkId, fromAttr, toAttr);
+	}
+
+	ImNodes::MiniMap(0.2f, ImNodesMiniMapLocation_BottomRight);
+	ImNodes::EndNodeEditor();
+}
 
 bool WriteTextFileUtf8(const std::string& path, const std::string& text, std::string* outError)
 {
@@ -4739,18 +4868,14 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 				    int(show.passes.size()),
 				    int(show.resources.size()),
 				    int(show.edges.size()));
-				if (ImGui::TreeNode("Passes"))
+				ImGui::Separator();
+				ImGui::TextUnformatted("Node Graph");
+				DrawRenderGraphNodeEditor(show);
+				if (ImGui::CollapsingHeader("Edge Legend"))
 				{
-					for (const auto& pass : show.passes)
-						ImGui::BulletText("%u | topo=%u | %s", pass.index, pass.topoOrder, pass.name.c_str());
-					ImGui::TreePop();
+					for (const auto& edge : show.edges)
+						ImGui::BulletText("%s -> %s (%s %s)", edge.from.c_str(), edge.to.c_str(), edge.type.c_str(), edge.state.c_str());
 				}
-					if (ImGui::TreeNode("Edges"))
-					{
-						for (const auto& edge : show.edges)
-							ImGui::BulletText("%s -> %s (%s %s)", edge.from.c_str(), edge.to.c_str(), edge.type.c_str(), edge.state.c_str());
-						ImGui::TreePop();
-					}
 				}
 				ImGui::End();
 			}

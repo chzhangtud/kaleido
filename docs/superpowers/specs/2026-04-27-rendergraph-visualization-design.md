@@ -23,7 +23,7 @@
 本设计目标：
 
 1. 在 editor 中新增开关（checkbox）控制是否显示 RenderGraph 可视化。
-2. 当开关开启时，可在独立窗口展示 RenderGraph 图结构（节点 + 边 + 元数据）。
+2. 当开关开启时，可在独立窗口以“连连看”节点图方式展示 RenderGraph（节点 + 连线 + 元数据）。
 3. 图数据支持导出为通用格式（至少 DOT；并提供 JSON 供再次导入）。
 4. 支持导入（反序列化）先前导出的 JSON 快照并回放可视化。
 5. 将可视化开关与窗口状态纳入场景快照（Save/Restore）。
@@ -38,6 +38,7 @@
 - Editor UI：
   - Rendering 面板新增 `Visualize RenderGraph` checkbox。
   - 新增 `RenderGraph Visualizer` 窗口（可停靠/可隐藏）。
+  - 用 Node Graph 交互（拖拽、缩放、平移）显示 pass/resource 节点和连线。
   - 提供 `Export DOT`、`Export JSON`、`Import JSON` 按钮。
 - Runtime 数据采集：
   - 每帧从 `RenderGraph` 抓取 pass/resource 关系，构建只读快照。
@@ -45,6 +46,9 @@
 - 序列化/反序列化：
   - Editor scene JSON 增加 `renderGraphVisualization` UI 状态字段。
   - RenderGraph 独立导出文件支持 DOT 和 JSON 两种格式。
+- 依赖集成：
+  - 首选引入公开仓库 `imnodes`（https://github.com/Nelarius/imnodes）作为 Node Graph 实现。
+  - 若执行环境导致 `git submodule add` 不可用，可临时采用 vendor 镜像，并保持目录与 API 与上游一致，后续可无缝切回 submodule。
 - 测试：
   - 视口回归保证“默认关闭可视化”时不改变已有 golden。
   - 新增 RenderGraph 可视化 testcase（以导出文件比对为主，PNG 为辅）。
@@ -52,7 +56,7 @@
 ### 2.2 非目标（Out of Scope）
 
 - 不实现可视化窗口内“拖拽改图”并反写运行时图结构。
-- 不在本期引入第三方大型图形布局库（先用轻量布局策略）。
+- 不在本期引入复杂自动布局引擎（本期使用确定性轻量布局 + Node Graph 交互）。
 - 不覆盖跨进程实时远程调试（仅本地编辑器内可视化与导出）。
 
 ---
@@ -68,18 +72,19 @@
 
 ## 3. 方案对比（3 选 1）
 
-### 方案 A（推荐）：内置轻量可视化 + DOT/JSON 双格式导出
+### 方案 A（推荐）：`imnodes` 节点图 + DOT/JSON 双格式导出
 
 - **核心思路**
-  - 用 ImGui 自绘简化节点图（按拓扑分层布局）。
+  - 使用 `imnodes` 在 ImGui 窗口中绘制节点连线图（按拓扑分层布局初始位置）。
   - 导出 `DOT`（给 Graphviz）和 `JSON`（用于导入回放与自动化测试）。
 - **优点**
-  - 与现有技术栈一致，依赖最少；
+  - 用户直接获得“连连看”交互体验（拖拽/缩放/平移）；
+  - 与现有 ImGui 技术栈一致，依赖可控；
   - DOT 通用性强，用户可直接用 Graphviz/VSCode 插件打开；
   - JSON 便于稳定比对和回放。
 - **缺点**
-  - 布局美观度弱于专业图库；
-  - 需要维护一份布局逻辑。
+  - 需要新增一个第三方依赖（submodule 或 vendor）；
+  - 需要维护节点 ID/连线 ID 映射与稳定布局逻辑。
 
 ### 方案 B：只导出，不内置可视化
 
@@ -92,7 +97,7 @@
   - 不满足“在 editor 中勾选后可视化”的核心诉求；
   - 调试链路断裂（需要频繁切外部工具）。
 
-### 方案 C：引入第三方图可视化库
+### 方案 C：引入更重型图可视化库（除 imnodes 外）
 
 - **核心思路**
   - 集成第三方布局/渲染库，提供更高级交互。
@@ -104,7 +109,7 @@
 
 ### 结论
 
-采用 **方案 A**。它在满足功能闭环（UI + 可视化 + 导出 + 导入 + 测试）的同时，保持改造风险和依赖成本可控。
+采用 **方案 A**。它在满足“连连看”可视化诉求的同时，保留导入导出与回归稳定性。
 
 ---
 
@@ -120,7 +125,7 @@
    - `ToJson(snapshot)`；
    - `FromJson(json)`（导入回放）。
 3. `RenderGraphVisualizerWindow`（UI 层）
-   - 渲染节点列表/简图；
+   - 渲染 `imnodes` 节点图（pass/resource 两类节点）；
    - 承载导入导出交互。
 
 ### 4.2 数据模型（导出 JSON v1）
@@ -180,8 +185,8 @@
   - `Import JSON`
   - `Freeze`（冻结当前 Live 快照）
 - 主体区域：
-  - 左侧：pass/resource 树与搜索过滤；
-  - 右侧：简化图（分层布局）与节点详情。
+  - 主区域：`imnodes` 连线图（节点拖拽、平移、缩放）。
+  - 信息区：选中节点详情（pass index、topo、resource kind）与统计信息。
 
 ### 5.3 默认行为
 
@@ -266,6 +271,7 @@
 6. 既有 testcase 视口回归在默认设置下无非预期变化。
 7. 导出 JSON 在同一输入场景下连续 3 次结果一致（除允许忽略字段外）。
 8. 导出 DOT 可被 `dot -Tsvg` 成功解析（返回码 0）。
+9. 节点图以“连连看”样式显示（至少可见 pass/resource 节点及其连线）。
 
 ---
 
@@ -282,3 +288,4 @@
 - **R1**：确定功能闭环（checkbox + 可视化 + DOT 导出）与基础数据结构。
 - **R2**：补充 JSON 导入回放、Scene Save/Restore 字段与兼容策略。
 - **R3**：补充 testcase 接入方案、自动化比对脚本策略与验收标准量化。
+- **R4**：将可视化形态升级为 `imnodes` 节点连线图，并加入 submodule/vendor 集成策略。
