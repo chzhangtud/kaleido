@@ -50,5 +50,6 @@ struct EditorSceneUiState
 	bool visualizeRenderGraph = false;
 	bool renderGraphVisualizerWindowOpen = false;
 	int renderGraphVisualizerMode = 0; // 0 = live, 1 = imported
+	int renderGraphVisualizerGraphMode = 0; // 0 = simple(pass->pass), 1 = full(pass/resource)
 	std::string renderGraphVisualizerImportedPath;
 };

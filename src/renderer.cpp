@@ -22,6 +22,7 @@
 #include <fstream>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #if defined(WIN32)
@@ -66,6 +67,7 @@ RenderGraphVizSnapshot gRenderGraphImportedSnapshot{};
 bool gRenderGraphImportedSnapshotValid = false;
 bool gRenderGraphNodeEditorInitialized = false;
 uint64_t gRenderGraphNodeEditorLayoutSignature = 0;
+bool g_renderGraphNodeEditorHovered = false;
 
 int MakeImnodesId(std::string_view text)
 {
@@ -82,9 +84,10 @@ int MakeImnodesId(std::string_view text)
 	return static_cast<int>(hash);
 }
 
-uint64_t BuildRenderGraphLayoutSignature(const RenderGraphVizSnapshot& snapshot)
+uint64_t BuildRenderGraphLayoutSignature(const RenderGraphVizSnapshot& snapshot, int graphMode)
 {
 	uint64_t sig = snapshot.passes.size() * 1315423911ull + snapshot.resources.size() * 2654435761ull + snapshot.edges.size();
+	sig ^= uint64_t(graphMode + 1) * 11400714819323198485ull;
 	for (const auto& pass : snapshot.passes)
 		sig ^= uint64_t(MakeImnodesId(pass.id)) * 1099511628211ull;
 	for (const auto& resource : snapshot.resources)
@@ -92,7 +95,7 @@ uint64_t BuildRenderGraphLayoutSignature(const RenderGraphVizSnapshot& snapshot)
 	return sig;
 }
 
-void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot)
+void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot, int graphMode)
 {
 	if (!gRenderGraphNodeEditorInitialized)
 	{
@@ -101,11 +104,9 @@ void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot)
 		gRenderGraphNodeEditorInitialized = true;
 	}
 
-	const uint64_t signature = BuildRenderGraphLayoutSignature(snapshot);
+	const uint64_t signature = BuildRenderGraphLayoutSignature(snapshot, graphMode);
 	const bool relayout = (signature != gRenderGraphNodeEditorLayoutSignature);
 	gRenderGraphNodeEditorLayoutSignature = signature;
-
-	ImNodes::BeginNodeEditor();
 
 	std::unordered_set<std::string> passIds;
 	std::unordered_set<std::string> resourceIds;
@@ -116,8 +117,12 @@ void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot)
 	for (const auto& resource : snapshot.resources)
 		resourceIds.insert(resource.id);
 
+	ImNodes::BeginNodeEditor();
+
+	const bool fullGraphMode = graphMode == 1;
 	const float passX = 80.0f;
-	const float resourceX = 580.0f;
+	const float resourceX = 620.0f;
+
 	for (size_t i = 0; i < snapshot.passes.size(); ++i)
 	{
 		const auto& pass = snapshot.passes[i];
@@ -126,57 +131,89 @@ void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot)
 		const int outAttrId = MakeImnodesId(std::string("attr-out:pass:") + pass.id);
 
 		if (relayout)
-			ImNodes::SetNodeEditorSpacePos(nodeId, ImVec2(passX, 60.0f + 110.0f * float(i)));
+			ImNodes::SetNodeEditorSpacePos(nodeId, ImVec2(passX, 60.0f + 120.0f * float(i)));
 
+		ImNodes::PushColorStyle(ImNodesCol_TitleBar, IM_COL32(58, 96, 168, 255));
+		ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, IM_COL32(72, 116, 194, 255));
+		ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, IM_COL32(87, 134, 210, 255));
+		ImNodes::PushColorStyle(ImNodesCol_NodeBackground, IM_COL32(36, 48, 76, 255));
+		ImNodes::PushStyleVar(ImNodesStyleVar_NodePadding, ImVec2(10.0f, 8.0f));
 		ImNodes::BeginNode(nodeId);
 		ImNodes::BeginNodeTitleBar();
 		ImGui::TextUnformatted(pass.name.c_str());
 		ImNodes::EndNodeTitleBar();
-
 		ImNodes::BeginInputAttribute(inAttrId);
 		ImGui::TextUnformatted("In");
 		ImNodes::EndInputAttribute();
-		ImGui::Text("index=%u topo=%u", pass.index, pass.topoOrder);
+		ImGui::Text("Pass #%u", pass.index);
+		ImGui::Text("Topo %u", pass.topoOrder);
 		ImNodes::BeginOutputAttribute(outAttrId);
-		ImGui::Indent(40.0f);
+		ImGui::Indent(48.0f);
 		ImGui::TextUnformatted("Out");
 		ImNodes::EndOutputAttribute();
 		ImNodes::EndNode();
+		ImNodes::PopStyleVar();
+		ImNodes::PopColorStyle();
+		ImNodes::PopColorStyle();
+		ImNodes::PopColorStyle();
+		ImNodes::PopColorStyle();
 	}
 
-	for (size_t i = 0; i < snapshot.resources.size(); ++i)
+	if (fullGraphMode)
 	{
-		const auto& resource = snapshot.resources[i];
-		const int nodeId = MakeImnodesId(std::string("node:res:") + resource.id);
-		const int inAttrId = MakeImnodesId(std::string("attr-in:res:") + resource.id);
-		const int outAttrId = MakeImnodesId(std::string("attr-out:res:") + resource.id);
+		for (size_t i = 0; i < snapshot.resources.size(); ++i)
+		{
+			const auto& resource = snapshot.resources[i];
+			const int nodeId = MakeImnodesId(std::string("node:res:") + resource.id);
+			const int inAttrId = MakeImnodesId(std::string("attr-in:res:") + resource.id);
+			const int outAttrId = MakeImnodesId(std::string("attr-out:res:") + resource.id);
 
-		if (relayout)
-			ImNodes::SetNodeEditorSpacePos(nodeId, ImVec2(resourceX, 60.0f + 100.0f * float(i)));
+			if (relayout)
+				ImNodes::SetNodeEditorSpacePos(nodeId, ImVec2(resourceX, 60.0f + 100.0f * float(i)));
 
-		ImNodes::BeginNode(nodeId);
-		ImNodes::BeginNodeTitleBar();
-		ImGui::TextUnformatted(resource.id.c_str());
-		ImNodes::EndNodeTitleBar();
-		ImNodes::BeginInputAttribute(inAttrId);
-		ImGui::TextUnformatted("In");
-		ImNodes::EndInputAttribute();
-		ImGui::Text("%s", resource.kind.c_str());
-		ImNodes::BeginOutputAttribute(outAttrId);
-		ImGui::Indent(40.0f);
-		ImGui::TextUnformatted("Out");
-		ImNodes::EndOutputAttribute();
-		ImNodes::EndNode();
+			ImNodes::PushColorStyle(ImNodesCol_TitleBar, IM_COL32(146, 106, 42, 255));
+			ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, IM_COL32(173, 124, 50, 255));
+			ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, IM_COL32(194, 141, 58, 255));
+			ImNodes::PushColorStyle(ImNodesCol_NodeBackground, IM_COL32(70, 56, 34, 255));
+			ImNodes::PushStyleVar(ImNodesStyleVar_NodePadding, ImVec2(8.0f, 6.0f));
+			ImNodes::BeginNode(nodeId);
+			ImNodes::BeginNodeTitleBar();
+			ImGui::TextUnformatted(resource.id.c_str());
+			ImNodes::EndNodeTitleBar();
+			ImNodes::BeginInputAttribute(inAttrId);
+			ImGui::TextUnformatted("In");
+			ImNodes::EndInputAttribute();
+			ImGui::Text("%s", resource.kind.c_str());
+			ImNodes::BeginOutputAttribute(outAttrId);
+			ImGui::Indent(40.0f);
+			ImGui::TextUnformatted("Out");
+			ImNodes::EndOutputAttribute();
+			ImNodes::EndNode();
+			ImNodes::PopStyleVar();
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+		}
 	}
 
-	for (const auto& edge : snapshot.edges)
+	for (size_t i = 0; i < snapshot.edges.size(); ++i)
 	{
+		const auto& edge = snapshot.edges[i];
 		const bool fromIsPass = passIds.find(edge.from) != passIds.end();
-		const bool fromIsResource = resourceIds.find(edge.from) != resourceIds.end();
 		const bool toIsPass = passIds.find(edge.to) != passIds.end();
+		const bool fromIsResource = resourceIds.find(edge.from) != resourceIds.end();
 		const bool toIsResource = resourceIds.find(edge.to) != resourceIds.end();
-		if ((!fromIsPass && !fromIsResource) || (!toIsPass && !toIsResource))
-			continue;
+		if (fullGraphMode)
+		{
+			if ((!fromIsPass && !fromIsResource) || (!toIsPass && !toIsResource))
+				continue;
+		}
+		else
+		{
+			if (!(fromIsPass && toIsPass) || edge.type != "pass_to_pass")
+				continue;
+		}
 
 		const int fromAttr = fromIsPass
 		                         ? MakeImnodesId(std::string("attr-out:pass:") + edge.from)
@@ -184,12 +221,13 @@ void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot)
 		const int toAttr = toIsPass
 		                       ? MakeImnodesId(std::string("attr-in:pass:") + edge.to)
 		                       : MakeImnodesId(std::string("attr-in:res:") + edge.to);
-		const int linkId = MakeImnodesId(std::string("link:") + edge.from + "->" + edge.to + "#" + edge.type + "#" + edge.state);
+		const int linkId = MakeImnodesId(std::string("link:") + edge.from + "->" + edge.to + "#" + std::to_string(i));
 		ImNodes::Link(linkId, fromAttr, toAttr);
 	}
 
 	ImNodes::MiniMap(0.2f, ImNodesMiniMapLocation_BottomRight);
 	ImNodes::EndNodeEditor();
+	g_renderGraphNodeEditorHovered = ImNodes::IsEditorHovered();
 }
 
 bool WriteTextFileUtf8(const std::string& path, const std::string& text, std::string* outError)
@@ -1012,6 +1050,7 @@ static bool g_editorViewportInputMode = false;
 static bool g_editorViewportRectValid = false;
 static ImVec2 g_editorViewportRectMin = ImVec2(0.f, 0.f);
 static ImVec2 g_editorViewportRectMax = ImVec2(0.f, 0.f);
+static bool g_editorViewportHovered = false;
 
 static bool IsPointInsideEditorViewport(float x, float y)
 {
@@ -1026,6 +1065,10 @@ void OnPointerDown(float x, float y)
 {
 	if (g_editorViewportInputMode && !IsPointInsideEditorViewport(x, y))
 		return;
+	if (g_renderGraphNodeEditorHovered)
+		return;
+	if (g_editorViewportInputMode && ImGui::GetIO().WantCaptureMouse && !g_editorViewportHovered)
+		return;
 
 	mousePressed = true;
 	firstMouse = true;
@@ -1038,7 +1081,11 @@ void OnPointerMove(float x, float y)
 	if (!mousePressed)
 		return;
 
-	if (ImGui::GetIO().WantCaptureMouse && !IsPointInsideEditorViewport(x, y))
+	if (g_renderGraphNodeEditorHovered)
+		return;
+	if (g_editorViewportInputMode && !IsPointInsideEditorViewport(x, y))
+		return;
+	if (ImGui::GetIO().WantCaptureMouse && !g_editorViewportHovered)
 		return;
 
 	static const float sensitivity = 0.1f;
@@ -1171,7 +1218,10 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 	{
 		if (action == GLFW_PRESS)
 		{
-			OnPointerDown(static_cast<float>(lastX), static_cast<float>(lastY));
+			double xpos = lastX;
+			double ypos = lastY;
+			glfwGetCursorPos(window, &xpos, &ypos);
+			OnPointerDown(static_cast<float>(xpos), static_cast<float>(ypos));
 		}
 		else if (action == GLFW_RELEASE)
 		{
@@ -1303,6 +1353,7 @@ EditorSceneUiState CaptureEditorSceneUiState(const Scene& scene)
 	ui.visualizeRenderGraph = scene.uiVisualizeRenderGraph;
 	ui.renderGraphVisualizerWindowOpen = scene.uiRenderGraphWindowOpen;
 	ui.renderGraphVisualizerMode = scene.uiRenderGraphViewMode;
+	ui.renderGraphVisualizerGraphMode = scene.uiRenderGraphGraphMode;
 	ui.renderGraphVisualizerImportedPath = scene.uiRenderGraphImportedPath;
 	return ui;
 }
@@ -1314,6 +1365,7 @@ void ApplyEditorSceneUiState(Scene& scene, const EditorSceneUiState& ui)
 	scene.uiVisualizeRenderGraph = ui.visualizeRenderGraph;
 	scene.uiRenderGraphWindowOpen = ui.renderGraphVisualizerWindowOpen;
 	scene.uiRenderGraphViewMode = std::max(0, std::min(ui.renderGraphVisualizerMode, 1));
+	scene.uiRenderGraphGraphMode = std::max(0, std::min(ui.renderGraphVisualizerGraphMode, 1));
 	scene.uiRenderGraphImportedPath = ui.renderGraphVisualizerImportedPath;
 	gRenderGraphImportedSnapshotValid = false;
 	if (!scene.uiRenderGraphImportedPath.empty())
@@ -4500,6 +4552,9 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 {
 	if (editorViewportMode)
 	{
+		g_editorViewportHovered = false;
+		g_renderGraphNodeEditorHovered = false;
+
 		const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
 		const float panelWidth = 360.0f;
 		const float panelGap = 20.0f;
@@ -4748,6 +4803,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 		ImGui::SetNextWindowPos(ImVec2(mainViewport->WorkPos.x + panelWidth + panelGap, mainViewport->WorkPos.y), ImGuiCond_Always);
 		ImGui::SetNextWindowSize(ImVec2(viewportWindowW, viewportWindowH), ImGuiCond_Always);
 		ImGui::Begin("viewport");
+		g_editorViewportHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
 		const ImVec2 windowPos = ImGui::GetWindowPos();
 		const ImVec2 contentMin = ImGui::GetWindowContentRegionMin();
 		const ImVec2 contentMax = ImGui::GetWindowContentRegionMax();
@@ -4782,8 +4838,13 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 				{
 					int mode = std::max(0, std::min(scene->uiRenderGraphViewMode, 1));
 					const char* modeItems[] = { "Live", "Imported" };
-					if (ImGui::Combo("Mode", &mode, modeItems, IM_ARRAYSIZE(modeItems)))
+					if (ImGui::Combo("Snapshot Mode", &mode, modeItems, IM_ARRAYSIZE(modeItems)))
 						scene->uiRenderGraphViewMode = mode;
+
+					int graphMode = std::max(0, std::min(scene->uiRenderGraphGraphMode, 1));
+					const char* graphModeItems[] = { "Simple Graph (Pass Dependencies)", "Full Graph (Pass + Resources)" };
+					if (ImGui::Combo("Graph Mode", &graphMode, graphModeItems, IM_ARRAYSIZE(graphModeItems)))
+						scene->uiRenderGraphGraphMode = graphMode;
 
 					if (ImGui::Button("Use Live Snapshot"))
 						scene->uiRenderGraphViewMode = 0;
@@ -4870,7 +4931,7 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 				    int(show.edges.size()));
 				ImGui::Separator();
 				ImGui::TextUnformatted("Node Graph");
-				DrawRenderGraphNodeEditor(show);
+				DrawRenderGraphNodeEditor(show, scene->uiRenderGraphGraphMode);
 				if (ImGui::CollapsingHeader("Edge Legend"))
 				{
 					for (const auto& edge : show.edges)

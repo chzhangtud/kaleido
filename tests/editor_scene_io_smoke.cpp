@@ -48,6 +48,7 @@ int main()
 	snapshot.editorUi.visualizeRenderGraph = true;
 	snapshot.editorUi.renderGraphVisualizerWindowOpen = true;
 	snapshot.editorUi.renderGraphVisualizerMode = 1;
+	snapshot.editorUi.renderGraphVisualizerGraphMode = 1;
 	snapshot.editorUi.renderGraphVisualizerImportedPath = "tmp/rendergraph.json";
 
 	EditorMaterialOverride ov{};
@@ -100,6 +101,7 @@ int main()
 	}
 	if (!loaded.editorUi.visualizeRenderGraph || !loaded.editorUi.renderGraphVisualizerWindowOpen ||
 	    loaded.editorUi.renderGraphVisualizerMode != 1 ||
+	    loaded.editorUi.renderGraphVisualizerGraphMode != 1 ||
 	    loaded.editorUi.renderGraphVisualizerImportedPath != "tmp/rendergraph.json")
 	{
 		fprintf(stderr, "editor ui rendergraph state mismatch\n");

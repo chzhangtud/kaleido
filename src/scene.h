@@ -208,6 +208,7 @@ struct Scene
 	bool uiVisualizeRenderGraph = false;
 	bool uiRenderGraphWindowOpen = false;
 	int uiRenderGraphViewMode = 0; // 0 = live, 1 = imported
+	int uiRenderGraphGraphMode = 0; // 0 = simple(pass->pass), 1 = full(pass/resource)
 	std::string uiRenderGraphImportedPath;
 	vec3 sunDirection{ 1.0f };
 	uint32_t meshletVisibilityCount{ 0u };

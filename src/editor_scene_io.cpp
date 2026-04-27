@@ -234,6 +234,8 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.Bool(snapshot.editorUi.renderGraphVisualizerWindowOpen);
 	writer.Key("renderGraphVisualizerMode");
 	writer.Int(snapshot.editorUi.renderGraphVisualizerMode);
+	writer.Key("renderGraphVisualizerGraphMode");
+	writer.Int(snapshot.editorUi.renderGraphVisualizerGraphMode);
 	writer.Key("renderGraphVisualizerImportedPath");
 	writer.String(snapshot.editorUi.renderGraphVisualizerImportedPath.c_str());
 	writer.EndObject();
@@ -434,6 +436,7 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 		ReadBool(eu, "visualizeRenderGraph", snapshot.editorUi.visualizeRenderGraph);
 		ReadBool(eu, "renderGraphVisualizerWindowOpen", snapshot.editorUi.renderGraphVisualizerWindowOpen);
 		ReadInt(eu, "renderGraphVisualizerMode", snapshot.editorUi.renderGraphVisualizerMode);
+		ReadInt(eu, "renderGraphVisualizerGraphMode", snapshot.editorUi.renderGraphVisualizerGraphMode);
 		const auto importedPathIt = eu.FindMember("renderGraphVisualizerImportedPath");
 		if (importedPathIt != eu.MemberEnd() && importedPathIt->value.IsString())
 			snapshot.editorUi.renderGraphVisualizerImportedPath = importedPathIt->value.GetString();
