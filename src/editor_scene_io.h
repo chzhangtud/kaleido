@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,25 @@ struct EditorMaterialOverride
 	vec4 baseColorFactor = vec4(1.f);
 	vec4 pbrFactor = vec4(1.f);
 	vec3 emissiveFactor = vec3(0.f);
+	float normalScale = 1.f;
+	float occlusionStrength = 1.f;
+	int32_t alphaMode = 0;
+	float alphaCutoff = 0.5f;
+	bool doubleSided = false;
+	float transmissionFactor = 0.f;
+	float ior = 1.5f;
+	float emissiveStrength = 1.f;
+	bool hasBaseColorFactor = true;
+	bool hasPbrFactor = true;
+	bool hasEmissiveFactor = true;
+	bool hasNormalScale = true;
+	bool hasOcclusionStrength = true;
+	bool hasAlphaMode = true;
+	bool hasAlphaCutoff = true;
+	bool hasDoubleSided = true;
+	bool hasTransmissionFactor = true;
+	bool hasIor = true;
+	bool hasEmissiveStrength = true;
 };
 
 struct EditorSceneSnapshot

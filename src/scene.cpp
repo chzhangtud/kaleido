@@ -492,6 +492,7 @@ static PBRMaterial BuildPbrMaterial(const cgltf_data* data, const cgltf_material
 	mat.transmissionTexture = 0;
 	mat.transmissionFactor = 0.f;
 	mat.ior = 1.5f;
+	mat.doubleSided = material.double_sided ? 1 : 0;
 	if (material.has_transmission)
 	{
 		mat.transmissionFactor = material.transmission.transmission_factor;

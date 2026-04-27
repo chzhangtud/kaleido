@@ -29,9 +29,11 @@ struct alignas(16) Material
 	int32_t transmissionTexture; // 0 = none (same convention as other texture indices)
 	float transmissionFactor;
 	float ior; // KHR_materials_ior, default 1.5 when unspecified
+	int32_t doubleSided; // 0 = cull back-face, 1 = double-sided
+	int32_t materialPad[3];
 };
 
-static_assert(sizeof(Material) == 112, "Material size must match GLSL std430 (see shaders/mesh.h)");
+static_assert(sizeof(Material) == 128, "Material size must match GLSL std430 (see shaders/mesh.h)");
 
 enum class MaterialType : uint32_t
 {

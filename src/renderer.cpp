@@ -345,6 +345,66 @@ static bool IsNearlyEqual(float a, float b, float eps = 1e-5f)
 	return fabsf(a - b) <= eps;
 }
 
+static float ClampFloat(float value, float minValue, float maxValue)
+{
+	return std::max(minValue, std::min(value, maxValue));
+}
+
+static int32_t ClampAlphaMode(int32_t alphaMode)
+{
+	return std::max(0, std::min(alphaMode, 2));
+}
+
+static void NormalizeEditableMaterialData(Material& data)
+{
+	data.baseColorFactor.x = ClampFloat(data.baseColorFactor.x, 0.f, 1.f);
+	data.baseColorFactor.y = ClampFloat(data.baseColorFactor.y, 0.f, 1.f);
+	data.baseColorFactor.z = ClampFloat(data.baseColorFactor.z, 0.f, 1.f);
+	data.baseColorFactor.w = ClampFloat(data.baseColorFactor.w, 0.f, 1.f);
+	data.pbrFactor.z = ClampFloat(data.pbrFactor.z, 0.f, 1.f);
+	data.pbrFactor.w = ClampFloat(data.pbrFactor.w, 0.045f, 1.f);
+	data.shadingParams.x = ClampFloat(data.shadingParams.x, 0.f, 4.f);
+	data.shadingParams.y = ClampFloat(data.shadingParams.y, 0.f, 1.f);
+	data.shadingParams.z = ClampFloat(data.shadingParams.z, 0.f, 1.f);
+	data.shadingParams.w = ClampFloat(data.shadingParams.w, 0.f, 32.f);
+	data.emissiveFactor[0] = ClampFloat(data.emissiveFactor[0], 0.f, 32.f);
+	data.emissiveFactor[1] = ClampFloat(data.emissiveFactor[1], 0.f, 32.f);
+	data.emissiveFactor[2] = ClampFloat(data.emissiveFactor[2], 0.f, 32.f);
+	data.alphaMode = ClampAlphaMode(data.alphaMode);
+	data.transmissionFactor = ClampFloat(data.transmissionFactor, 0.f, 1.f);
+	data.ior = ClampFloat(data.ior, 1.f, 2.5f);
+	data.doubleSided = data.doubleSided ? 1 : 0;
+}
+
+static MaterialKey BuildPbrMaterialKeyFromData(const Material& data)
+{
+	const uint32_t workflow = uint32_t(std::max(0, std::min(data.workflow, 15)));
+	const uint32_t alphaMode = uint32_t(ClampAlphaMode(data.alphaMode));
+	const uint32_t doubleSided = data.doubleSided ? 1u : 0u;
+	const uint32_t transmission = (data.transmissionTexture > 0 || data.transmissionFactor > 1e-5f) ? 1u : 0u;
+	return MaterialKey::Pack(MaterialType::PBR, workflow, alphaMode, doubleSided, transmission);
+}
+
+static bool CommitPbrMaterialEdit(Scene& scene, uint32_t materialIndex, PBRMaterial& material, bool* outKeyChanged)
+{
+	NormalizeEditableMaterialData(material.data);
+	const MaterialKey oldKey = materialIndex < scene.materialDb.materialKeys.size()
+	                               ? scene.materialDb.materialKeys[materialIndex]
+	                               : MaterialKey::DefaultPbrOpaque();
+	const MaterialKey newKey = BuildPbrMaterialKeyFromData(material.data);
+	material.key = newKey;
+
+	if (materialIndex < scene.materialDb.materialKeys.size())
+		scene.materialDb.materialKeys[materialIndex] = newKey;
+	if (materialIndex < scene.materialDb.gpuMaterials.size())
+		scene.materialDb.gpuMaterials[materialIndex] = material.ToGpuMaterial();
+
+	scene.materialDb.gpuDirty = true;
+	if (outKeyChanged)
+		*outKeyChanged = oldKey != newKey;
+	return true;
+}
+
 static bool MaterialFactorsDiffer(const PBRMaterial& a, const PBRMaterial& b)
 {
 	const vec4& c0 = a.data.baseColorFactor;
@@ -355,9 +415,23 @@ static bool MaterialFactorsDiffer(const PBRMaterial& a, const PBRMaterial& b)
 		return true;
 	if (!IsNearlyEqual(p0.x, p1.x) || !IsNearlyEqual(p0.y, p1.y) || !IsNearlyEqual(p0.z, p1.z) || !IsNearlyEqual(p0.w, p1.w))
 		return true;
-	return !IsNearlyEqual(a.data.emissiveFactor[0], b.data.emissiveFactor[0]) ||
+	if (!IsNearlyEqual(a.data.emissiveFactor[0], b.data.emissiveFactor[0]) ||
 	       !IsNearlyEqual(a.data.emissiveFactor[1], b.data.emissiveFactor[1]) ||
-	       !IsNearlyEqual(a.data.emissiveFactor[2], b.data.emissiveFactor[2]);
+	       !IsNearlyEqual(a.data.emissiveFactor[2], b.data.emissiveFactor[2]))
+		return true;
+	if (!IsNearlyEqual(a.data.shadingParams.x, b.data.shadingParams.x) ||
+	    !IsNearlyEqual(a.data.shadingParams.y, b.data.shadingParams.y) ||
+	    !IsNearlyEqual(a.data.shadingParams.z, b.data.shadingParams.z) ||
+	    !IsNearlyEqual(a.data.shadingParams.w, b.data.shadingParams.w))
+		return true;
+	if (ClampAlphaMode(a.data.alphaMode) != ClampAlphaMode(b.data.alphaMode))
+		return true;
+	if ((a.data.doubleSided ? 1 : 0) != (b.data.doubleSided ? 1 : 0))
+		return true;
+	if (!IsNearlyEqual(a.data.transmissionFactor, b.data.transmissionFactor) ||
+	    !IsNearlyEqual(a.data.ior, b.data.ior))
+		return true;
+	return false;
 }
 
 static void DrawMaterialDock(Scene& scene)
@@ -449,29 +523,57 @@ static void DrawMaterialDock(Scene& scene)
 	bool changed = false;
 	changed |= ImGui::ColorEdit4("Base Color", &pbr->data.baseColorFactor.x);
 
+	int alphaMode = ClampAlphaMode(pbr->data.alphaMode);
+	const char* alphaModes[] = { "Opaque", "Mask", "Blend" };
+	if (ImGui::Combo("Alpha Mode", &alphaMode, alphaModes, IM_ARRAYSIZE(alphaModes)))
+	{
+		pbr->data.alphaMode = alphaMode;
+		changed = true;
+	}
+	changed |= ImGui::DragFloat("Alpha Cutoff", &pbr->data.shadingParams.z, 0.01f, 0.f, 1.f, "%.3f");
+	bool doubleSided = pbr->data.doubleSided != 0;
+	if (ImGui::Checkbox("Double Sided", &doubleSided))
+	{
+		pbr->data.doubleSided = doubleSided ? 1 : 0;
+		changed = true;
+	}
+	ImGui::TextDisabled("alpha/double-sided/transmission changes may reorder draws.");
+
 	if (pbr->data.workflow == 1)
 	{
 		changed |= ImGui::DragFloat("Metallic", &pbr->data.pbrFactor.z, 0.01f, 0.f, 1.f, "%.3f");
-		changed |= ImGui::DragFloat("Roughness", &pbr->data.pbrFactor.w, 0.01f, 0.f, 1.f, "%.3f");
+		changed |= ImGui::DragFloat("Roughness", &pbr->data.pbrFactor.w, 0.01f, 0.045f, 1.f, "%.3f");
 	}
 	else
 	{
-		changed |= ImGui::DragFloat4("Spec/Gloss (pbrFactor)", &pbr->data.pbrFactor.x, 0.01f, 0.f, 1.f, "%.3f");
+		ImGui::TextDisabled("Workflow != MR: metallic/roughness editing is read-only.");
 	}
 
+	changed |= ImGui::DragFloat("Normal Scale", &pbr->data.shadingParams.x, 0.01f, 0.f, 4.f, "%.3f");
+	changed |= ImGui::DragFloat("Occlusion Strength", &pbr->data.shadingParams.y, 0.01f, 0.f, 1.f, "%.3f");
+
 	float emissive[3] = { pbr->data.emissiveFactor[0], pbr->data.emissiveFactor[1], pbr->data.emissiveFactor[2] };
-	if (ImGui::ColorEdit3("Emissive", emissive))
+	if (ImGui::ColorEdit3("Emissive", emissive, ImGuiColorEditFlags_HDR))
 	{
 		pbr->data.emissiveFactor[0] = emissive[0];
 		pbr->data.emissiveFactor[1] = emissive[1];
 		pbr->data.emissiveFactor[2] = emissive[2];
 		changed = true;
 	}
+	changed |= ImGui::DragFloat("Emissive Strength", &pbr->data.shadingParams.w, 0.05f, 0.f, 32.f, "%.3f");
+
+	changed |= ImGui::DragFloat("Transmission", &pbr->data.transmissionFactor, 0.01f, 0.f, 1.f, "%.3f");
+	changed |= ImGui::DragFloat("IOR", &pbr->data.ior, 0.01f, 1.f, 2.5f, "%.3f");
 
 	if (changed)
 	{
-		scene.materialDb.gpuMaterials[materialIndex] = pbr->ToGpuMaterial();
-		scene.materialDb.gpuDirty = true;
+		bool keyChanged = false;
+		CommitPbrMaterialEdit(scene, materialIndex, *pbr, &keyChanged);
+		if (keyChanged)
+		{
+			SortSceneDrawsByMaterialKey(scene);
+			RebuildMaterialDrawBatches(scene);
+		}
 	}
 }
 
@@ -1105,6 +1207,14 @@ std::vector<EditorMaterialOverride> CaptureEditorMaterialOverrides(const Scene& 
 		ov.baseColorFactor = current->data.baseColorFactor;
 		ov.pbrFactor = current->data.pbrFactor;
 		ov.emissiveFactor = vec3(current->data.emissiveFactor[0], current->data.emissiveFactor[1], current->data.emissiveFactor[2]);
+		ov.normalScale = current->data.shadingParams.x;
+		ov.occlusionStrength = current->data.shadingParams.y;
+		ov.alphaMode = current->data.alphaMode;
+		ov.alphaCutoff = current->data.shadingParams.z;
+		ov.doubleSided = current->data.doubleSided != 0;
+		ov.transmissionFactor = current->data.transmissionFactor;
+		ov.ior = current->data.ior;
+		ov.emissiveStrength = current->data.shadingParams.w;
 		out.push_back(ov);
 	}
 
@@ -1114,6 +1224,7 @@ std::vector<EditorMaterialOverride> CaptureEditorMaterialOverrides(const Scene& 
 void ApplyEditorMaterialOverrides(Scene& scene, const std::vector<EditorMaterialOverride>& overrides)
 {
 	bool applied = false;
+	bool keyChanged = false;
 	for (const EditorMaterialOverride& ov : overrides)
 	{
 		const std::optional<uint32_t> materialIndex = scene.GltfMaterialIndexToMaterialIndex(ov.gltfMaterialIndex);
@@ -1134,17 +1245,43 @@ void ApplyEditorMaterialOverrides(Scene& scene, const std::vector<EditorMaterial
 			continue;
 		}
 
-		pbr->data.baseColorFactor = ov.baseColorFactor;
-		pbr->data.pbrFactor = ov.pbrFactor;
-		pbr->data.emissiveFactor[0] = ov.emissiveFactor.x;
-		pbr->data.emissiveFactor[1] = ov.emissiveFactor.y;
-		pbr->data.emissiveFactor[2] = ov.emissiveFactor.z;
-		scene.materialDb.gpuMaterials[*materialIndex] = pbr->ToGpuMaterial();
+		if (ov.hasBaseColorFactor)
+			pbr->data.baseColorFactor = ov.baseColorFactor;
+		if (ov.hasPbrFactor)
+			pbr->data.pbrFactor = ov.pbrFactor;
+		if (ov.hasEmissiveFactor)
+		{
+			pbr->data.emissiveFactor[0] = ov.emissiveFactor.x;
+			pbr->data.emissiveFactor[1] = ov.emissiveFactor.y;
+			pbr->data.emissiveFactor[2] = ov.emissiveFactor.z;
+		}
+		if (ov.hasNormalScale)
+			pbr->data.shadingParams.x = ov.normalScale;
+		if (ov.hasOcclusionStrength)
+			pbr->data.shadingParams.y = ov.occlusionStrength;
+		if (ov.hasAlphaMode)
+			pbr->data.alphaMode = ov.alphaMode;
+		if (ov.hasAlphaCutoff)
+			pbr->data.shadingParams.z = ov.alphaCutoff;
+		if (ov.hasDoubleSided)
+			pbr->data.doubleSided = ov.doubleSided ? 1 : 0;
+		if (ov.hasTransmissionFactor)
+			pbr->data.transmissionFactor = ov.transmissionFactor;
+		if (ov.hasIor)
+			pbr->data.ior = ov.ior;
+		if (ov.hasEmissiveStrength)
+			pbr->data.shadingParams.w = ov.emissiveStrength;
+		bool localKeyChanged = false;
+		CommitPbrMaterialEdit(scene, *materialIndex, *pbr, &localKeyChanged);
+		keyChanged |= localKeyChanged;
 		applied = true;
 	}
 
-	if (applied)
-		scene.materialDb.gpuDirty = true;
+	if (applied && keyChanged)
+	{
+		SortSceneDrawsByMaterialKey(scene);
+		RebuildMaterialDrawBatches(scene);
+	}
 }
 
 mat4 perspectiveProjection(float fovY, float aspectWbyH, float zNear)
@@ -3745,7 +3882,9 @@ bool VulkanContext::DrawFrame()
 				    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
 				    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 				    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-				    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+				    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				    VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+				    VK_IMAGE_ASPECT_DEPTH_BIT);
 
 				pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 1, &vbBarrier, 2, toAttach);
 
@@ -3798,7 +3937,8 @@ bool VulkanContext::DrawFrame()
 				    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL);
 				afterAabb[1] = imageBarrier(depthTarget->image,
 				    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-				    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+				    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				    VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 				    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
 				    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
 

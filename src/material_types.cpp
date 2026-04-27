@@ -29,6 +29,10 @@ PBRMaterial PBRMaterial::CreateDefault()
 	material.data.transmissionTexture = 0;
 	material.data.transmissionFactor = 0.f;
 	material.data.ior = 1.5f;
+	material.data.doubleSided = 0;
+	material.data.materialPad[0] = 0;
+	material.data.materialPad[1] = 0;
+	material.data.materialPad[2] = 0;
 	return material;
 }
 

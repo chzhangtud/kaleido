@@ -139,7 +139,7 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.Key("format");
 	writer.String("kaleido_editor_scene");
 	writer.Key("version");
-	writer.Uint(4);
+	writer.Uint(5);
 	writer.Key("modelPath");
 	{
 		const std::string serializable = MakeModelPathForSerialization(snapshot.modelPath);
@@ -249,6 +249,22 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 		WriteVec4(writer, "baseColorFactor", ov.baseColorFactor);
 		WriteVec4(writer, "pbrFactor", ov.pbrFactor);
 		WriteVec3(writer, "emissiveFactor", ov.emissiveFactor);
+		writer.Key("normalScale");
+		writer.Double(ov.normalScale);
+		writer.Key("occlusionStrength");
+		writer.Double(ov.occlusionStrength);
+		writer.Key("alphaMode");
+		writer.Int(ov.alphaMode);
+		writer.Key("alphaCutoff");
+		writer.Double(ov.alphaCutoff);
+		writer.Key("doubleSided");
+		writer.Bool(ov.doubleSided);
+		writer.Key("transmissionFactor");
+		writer.Double(ov.transmissionFactor);
+		writer.Key("ior");
+		writer.Double(ov.ior);
+		writer.Key("emissiveStrength");
+		writer.Double(ov.emissiveStrength);
 		writer.EndObject();
 	}
 	writer.EndArray();
@@ -480,6 +496,17 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 				}
 
 				EditorMaterialOverride ov{};
+				ov.hasBaseColorFactor = false;
+				ov.hasPbrFactor = false;
+				ov.hasEmissiveFactor = false;
+				ov.hasNormalScale = false;
+				ov.hasOcclusionStrength = false;
+				ov.hasAlphaMode = false;
+				ov.hasAlphaCutoff = false;
+				ov.hasDoubleSided = false;
+				ov.hasTransmissionFactor = false;
+				ov.hasIor = false;
+				ov.hasEmissiveStrength = false;
 				ov.gltfMaterialIndex = idxIt->value.GetUint();
 				if (!ReadVec4(baseColorIt->value, ov.baseColorFactor))
 				{
@@ -499,6 +526,114 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 						*outError = "materialOverrides[" + std::to_string(i) + "].emissiveFactor must be an array with three numbers.";
 					return false;
 				}
+				ov.hasBaseColorFactor = true;
+				ov.hasPbrFactor = true;
+				ov.hasEmissiveFactor = true;
+
+				const auto normalScaleIt = item.FindMember("normalScale");
+				if (normalScaleIt != item.MemberEnd())
+				{
+					if (!normalScaleIt->value.IsNumber())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].normalScale must be a number.";
+						return false;
+					}
+					ov.normalScale = static_cast<float>(normalScaleIt->value.GetDouble());
+					ov.hasNormalScale = true;
+				}
+
+				const auto occlusionStrengthIt = item.FindMember("occlusionStrength");
+				if (occlusionStrengthIt != item.MemberEnd())
+				{
+					if (!occlusionStrengthIt->value.IsNumber())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].occlusionStrength must be a number.";
+						return false;
+					}
+					ov.occlusionStrength = static_cast<float>(occlusionStrengthIt->value.GetDouble());
+					ov.hasOcclusionStrength = true;
+				}
+
+				const auto alphaModeIt = item.FindMember("alphaMode");
+				if (alphaModeIt != item.MemberEnd())
+				{
+					if (!alphaModeIt->value.IsInt())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].alphaMode must be an integer.";
+						return false;
+					}
+					ov.alphaMode = alphaModeIt->value.GetInt();
+					ov.hasAlphaMode = true;
+				}
+
+				const auto alphaCutoffIt = item.FindMember("alphaCutoff");
+				if (alphaCutoffIt != item.MemberEnd())
+				{
+					if (!alphaCutoffIt->value.IsNumber())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].alphaCutoff must be a number.";
+						return false;
+					}
+					ov.alphaCutoff = static_cast<float>(alphaCutoffIt->value.GetDouble());
+					ov.hasAlphaCutoff = true;
+				}
+
+				const auto doubleSidedIt = item.FindMember("doubleSided");
+				if (doubleSidedIt != item.MemberEnd())
+				{
+					if (!doubleSidedIt->value.IsBool())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].doubleSided must be a boolean.";
+						return false;
+					}
+					ov.doubleSided = doubleSidedIt->value.GetBool();
+					ov.hasDoubleSided = true;
+				}
+
+				const auto transmissionFactorIt = item.FindMember("transmissionFactor");
+				if (transmissionFactorIt != item.MemberEnd())
+				{
+					if (!transmissionFactorIt->value.IsNumber())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].transmissionFactor must be a number.";
+						return false;
+					}
+					ov.transmissionFactor = static_cast<float>(transmissionFactorIt->value.GetDouble());
+					ov.hasTransmissionFactor = true;
+				}
+
+				const auto iorIt = item.FindMember("ior");
+				if (iorIt != item.MemberEnd())
+				{
+					if (!iorIt->value.IsNumber())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].ior must be a number.";
+						return false;
+					}
+					ov.ior = static_cast<float>(iorIt->value.GetDouble());
+					ov.hasIor = true;
+				}
+
+				const auto emissiveStrengthIt = item.FindMember("emissiveStrength");
+				if (emissiveStrengthIt != item.MemberEnd())
+				{
+					if (!emissiveStrengthIt->value.IsNumber())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].emissiveStrength must be a number.";
+						return false;
+					}
+					ov.emissiveStrength = static_cast<float>(emissiveStrengthIt->value.GetDouble());
+					ov.hasEmissiveStrength = true;
+				}
+
 				snapshot.materialOverrides.push_back(ov);
 			}
 		}

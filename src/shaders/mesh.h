@@ -100,6 +100,8 @@ struct Material
 	uint transmissionTexture;
 	float transmissionFactor;
 	float ior;
+	uint doubleSided;
+	uint materialPad[3];
 };
 
 struct MeshDraw
