@@ -64,6 +64,9 @@ int main()
 	ov.transmissionFactor = 0.6f;
 	ov.ior = 1.9f;
 	ov.emissiveStrength = 4.2f;
+	ov.shaderGraphEnabled = true;
+	ov.shaderGraphPath = "assets/shader_graphs/time_noise.kshadergraph.json";
+	ov.shaderGraphFloatParams = { 0.5f, 3.0f };
 	snapshot.materialOverrides.push_back(ov);
 
 	std::string error;
@@ -75,11 +78,11 @@ int main()
 
 	std::ifstream saved(v4Path, std::ios::binary);
 	std::string savedText((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
-	if (!ContainsText(savedText, "\"version\": 5") || !ContainsText(savedText, "\"materialOverrides\"") ||
+	if (!ContainsText(savedText, "\"version\": 6") || !ContainsText(savedText, "\"materialOverrides\"") ||
 	    !ContainsText(savedText, "\"normalScale\"") || !ContainsText(savedText, "\"doubleSided\"") ||
 	    !ContainsText(savedText, "\"transmissionFactor\"") || !ContainsText(savedText, "\"ior\""))
 	{
-		fprintf(stderr, "v5 json missing required fields\n");
+		fprintf(stderr, "v6 json missing required fields\n");
 		return 2;
 	}
 
@@ -98,6 +101,21 @@ int main()
 	{
 		fprintf(stderr, "material override index mismatch\n");
 		return 5;
+	}
+	if (!loaded.materialOverrides[0].shaderGraphEnabled)
+	{
+		fprintf(stderr, "shader graph enabled should round-trip\n");
+		return 16;
+	}
+	if (loaded.materialOverrides[0].shaderGraphPath != "assets/shader_graphs/time_noise.kshadergraph.json")
+	{
+		fprintf(stderr, "shader graph path should round-trip\n");
+		return 17;
+	}
+	if (loaded.materialOverrides[0].shaderGraphFloatParams.size() != 2u)
+	{
+		fprintf(stderr, "shader graph float params size mismatch\n");
+		return 18;
 	}
 	if (!loaded.editorUi.visualizeRenderGraph || !loaded.editorUi.renderGraphVisualizerWindowOpen ||
 	    loaded.editorUi.renderGraphVisualizerMode != 1 ||

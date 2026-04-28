@@ -1,0 +1,26 @@
+{
+  "format": "kaleido_shader_graph",
+  "version": 1,
+  "domain": "spatial_fragment",
+  "entry": "material_surface",
+  "nodes": [
+    { "id": 1, "op": "InputUV" },
+    { "id": 2, "op": "InputTime", "values": [4.0] },
+    { "id": 3, "op": "ComposeVec3" },
+    { "id": 4, "op": "NoisePerlin3D" },
+    { "id": 5, "op": "Remap", "values": [-1.0, 1.0, 0.0, 1.0] },
+    { "id": 6, "op": "ComposeVec3" },
+    { "id": 7, "op": "OutputSurface" }
+  ],
+  "edges": [
+    { "fromNode": 1, "fromPort": 0, "toNode": 3, "toPort": 0 },
+    { "fromNode": 1, "fromPort": 1, "toNode": 3, "toPort": 1 },
+    { "fromNode": 2, "fromPort": 0, "toNode": 3, "toPort": 2 },
+    { "fromNode": 3, "fromPort": 0, "toNode": 4, "toPort": 0 },
+    { "fromNode": 4, "fromPort": 0, "toNode": 5, "toPort": 0 },
+    { "fromNode": 5, "fromPort": 0, "toNode": 6, "toPort": 0 },
+    { "fromNode": 5, "fromPort": 0, "toNode": 6, "toPort": 1 },
+    { "fromNode": 5, "fromPort": 0, "toNode": 6, "toPort": 2 },
+    { "fromNode": 6, "fromPort": 0, "toNode": 7, "toPort": 0 }
+  ]
+}

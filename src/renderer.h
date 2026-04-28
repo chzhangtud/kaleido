@@ -109,7 +109,7 @@ struct alignas(16) Globals
 	// 0 = lit G-buffer, 1 = debug wireframe (fragment + line rasterization), 2 = meshlet random color
 	uint32_t gbufferDebugMode;
 	vec3 sunDirection{};
-	float sunPad = 0.f;
+	float globalTimeSeconds = 0.f;
 	uint32_t selectionOutlinePass = 0;
 	float selectionOutlineWidth = 0.f;
 	uint32_t selectionOutlinePad0 = 0;

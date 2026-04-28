@@ -31,6 +31,12 @@ struct EditorMaterialOverride
 	bool hasTransmissionFactor = true;
 	bool hasIor = true;
 	bool hasEmissiveStrength = true;
+	bool shaderGraphEnabled = false;
+	std::string shaderGraphPath;
+	std::vector<float> shaderGraphFloatParams;
+	bool hasShaderGraphEnabled = false;
+	bool hasShaderGraphPath = false;
+	bool hasShaderGraphFloatParams = false;
 };
 
 struct EditorSceneSnapshot

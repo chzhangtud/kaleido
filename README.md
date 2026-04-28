@@ -116,6 +116,18 @@ kaleido_standalone.exe path\to\scene.gltf
 
 Editor UI also provides a `Visualize RenderGraph` toggle in the `Rendering` panel and a `RenderGraph Visualizer` window with Live/Imported mode, DOT/JSON export, and JSON import.
 
+#### Shader Graph viewport regression
+
+```powershell
+.\build\Debug\kaleido_editor.exe "testcases\ABeautifulGame_ShaderGraph_TimeNoise\scene.json" `
+  --auto-dump-exr "$env:TEMP\shader_graph_time_noise.png" `
+  --auto-dump-frames 64
+
+python .cursor/skills/kaleido-viewport-image-test/scripts/compare_viewport_pngs.py `
+  "testcases\ABeautifulGame_ShaderGraph_TimeNoise\scene.png" `
+  "$env:TEMP\shader_graph_time_noise.png"
+```
+
 #### RenderGraph barrier debug (cross-platform)
 
 Set `RG_BARRIER_DEBUG=1` to print auto-generated RenderGraph barriers.

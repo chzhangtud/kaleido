@@ -139,7 +139,7 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.Key("format");
 	writer.String("kaleido_editor_scene");
 	writer.Key("version");
-	writer.Uint(5);
+	writer.Uint(6);
 	writer.Key("modelPath");
 	{
 		const std::string serializable = MakeModelPathForSerialization(snapshot.modelPath);
@@ -238,6 +238,10 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 	writer.Int(snapshot.editorUi.renderGraphVisualizerGraphMode);
 	writer.Key("renderGraphVisualizerImportedPath");
 	writer.String(snapshot.editorUi.renderGraphVisualizerImportedPath.c_str());
+	writer.Key("shaderGraphWindowOpen");
+	writer.Bool(snapshot.editorUi.shaderGraphWindowOpen);
+	writer.Key("shaderGraphCurrentPath");
+	writer.String(snapshot.editorUi.shaderGraphCurrentPath.c_str());
 	writer.EndObject();
 
 	writer.Key("transforms");
@@ -275,6 +279,15 @@ bool SaveEditorSceneSnapshot(const std::string& sceneFilePath, const EditorScene
 		writer.Double(ov.ior);
 		writer.Key("emissiveStrength");
 		writer.Double(ov.emissiveStrength);
+		writer.Key("shaderGraphEnabled");
+		writer.Bool(ov.shaderGraphEnabled);
+		writer.Key("shaderGraphPath");
+		writer.String(ov.shaderGraphPath.c_str());
+		writer.Key("shaderGraphFloatParams");
+		writer.StartArray();
+		for (float v : ov.shaderGraphFloatParams)
+			writer.Double(v);
+		writer.EndArray();
 		writer.EndObject();
 	}
 	writer.EndArray();
@@ -440,6 +453,10 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 		const auto importedPathIt = eu.FindMember("renderGraphVisualizerImportedPath");
 		if (importedPathIt != eu.MemberEnd() && importedPathIt->value.IsString())
 			snapshot.editorUi.renderGraphVisualizerImportedPath = importedPathIt->value.GetString();
+		ReadBool(eu, "shaderGraphWindowOpen", snapshot.editorUi.shaderGraphWindowOpen);
+		const auto shaderGraphPathIt = eu.FindMember("shaderGraphCurrentPath");
+		if (shaderGraphPathIt != eu.MemberEnd() && shaderGraphPathIt->value.IsString())
+			snapshot.editorUi.shaderGraphCurrentPath = shaderGraphPathIt->value.GetString();
 		const auto selIt = eu.FindMember("selectedGltfNode");
 		if (selIt != eu.MemberEnd())
 		{
@@ -649,6 +666,53 @@ bool LoadEditorSceneSnapshot(const std::string& sceneFilePath, EditorSceneSnapsh
 					}
 					ov.emissiveStrength = static_cast<float>(emissiveStrengthIt->value.GetDouble());
 					ov.hasEmissiveStrength = true;
+				}
+				const auto graphEnabledIt = item.FindMember("shaderGraphEnabled");
+				if (graphEnabledIt != item.MemberEnd())
+				{
+					if (!graphEnabledIt->value.IsBool())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].shaderGraphEnabled must be a boolean.";
+						return false;
+					}
+					ov.shaderGraphEnabled = graphEnabledIt->value.GetBool();
+					ov.hasShaderGraphEnabled = true;
+				}
+				const auto graphPathIt = item.FindMember("shaderGraphPath");
+				if (graphPathIt != item.MemberEnd())
+				{
+					if (!graphPathIt->value.IsString())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].shaderGraphPath must be a string.";
+						return false;
+					}
+					ov.shaderGraphPath = graphPathIt->value.GetString();
+					ov.hasShaderGraphPath = true;
+				}
+				const auto graphParamsIt = item.FindMember("shaderGraphFloatParams");
+				if (graphParamsIt != item.MemberEnd())
+				{
+					if (!graphParamsIt->value.IsArray())
+					{
+						if (outError)
+							*outError = "materialOverrides[" + std::to_string(i) + "].shaderGraphFloatParams must be an array.";
+						return false;
+					}
+					ov.shaderGraphFloatParams.clear();
+					ov.shaderGraphFloatParams.reserve(graphParamsIt->value.Size());
+					for (rapidjson::SizeType gp = 0; gp < graphParamsIt->value.Size(); ++gp)
+					{
+						if (!graphParamsIt->value[gp].IsNumber())
+						{
+							if (outError)
+								*outError = "materialOverrides[" + std::to_string(i) + "].shaderGraphFloatParams contains non-number.";
+							return false;
+						}
+						ov.shaderGraphFloatParams.push_back(static_cast<float>(graphParamsIt->value[gp].GetDouble()));
+					}
+					ov.hasShaderGraphFloatParams = true;
 				}
 
 				snapshot.materialOverrides.push_back(ov);

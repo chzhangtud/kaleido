@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <cstdint>
 #include "common.h"
 #include "resources.h"
 #include <cstddef>
@@ -210,6 +211,12 @@ struct Scene
 	int uiRenderGraphViewMode = 0; // 0 = live, 1 = imported
 	int uiRenderGraphGraphMode = 0; // 0 = simple(pass->pass), 1 = full(pass/resource)
 	std::string uiRenderGraphImportedPath;
+	bool uiShaderGraphWindowOpen = false;
+	std::string uiShaderGraphCurrentPath;
+	std::string uiShaderGraphLastError;
+	std::vector<uint8_t> materialShaderGraphEnabled;
+	std::vector<std::string> materialShaderGraphPath;
+	std::vector<std::vector<float>> materialShaderGraphFloatParams;
 	vec3 sunDirection{ 1.0f };
 	uint32_t meshletVisibilityCount{ 0u };
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet{};

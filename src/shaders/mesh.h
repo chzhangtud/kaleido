@@ -51,7 +51,7 @@ struct Globals
 	uint gbufferDebugMode;
 	// Filled for transparency alpha-blend pass when screen-space refraction is off; unused elsewhere.
 	vec3 sunDirection;
-	float sunPad;
+	float globalTimeSeconds;
 	// 0 = normal mesh pass; 1 = editor selection inverted-hull outline (vertex extrusion in world space along normal).
 	uint selectionOutlinePass;
 	float selectionOutlineWidth;
@@ -88,6 +88,7 @@ struct Material
 	uint pbrTexture;
 	uint emissiveTexture;
 	uint occlusionTexture;
+	// texturePad[0] is shaderGraphEnabled flag from CPU side.
 	uint texturePad[3];
 
 	vec4 baseColorFactor;

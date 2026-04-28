@@ -56,6 +56,8 @@ uint hash(uint a)
    return a;
 }
 
+#include "mesh_sg_generated.inc.glsl"
+
 void main()
 {
     MeshDraw meshDraw = draws[nonuniformEXT(drawId)];
@@ -125,6 +127,15 @@ void main()
 	vec4 albedo = material.baseColorFactor;
 	if (material.albedoTexture > 0)
 		albedo *= fromsrgb(texture(SAMP(material.albedoTexture), uv));
+	if (material.texturePad[0] != 0u)
+	{
+		SGParams sgParams;
+		sgParams.p0 = uintBitsToFloat(material.materialPad[0]);
+		sgParams.p1 = uintBitsToFloat(material.materialPad[1]);
+		sgParams.p2 = uintBitsToFloat(material.materialPad[2]);
+		sgParams.p3 = 0.0;
+		albedo.rgb = sg_eval_base_color(uv, wpos, normal, globals.globalTimeSeconds, sgParams);
+	}
 
 	if (material.occlusionTexture > 0)
 	{

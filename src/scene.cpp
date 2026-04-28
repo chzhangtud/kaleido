@@ -797,6 +797,9 @@ bool loadScene(Scene& scene, const char* path, bool buildMeshlets, glm::vec3& eu
 		scene.gltfMaterialDefaults.push_back(pbrMaterial);
 		scene.materialDb.Add(std::make_unique<PBRMaterial>(std::move(pbrMaterial)));
 	}
+	scene.materialShaderGraphEnabled.assign(scene.materialDb.entries.size(), 0);
+	scene.materialShaderGraphPath.assign(scene.materialDb.entries.size(), std::string{});
+	scene.materialShaderGraphFloatParams.assign(scene.materialDb.entries.size(), std::vector<float>{});
 
 	for (size_t i = 0; i < data->textures_count; ++i)
 	{

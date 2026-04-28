@@ -13,15 +13,23 @@
 #include <Windows.h>
 #endif
 
-// Validation is enabled by default in Debug
-#ifndef NDEBUG
-#define KHR_VALIDATION 1
-#else
-#define KHR_VALIDATION CONFIG_RELVAL
-#endif
-
 // Synchronization validation is disabled by default in Debug since it's rather slow
 #define SYNC_VALIDATION CONFIG_SYNCVAL
+
+static bool readEnvFlag(const char* name)
+{
+	const char* v = getenv(name);
+	return v && v[0] && atoi(v) != 0;
+}
+
+static bool shouldEnableValidationLayers()
+{
+#ifndef NDEBUG
+	return !readEnvFlag("KALEIDO_DISABLE_VALIDATION");
+#else
+	return CONFIG_RELVAL != 0 && !readEnvFlag("KALEIDO_DISABLE_VALIDATION");
+#endif
+}
 
 static bool isLayerSupported(const char* name)
 {
@@ -68,16 +76,26 @@ VkInstance createInstance()
 	VkInstanceCreateInfo createInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.pApplicationInfo = &appInfo;
 
-#if KHR_VALIDATION || SYNC_VALIDATION
-	const char* debugLayers[] = {
-		"VK_LAYER_KHRONOS_validation"
-	};
+	const bool enableValidation = shouldEnableValidationLayers();
+#if SYNC_VALIDATION
+	const bool enableSyncValidation = enableValidation && !readEnvFlag("KALEIDO_DISABLE_SYNC_VALIDATION");
+#else
+	const bool enableSyncValidation = false;
+#endif
+	VkValidationFeatureEnableEXT enabledValidationFeatures[2] = {};
+	VkValidationFeaturesEXT validationFeatures = { VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
+
+	if (enableValidation)
+	{
+		const char* debugLayers[] = {
+			"VK_LAYER_KHRONOS_validation"
+		};
 
 	if (isLayerSupported("VK_LAYER_KHRONOS_validation"))
 	{
 		createInfo.ppEnabledLayerNames = debugLayers;
 		createInfo.enabledLayerCount = sizeof(debugLayers) / sizeof(debugLayers[0]);
-		LOGI("Enabled Vulkan validation layers (sync validation %s)", SYNC_VALIDATION ? "enabled" : "disabled");
+		LOGI("Enabled Vulkan validation layers (sync validation %s)", enableSyncValidation ? "enabled" : "disabled");
 	}
 
 	else
@@ -85,19 +103,16 @@ VkInstance createInstance()
 		LOGW("Vulkan debug layers are not available.");
 	}
 
-#if SYNC_VALIDATION
-	VkValidationFeatureEnableEXT enabledValidationFeatures[] = {
-		VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
-		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-	};
+	if (enableSyncValidation)
+	{
+		enabledValidationFeatures[0] = VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT;
+		enabledValidationFeatures[1] = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
 
-	VkValidationFeaturesEXT validationFeatures = { VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
-	validationFeatures.enabledValidationFeatureCount = sizeof(enabledValidationFeatures) / sizeof(enabledValidationFeatures[0]);
-	validationFeatures.pEnabledValidationFeatures = enabledValidationFeatures;
-
-	createInfo.pNext = &validationFeatures;
-#endif
-#endif
+		validationFeatures.enabledValidationFeatureCount = 2;
+		validationFeatures.pEnabledValidationFeatures = enabledValidationFeatures;
+		createInfo.pNext = &validationFeatures;
+	}
+	}
 
 	std::vector<const char*> extensions;
 	extensions.emplace_back(VK_KHR_SURFACE_EXTENSION_NAME);
@@ -108,9 +123,8 @@ VkInstance createInstance()
 	extensions.emplace_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
 #endif
 
-#ifndef NDEBUG
-	extensions.emplace_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-#endif
+	if (enableValidation)
+		extensions.emplace_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
 
 	if (isInstanceExtensionSupported(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
 		extensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -148,16 +162,16 @@ static VkBool32 debugReportCallback(VkDebugReportFlagsEXT flags,
 	OutputDebugStringA(message);
 #endif
 
-	if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
-	{
+	if ((flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) && !readEnvFlag("KALEIDO_DISABLE_VALIDATION_ASSERT"))
 		assert(!"Validation error encountered!");
-	}
 	return VK_FALSE;
 }
 
 #ifndef NDEBUG
 VkDebugReportCallbackEXT registerDebugCallback(VkInstance instance)
 {
+	if (!shouldEnableValidationLayers())
+		return nullptr;
 	if (!vkCreateDebugReportCallbackEXT)
 		return nullptr;
 	VkDebugReportCallbackCreateInfoEXT createInfo = { VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT };

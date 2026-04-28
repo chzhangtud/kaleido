@@ -14,6 +14,7 @@ struct alignas(16) Material
 	int32_t pbrTexture;
 	int32_t emissiveTexture;
 	int32_t occlusionTexture;
+	// texturePad[0] is used by editor/runtime as shaderGraphEnabled flag in Material V1.
 	int32_t texturePad[3];
 
 	vec4 baseColorFactor;

@@ -1,0 +1,74 @@
+{
+  "format": "kaleido_editor_scene",
+  "version": 6,
+  "modelPath": "ABeautifulGame/ABeautifulGame.gltf",
+  "camera": {
+    "position": [0.4691586196422577, 0.1584404557943344, -0.029237886890769005],
+    "eulerDegrees": [-14.400050163269043, -269.80029296875, 0.0],
+    "fovY": 1.2217304706573486,
+    "znear": 0.10000000149011612,
+    "moveSpeed": 0.20000000298023224,
+    "dollyZoomEnabled": false,
+    "dollyZoomRefDistance": 5.0
+  },
+  "renderSettings": {
+    "meshShadingEnabled": true,
+    "taskShadingEnabled": false,
+    "cullingEnabled": true,
+    "occlusionEnabled": true,
+    "clusterOcclusionEnabled": true,
+    "shadowEnabled": true,
+    "shadowQuality": 1,
+    "shadowBlurEnabled": true,
+    "shadowCheckerboard": false,
+    "taaEnabled": true,
+    "taaBlendAlpha": 0.10000000149011612,
+    "screenSpaceRefractionEnabled": true,
+    "lodEnabled": true,
+    "debugLodStep": 2,
+    "animationEnabled": false,
+    "reloadShaders": false,
+    "debugGuiMode": 1,
+    "debugSleep": false,
+    "gbufferDebugViewMode": 0,
+    "clusterRTEnabled": false
+  },
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "editorUi": {
+    "selectedGltfNode": 0,
+    "selectionOutlineEnabled": false,
+    "showSelectedSubtreeAabb": false,
+    "visualizeRenderGraph": false,
+    "renderGraphVisualizerWindowOpen": false,
+    "renderGraphVisualizerMode": 0,
+    "renderGraphVisualizerGraphMode": 0,
+    "renderGraphVisualizerImportedPath": "",
+    "shaderGraphWindowOpen": false,
+    "shaderGraphCurrentPath": "assets/shader_graphs/time_noise.kshadergraph.json"
+  },
+  "transforms": {
+    "nodeLocalMatrices": []
+  },
+  "materialOverrides": [
+    {
+      "gltfMaterialIndex": 0,
+      "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+      "pbrFactor": [1.0, 1.0, 0.8, 0.7],
+      "emissiveFactor": [0.0, 0.0, 0.0],
+      "normalScale": 1.0,
+      "occlusionStrength": 1.0,
+      "alphaMode": 0,
+      "alphaCutoff": 0.5,
+      "doubleSided": false,
+      "transmissionFactor": 0.0,
+      "ior": 1.5,
+      "emissiveStrength": 1.0,
+      "shaderGraphEnabled": true,
+      "shaderGraphPath": "assets/shader_graphs/time_noise.kshadergraph.json",
+      "shaderGraphFloatParams": [0.6, 6.0]
+    }
+  ]
+}

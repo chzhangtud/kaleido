@@ -395,6 +395,23 @@ bool loadShaders(ShaderSet& shaders, VkDevice device, const char* base, const ch
 			spath = spath.substr(0, pos + 1);
 		spath += path;
 	}
+#if defined(WIN32)
+	if (!spath.empty() && !fs::exists(spath))
+	{
+		std::string fallback = base;
+		std::string::size_type pos = fallback.find_last_of("/\\");
+		if (pos != std::string::npos)
+			fallback = fallback.substr(0, pos + 1);
+		else
+			fallback.clear();
+		fallback += "Release/shaders/";
+		if (fs::exists(fallback))
+		{
+			LOGW("Shader directory %s not found; falling back to %s", spath.c_str(), fallback.c_str());
+			spath = fallback;
+		}
+	}
+#endif
 
 #if defined(WIN32)
 	try

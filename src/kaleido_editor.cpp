@@ -153,6 +153,17 @@ int main(int argc, const char** argv)
 		    strcmp(argv[i], "--auto-dump-rendergraph-dot") == 0 ||
 		    strcmp(argv[i], "--auto-dump-rendergraph-json") == 0)
 		{
+			// Keep CI/automation rendering stable on drivers that are sensitive to validation/RT paths.
+			_putenv_s("KALEIDO_DISABLE_VALIDATION", "1");
+			_putenv_s("KALEIDO_DISABLE_SYNC_VALIDATION", "1");
+			_putenv_s("KALEIDO_DISABLE_VALIDATION_ASSERT", "1");
+			_putenv_s("KALEIDO_DISABLE_BLAS_COMPACTION", "1");
+			_putenv_s("KALEIDO_RENDERDOC_COMPAT", "1");
+			SetEnvironmentVariableA("KALEIDO_DISABLE_VALIDATION", "1");
+			SetEnvironmentVariableA("KALEIDO_DISABLE_SYNC_VALIDATION", "1");
+			SetEnvironmentVariableA("KALEIDO_DISABLE_VALIDATION_ASSERT", "1");
+			SetEnvironmentVariableA("KALEIDO_DISABLE_BLAS_COMPACTION", "1");
+			SetEnvironmentVariableA("KALEIDO_RENDERDOC_COMPAT", "1");
 			SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 			_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 			break;

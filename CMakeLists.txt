@@ -39,6 +39,12 @@ set(KALEIDO_EDITOR_ENTRY_SOURCE "${CMAKE_SOURCE_DIR}/src/kaleido_editor.cpp")
 set(KALEIDO_RUNTIME_CORE_SOURCES ${KALEIDO_ALL_CPP})
 list(REMOVE_ITEM KALEIDO_RUNTIME_CORE_SOURCES ${KALEIDO_ENTRY_SOURCE})
 list(REMOVE_ITEM KALEIDO_RUNTIME_CORE_SOURCES ${KALEIDO_EDITOR_ENTRY_SOURCE})
+list(APPEND KALEIDO_RUNTIME_CORE_SOURCES
+    "${CMAKE_SOURCE_DIR}/src/shader_graph_types.cpp"
+    "${CMAKE_SOURCE_DIR}/src/shader_graph_validate.cpp"
+    "${CMAKE_SOURCE_DIR}/src/shader_graph_io.cpp"
+    "${CMAKE_SOURCE_DIR}/src/shader_graph_codegen_glsl.cpp"
+)
 
 # Shared runtime core for standalone kaleido and future kaleido_editor launcher.
 # Shaders live here too (shared by all launchers); they are IDE-only sources, compiled by CompileShaders.
