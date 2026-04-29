@@ -79,6 +79,18 @@ bool SerializeShaderGraphToJson(const ShaderGraphAsset& g, std::string& outJson,
 		writer.EndObject();
 	}
 	writer.EndArray();
+	if (g.hasEditorMeta)
+	{
+		writer.Key("editorMeta");
+		writer.StartObject();
+		writer.Key("viewX");
+		writer.Double(double(g.editorViewX));
+		writer.Key("viewY");
+		writer.Double(double(g.editorViewY));
+		writer.Key("zoom");
+		writer.Double(double(g.editorZoom));
+		writer.EndObject();
+	}
 	writer.EndObject();
 
 	outJson.assign(sb.GetString(), sb.GetSize());
@@ -104,6 +116,7 @@ bool DeserializeShaderGraphFromJson(const std::string& json, ShaderGraphAsset& o
 	const auto entryIt = doc.FindMember("entry");
 	const auto nodesIt = doc.FindMember("nodes");
 	const auto edgesIt = doc.FindMember("edges");
+	const auto editorMetaIt = doc.FindMember("editorMeta");
 
 	if (fmtIt == doc.MemberEnd() || !fmtIt->value.IsString())
 		return AppendError(outError, "graph.format missing.");
@@ -184,6 +197,35 @@ bool DeserializeShaderGraphFromJson(const std::string& json, ShaderGraphAsset& o
 		    toNode->value.GetInt(),
 		    toPort->value.GetInt(),
 		});
+	}
+	if (editorMetaIt != doc.MemberEnd())
+	{
+		if (!editorMetaIt->value.IsObject())
+			return AppendError(outError, "graph.editorMeta must be an object when present.");
+		const auto viewXIt = editorMetaIt->value.FindMember("viewX");
+		const auto viewYIt = editorMetaIt->value.FindMember("viewY");
+		const auto zoomIt = editorMetaIt->value.FindMember("zoom");
+		if (viewXIt != editorMetaIt->value.MemberEnd())
+		{
+			if (!viewXIt->value.IsNumber())
+				return AppendError(outError, "graph.editorMeta.viewX must be number.");
+			graph.editorViewX = viewXIt->value.GetFloat();
+			graph.hasEditorMeta = true;
+		}
+		if (viewYIt != editorMetaIt->value.MemberEnd())
+		{
+			if (!viewYIt->value.IsNumber())
+				return AppendError(outError, "graph.editorMeta.viewY must be number.");
+			graph.editorViewY = viewYIt->value.GetFloat();
+			graph.hasEditorMeta = true;
+		}
+		if (zoomIt != editorMetaIt->value.MemberEnd())
+		{
+			if (!zoomIt->value.IsNumber())
+				return AppendError(outError, "graph.editorMeta.zoom must be number.");
+			graph.editorZoom = zoomIt->value.GetFloat();
+			graph.hasEditorMeta = true;
+		}
 	}
 
 	outGraph = std::move(graph);

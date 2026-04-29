@@ -7,6 +7,8 @@
 #include "scene_transforms.h"
 #include "asset_paths.h"
 #include "shader_graph_codegen_glsl.h"
+#include "shader_graph_compile_report.h"
+#include "shader_graph_editor_ui.h"
 #include "shader_graph_io.h"
 #include "shader_graph_validate.h"
 #include "imnodes.h"
@@ -21,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -35,6 +38,8 @@
 #include <windows.h>
 #include <commdlg.h>
 #endif
+
+static std::string gRuntimeShaderDirectory{};
 
 template <typename PushConstants, size_t PushDescriptors>
 void dispatch(VkCommandBuffer commandBuffer, const Program& program, uint32_t threadCountX, uint32_t threadCountY, const PushConstants& pushConstants, const DescriptorInfo (&pushDescriptors)[PushDescriptors])
@@ -111,163 +116,143 @@ std::string ResolveShaderGraphPathForIO(const std::string& rawPath)
 #endif
 }
 
-std::vector<const char*> GetShaderGraphInputPortLabels(SGNodeOp op)
+std::string QuoteCommandArg(const std::string& value)
 {
-	switch (op)
-	{
-	case SGNodeOp::Add:
-	case SGNodeOp::Sub:
-	case SGNodeOp::Mul:
-	case SGNodeOp::Div:
-		return { "A", "B" };
-	case SGNodeOp::Sin:
-	case SGNodeOp::Cos:
-	case SGNodeOp::Frac:
-	case SGNodeOp::Saturate:
-		return { "In" };
-	case SGNodeOp::Lerp:
-		return { "A", "B", "T" };
-	case SGNodeOp::ComposeVec3:
-		return { "X", "Y", "Z" };
-	case SGNodeOp::SplitVec3X:
-	case SGNodeOp::SplitVec3Y:
-	case SGNodeOp::SplitVec3Z:
-		return { "Vec3" };
-	case SGNodeOp::NoisePerlin3D:
-		return { "P" };
-	case SGNodeOp::Remap:
-		return { "Value", "InMin", "InMax", "OutMin", "OutMax" };
-	case SGNodeOp::OutputSurface:
-		return { "BaseColor" };
-	default:
-		return {};
-	}
+	if (value.empty())
+		return "\"\"";
+	if (value.front() == '"' && value.back() == '"')
+		return value;
+	const bool needsQuote = value.find_first_of(" \t") != std::string::npos;
+	return needsQuote ? ("\"" + value + "\"") : value;
 }
 
-std::vector<const char*> GetShaderGraphOutputPortLabels(SGNodeOp op)
+bool RunCommandCaptureOutput(const std::string& command, std::string& outText, int& outExitCode)
 {
-	switch (op)
+#if defined(WIN32)
+	FILE* pipe = _popen((command + " 2>&1").c_str(), "r");
+#else
+	FILE* pipe = popen((command + " 2>&1").c_str(), "r");
+#endif
+	if (!pipe)
 	{
-	case SGNodeOp::InputUV:
-		return { "U", "V", "UV" };
-	case SGNodeOp::InputWorldPos:
-	case SGNodeOp::InputNormal:
-	case SGNodeOp::ConstVec2:
-	case SGNodeOp::ConstVec3:
-	case SGNodeOp::ComposeVec3:
-		return { "Out" };
-	case SGNodeOp::InputTime:
-	case SGNodeOp::ConstFloat:
-	case SGNodeOp::ParamFloat:
-	case SGNodeOp::Add:
-	case SGNodeOp::Sub:
-	case SGNodeOp::Mul:
-	case SGNodeOp::Div:
-	case SGNodeOp::Sin:
-	case SGNodeOp::Cos:
-	case SGNodeOp::Frac:
-	case SGNodeOp::Lerp:
-	case SGNodeOp::Saturate:
-	case SGNodeOp::SplitVec3X:
-	case SGNodeOp::SplitVec3Y:
-	case SGNodeOp::SplitVec3Z:
-	case SGNodeOp::NoisePerlin3D:
-	case SGNodeOp::Remap:
-		return { "Out" };
-	default:
-		return {};
+		outText = "Failed to spawn command.";
+		outExitCode = -1;
+		return false;
 	}
+
+	char buffer[512];
+	outText.clear();
+	while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+		outText += buffer;
+
+#if defined(WIN32)
+	outExitCode = _pclose(pipe);
+#else
+	outExitCode = pclose(pipe);
+#endif
+	return true;
 }
 
-void DrawShaderGraphPreview(const ShaderGraphAsset& graph)
+std::vector<std::string> BuildGlslangCandidates()
 {
-	std::unordered_map<int, int> depthByNode;
-	std::unordered_map<int, std::vector<int>> adjacency;
-	std::unordered_map<int, int> indegree;
-	for (const SGNode& node : graph.nodes)
+	namespace fs = std::filesystem;
+	std::vector<std::string> candidates;
+
+	if (const char* explicitPath = getenv("KALEIDO_GLSLANG"))
 	{
-		indegree[node.id] = 0;
-		depthByNode[node.id] = 0;
-	}
-	for (const SGEdge& edge : graph.edges)
-	{
-		adjacency[edge.fromNode].push_back(edge.toNode);
-		indegree[edge.toNode] += 1;
-	}
-	std::queue<int> q;
-	for (const SGNode& node : graph.nodes)
-	{
-		if (indegree[node.id] == 0)
-			q.push(node.id);
-	}
-	while (!q.empty())
-	{
-		const int n = q.front();
-		q.pop();
-		auto it = adjacency.find(n);
-		if (it == adjacency.end())
-			continue;
-		for (int to : it->second)
+		if (explicitPath[0] != '\0')
 		{
-			depthByNode[to] = std::max(depthByNode[to], depthByNode[n] + 1);
-			if (--indegree[to] == 0)
-				q.push(to);
+			const fs::path p(explicitPath);
+			if (fs::exists(p))
+				candidates.push_back(p.string());
 		}
 	}
 
-	std::unordered_map<int, int> rowByNode;
-	std::unordered_map<int, int> rowCursorByDepth;
-	for (const SGNode& node : graph.nodes)
+	if (const char* vulkanSdk = getenv("VULKAN_SDK"))
 	{
-		const int d = depthByNode[node.id];
-		rowByNode[node.id] = rowCursorByDepth[d]++;
-	}
-
-	ImNodes::BeginNodeEditor();
-	for (const SGNode& node : graph.nodes)
-	{
-		const int depth = depthByNode[node.id];
-		const int row = rowByNode[node.id];
-		const int nodeId = MakeImnodesId("sg:node:" + std::to_string(node.id));
-		ImNodes::SetNodeGridSpacePos(nodeId, ImVec2(80.0f + depth * 260.0f, 80.0f + row * 180.0f));
-
-		ImNodes::BeginNode(nodeId);
-		ImNodes::BeginNodeTitleBar();
-		ImGui::Text("%s  #%d", SGNodeOpToString(node.op), node.id);
-		ImNodes::EndNodeTitleBar();
-
-		const std::vector<const char*> inputs = GetShaderGraphInputPortLabels(node.op);
-		for (size_t i = 0; i < inputs.size(); ++i)
+		if (vulkanSdk[0] != '\0')
 		{
-			const int attrId = MakeImnodesId("sg:in:" + std::to_string(node.id) + ":" + std::to_string(i));
-			ImNodes::BeginInputAttribute(attrId);
-			ImGui::TextUnformatted(inputs[i]);
-			ImNodes::EndInputAttribute();
+			const fs::path p = (fs::path(vulkanSdk) / "Bin" / "glslangValidator.exe");
+			if (fs::exists(p))
+				candidates.push_back(p.string());
 		}
-
-		const std::vector<const char*> outputs = GetShaderGraphOutputPortLabels(node.op);
-		for (size_t i = 0; i < outputs.size(); ++i)
-		{
-			const int attrId = MakeImnodesId("sg:out:" + std::to_string(node.id) + ":" + std::to_string(i));
-			ImNodes::BeginOutputAttribute(attrId);
-			ImGui::Indent(64.0f);
-			ImGui::TextUnformatted(outputs[i]);
-			ImNodes::EndOutputAttribute();
-		}
-
-		ImNodes::EndNode();
 	}
 
-	for (size_t i = 0; i < graph.edges.size(); ++i)
+	// Common install fallback when env vars are unavailable in child process.
+	const fs::path sdkRoot("C:/VulkanSDK");
+	std::error_code ec;
+	if (fs::exists(sdkRoot, ec) && !ec)
 	{
-		const SGEdge& e = graph.edges[i];
-		const int fromAttr = MakeImnodesId("sg:out:" + std::to_string(e.fromNode) + ":" + std::to_string(e.fromPort));
-		const int toAttr = MakeImnodesId("sg:in:" + std::to_string(e.toNode) + ":" + std::to_string(e.toPort));
-		const int linkId = MakeImnodesId("sg:link:" + std::to_string(i) + ":" + std::to_string(e.fromNode) + ":" + std::to_string(e.toNode));
-		ImNodes::Link(linkId, fromAttr, toAttr);
+		std::vector<fs::path> versions;
+		for (const fs::directory_entry& entry : fs::directory_iterator(sdkRoot, ec))
+		{
+			if (!ec && entry.is_directory())
+				versions.push_back(entry.path());
+		}
+		std::sort(versions.begin(), versions.end(), std::greater<fs::path>());
+		for (const fs::path& versionPath : versions)
+		{
+			const fs::path p = (versionPath / "Bin" / "glslangValidator.exe");
+			if (fs::exists(p))
+				candidates.push_back(p.string());
+		}
 	}
-	ImNodes::MiniMap(0.2f, ImNodesMiniMapLocation_BottomRight);
-	ImNodes::EndNodeEditor();
+
+	// Final PATH fallback.
+	candidates.emplace_back("glslangValidator");
+	return candidates;
+}
+
+bool EnsureDefaultEmptyShaderGraphAsset(const std::string& rawPath, std::string* outError)
+{
+	namespace fs = std::filesystem;
+	const std::string resolvedPath = ResolveShaderGraphPathForIO(rawPath);
+	if (resolvedPath.empty())
+	{
+		if (outError)
+			*outError = "Graph path is empty.";
+		return false;
+	}
+	std::error_code ec;
+	if (fs::exists(fs::path(resolvedPath), ec) && !ec)
+		return true;
+
+	ShaderGraphAsset emptyGraph{};
+	SGNode output{};
+	output.id = 1;
+	output.op = SGNodeOp::OutputSurface;
+	emptyGraph.nodes.push_back(output);
+
+	std::string json;
+	if (!SerializeShaderGraphToJson(emptyGraph, json, outError))
+		return false;
+
+	const fs::path parent = fs::path(resolvedPath).parent_path();
+	if (!parent.empty())
+	{
+		fs::create_directories(parent, ec);
+		if (ec)
+		{
+			if (outError)
+				*outError = "Failed to create graph directory: " + parent.string();
+			return false;
+		}
+	}
+	std::ofstream out(resolvedPath, std::ios::binary | std::ios::trunc);
+	if (!out.is_open())
+	{
+		if (outError)
+			*outError = "failed to open output file";
+		return false;
+	}
+	out.write(json.data(), static_cast<std::streamsize>(json.size()));
+	if (!out.good())
+	{
+		if (outError)
+			*outError = "failed to write output file";
+		return false;
+	}
+	return true;
 }
 
 void EnsureImNodesContext()
@@ -857,6 +842,12 @@ static void EnsureMaterialGraphStateSize(Scene& scene)
 		scene.materialShaderGraphPath.resize(n);
 	if (scene.materialShaderGraphFloatParams.size() != n)
 		scene.materialShaderGraphFloatParams.resize(n);
+	if (scene.materialShaderGraphAppliedEnabled.size() != n)
+		scene.materialShaderGraphAppliedEnabled = scene.materialShaderGraphEnabled;
+	if (scene.materialShaderGraphAppliedPath.size() != n)
+		scene.materialShaderGraphAppliedPath = scene.materialShaderGraphPath;
+	if (scene.materialShaderGraphAppliedFloatParams.size() != n)
+		scene.materialShaderGraphAppliedFloatParams = scene.materialShaderGraphFloatParams;
 }
 
 static bool CompileShaderGraphAsset(const std::string& graphPath, ShaderGraphAsset* outGraph, SGCodegenResult* outCodegen, std::string* outError)
@@ -925,50 +916,66 @@ static bool BuildRuntimeShaderGraphFragment(const std::string& graphPath, std::s
 		return false;
 
 	std::vector<fs::path> outputCandidates;
+	// Prefer local build outputs first, then optional env override.
+	outputCandidates.push_back((repoRoot / "build" / "Debug" / "shaders").lexically_normal());
+	outputCandidates.push_back((repoRoot / "build_ninja" / "Debug" / "shaders").lexically_normal());
+	outputCandidates.push_back((repoRoot / "build" / "Release" / "shaders").lexically_normal());
+	outputCandidates.push_back((repoRoot / "build_ninja" / "Release" / "shaders").lexically_normal());
 	if (const char* shaderDirEnv = getenv("KALEIDO_SHADER_DIR"))
 	{
 		if (shaderDirEnv[0])
 			outputCandidates.push_back(fs::path(shaderDirEnv));
 	}
-	outputCandidates.push_back((repoRoot / "build_ninja" / "Release" / "shaders").lexically_normal());
-	outputCandidates.push_back((repoRoot / "build" / "Release" / "shaders").lexically_normal());
 
-	fs::path shaderOutDir;
+	fs::path baseShaderDir;
 	for (const fs::path& candidate : outputCandidates)
 	{
 		std::error_code ec;
 		if (fs::exists(candidate, ec) && !ec)
 		{
-			shaderOutDir = candidate;
+			baseShaderDir = candidate;
 			break;
 		}
 	}
-	if (shaderOutDir.empty())
+	if (baseShaderDir.empty())
 	{
 		if (outError)
 			*outError = "Cannot locate shader output directory.";
 		return false;
 	}
-
-	std::string glslang = "glslangValidator";
-	if (const char* vulkanSdk = getenv("VULKAN_SDK"))
-	{
-		if (vulkanSdk[0])
-			glslang = (fs::path(vulkanSdk) / "Bin" / "glslangValidator.exe").string();
-	}
+	const fs::path shaderOutDir = (baseShaderDir / "runtime_generated").lexically_normal();
 
 	const fs::path fragPath = (repoRoot / "src" / "shaders" / "mesh.frag.glsl").lexically_normal();
 	const fs::path outSpvPath = (shaderOutDir / "mesh.frag.spv").lexically_normal();
-	const std::string command = "\"" + glslang + "\" --target-env vulkan1.3 \"" + fragPath.string() + "\" -V -o \"" + outSpvPath.string() + "\"";
-	const int rc = std::system(command.c_str());
-	if (rc != 0)
+	std::error_code mkdirEc;
+	fs::create_directories(shaderOutDir, mkdirEc);
+	const fs::path shaderIncludeDir = (repoRoot / "src" / "shaders").lexically_normal();
+
+	std::string lastCommandOutput;
+	for (const std::string& glslangCandidate : BuildGlslangCandidates())
 	{
-		if (outError)
-			*outError = "Failed to compile runtime shader graph fragment with glslangValidator.";
-		return false;
+		const std::string command = QuoteCommandArg(glslangCandidate) + " --target-env vulkan1.3 -I" +
+		                            QuoteCommandArg(shaderIncludeDir.string()) + " " + QuoteCommandArg(fragPath.string()) +
+		                            " -V -o " + QuoteCommandArg(outSpvPath.string());
+		int rc = -1;
+		std::string commandOutput;
+		if (!RunCommandCaptureOutput(command, commandOutput, rc))
+		{
+			lastCommandOutput = commandOutput;
+			continue;
+		}
+		if (rc == 0)
+		{
+			gRuntimeShaderDirectory = shaderOutDir.string();
+			LOGI("Shader graph runtime fragment compiled to %s", outSpvPath.string().c_str());
+			return true;
+		}
+		lastCommandOutput = "Command: " + command + "\n" + commandOutput;
 	}
-	LOGI("Shader graph runtime fragment compiled to %s", outSpvPath.string().c_str());
-	return true;
+
+	if (outError)
+		*outError = "Failed to compile runtime shader graph fragment with glslangValidator.\n" + lastCommandOutput;
+	return false;
 #endif
 }
 
@@ -1001,13 +1008,13 @@ static bool EnsureRuntimeShaderGraphCompiled(const std::string& graphPath, bool 
 static void EnsureSceneShaderGraphRuntimeCompiled(Scene& scene)
 {
 	EnsureMaterialGraphStateSize(scene);
-	for (size_t i = 0; i < scene.materialShaderGraphEnabled.size(); ++i)
+	for (size_t i = 0; i < scene.materialShaderGraphAppliedEnabled.size(); ++i)
 	{
-		if (scene.materialShaderGraphEnabled[i] == 0u)
+		if (scene.materialShaderGraphAppliedEnabled[i] == 0u)
 			continue;
-		if (i >= scene.materialShaderGraphPath.size())
+		if (i >= scene.materialShaderGraphAppliedPath.size())
 			continue;
-		const std::string& path = scene.materialShaderGraphPath[i];
+		const std::string& path = scene.materialShaderGraphAppliedPath[i];
 		if (path.empty())
 			continue;
 
@@ -1029,7 +1036,7 @@ static void SyncRuntimeShaderGraphTimeToMaterials(Scene& scene, float timeSecond
 	bool updated = false;
 	for (size_t i = 0; i < n; ++i)
 	{
-		if (i >= scene.materialShaderGraphEnabled.size() || scene.materialShaderGraphEnabled[i] == 0u)
+		if (i >= scene.materialShaderGraphAppliedEnabled.size() || scene.materialShaderGraphAppliedEnabled[i] == 0u)
 			continue;
 		PBRMaterial* pbr = dynamic_cast<PBRMaterial*>(scene.materialDb.entries[i].get());
 		if (!pbr)
@@ -1181,18 +1188,20 @@ static void DrawMaterialDock(Scene& scene)
 
 	ImGui::Separator();
 	ImGui::TextUnformatted("Shader Graph");
-	bool shaderGraphConfigChanged = false;
 	if (ImGui::Checkbox("Enable Shader Graph", &shaderGraphEnabled))
 	{
 		if (shaderGraphEnabled && shaderGraphPath.empty())
-			shaderGraphPath = "assets/shader_graphs/time_noise.kshadergraph.json";
+			shaderGraphPath = "assets/shader_graphs/auto_empty_material_" + std::to_string(materialIndex) + ".kshadergraph.json";
 		if (shaderGraphEnabled)
 		{
+			std::string initError;
+			if (!EnsureDefaultEmptyShaderGraphAsset(shaderGraphPath, &initError))
+				scene.uiShaderGraphLastError = "Failed to initialize empty graph: " + initError;
 			scene.uiShaderGraphWindowOpen = true;
 			scene.uiShaderGraphCurrentPath = shaderGraphPath;
 		}
 		changed = true;
-		shaderGraphConfigChanged = true;
+		scene.uiShaderGraphSession.MarkDirty();
 	}
 	static char graphPathBuffer[512] = "";
 	if (shaderGraphPath.size() < sizeof(graphPathBuffer))
@@ -1204,7 +1213,7 @@ static void DrawMaterialDock(Scene& scene)
 	{
 		shaderGraphPath = graphPathBuffer;
 		changed = true;
-		shaderGraphConfigChanged = true;
+		scene.uiShaderGraphSession.MarkDirty();
 	}
 	if (shaderGraphFloatParams.empty())
 		shaderGraphFloatParams = { 0.6f, 6.0f };
@@ -1212,24 +1221,62 @@ static void DrawMaterialDock(Scene& scene)
 		shaderGraphFloatParams.resize(2u, 0.f);
 	changed |= ImGui::DragFloat("Graph Time Speed", &shaderGraphFloatParams[0], 0.01f, 0.0f, 8.0f, "%.3f");
 	changed |= ImGui::DragFloat("Graph UV Scale", &shaderGraphFloatParams[1], 0.01f, 0.1f, 32.0f, "%.3f");
-	SyncShaderGraphParamsToMaterial(*pbr, shaderGraphFloatParams);
-	if (shaderGraphEnabled && !shaderGraphPath.empty())
-	{
-		std::string runtimeError;
-		if (!EnsureRuntimeShaderGraphCompiled(shaderGraphPath, shaderGraphConfigChanged, &runtimeError))
-			scene.uiShaderGraphLastError = "Auto runtime shader update failed: " + runtimeError;
-		else if (shaderGraphConfigChanged)
-			scene.uiShaderGraphLastError = "Runtime shader graph synced automatically.";
-	}
+	if (changed)
+		scene.uiShaderGraphSession.MarkDirty();
 	if (ImGui::Button("Open Graph Editor"))
 	{
 		if (shaderGraphPath.empty())
-			shaderGraphPath = "assets/shader_graphs/time_noise.kshadergraph.json";
+			shaderGraphPath = "assets/shader_graphs/auto_empty_material_" + std::to_string(materialIndex) + ".kshadergraph.json";
+		std::string initError;
+		if (!EnsureDefaultEmptyShaderGraphAsset(shaderGraphPath, &initError))
+			scene.uiShaderGraphLastError = "Failed to initialize empty graph: " + initError;
 		scene.uiShaderGraphWindowOpen = true;
 		scene.uiShaderGraphCurrentPath = shaderGraphPath;
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Compile Graph (Force)"))
+	const bool canCompile = scene.uiShaderGraphSession.CanCompile();
+	if (!canCompile)
+		ImGui::BeginDisabled();
+	if (ImGui::Button("Compile"))
+	{
+		scene.uiShaderGraphCompileReport.Clear();
+		if (shaderGraphPath.empty())
+		{
+			scene.uiShaderGraphSession.OnCompileFailed();
+			scene.uiShaderGraphCompileReport.Add(
+			    SGCompileMessageSeverity::Error, -1, SGCompileMessagePhase::Compile, "Graph path is empty.");
+			scene.uiShaderGraphLastError = "Graph path is empty.";
+		}
+		else
+		{
+			std::string runtimeError;
+			const std::string compilePath = ResolveShaderGraphPathForIO(shaderGraphPath);
+			ShaderGraphAsset compiledGraph{};
+			SGCodegenResult compiledCodegen{};
+			if (CompileShaderGraphAsset(compilePath, &compiledGraph, &compiledCodegen, &runtimeError))
+			{
+				scene.uiShaderGraphSession.OnCompileSucceeded();
+				scene.uiShaderGraphCompileReport.Add(
+				    SGCompileMessageSeverity::Info, -1, SGCompileMessagePhase::Compile, "Compile succeeded.");
+				scene.uiShaderGraphCurrentPath = compilePath;
+				scene.uiShaderGraphLastError = "Compile succeeded. Ready to apply.";
+			}
+			else
+			{
+				scene.uiShaderGraphSession.OnCompileFailed();
+				scene.uiShaderGraphCompileReport.Add(
+				    SGCompileMessageSeverity::Error, -1, SGCompileMessagePhase::Compile, runtimeError);
+				scene.uiShaderGraphLastError = "Compile failed: " + runtimeError;
+			}
+		}
+	}
+	if (!canCompile)
+		ImGui::EndDisabled();
+	ImGui::SameLine();
+	const bool canApply = scene.uiShaderGraphSession.CanApply();
+	if (!canApply)
+		ImGui::BeginDisabled();
+	if (ImGui::Button("Apply"))
 	{
 		if (shaderGraphPath.empty())
 			scene.uiShaderGraphLastError = "Graph path is empty.";
@@ -1238,19 +1285,49 @@ static void DrawMaterialDock(Scene& scene)
 			std::string runtimeError;
 			if (EnsureRuntimeShaderGraphCompiled(shaderGraphPath, true, &runtimeError))
 			{
-				scene.uiShaderGraphCurrentPath = ResolveShaderGraphPathForIO(shaderGraphPath);
-				scene.uiShaderGraphLastError = "Runtime shader graph force-compiled.";
+				scene.materialShaderGraphAppliedEnabled[materialIndex] = shaderGraphEnabled ? 1u : 0u;
+				scene.materialShaderGraphAppliedPath[materialIndex] = shaderGraphPath;
+				scene.materialShaderGraphAppliedFloatParams[materialIndex] = shaderGraphFloatParams;
+				SyncShaderGraphParamsToMaterial(*pbr, scene.materialShaderGraphAppliedFloatParams[materialIndex]);
+				pbr->data.texturePad[0] = scene.materialShaderGraphAppliedEnabled[materialIndex] ? 1 : 0;
+				scene.uiShaderGraphSession.OnApplied();
+				scene.uiShaderGraphCompileReport.Add(
+				    SGCompileMessageSeverity::Info, int(materialIndex), SGCompileMessagePhase::Compile, "Applied to runtime.");
+				scene.uiShaderGraphLastError = "Applied runtime shader graph.";
 			}
 			else
 			{
-				scene.uiShaderGraphLastError = "Force compile failed: " + runtimeError;
+				scene.uiShaderGraphSession.OnCompileFailed();
+				scene.uiShaderGraphCompileReport.Add(
+				    SGCompileMessageSeverity::Error, int(materialIndex), SGCompileMessagePhase::Compile, runtimeError);
+				scene.uiShaderGraphLastError = "Apply failed: " + runtimeError;
 			}
 		}
 	}
+	if (!canApply)
+		ImGui::EndDisabled();
+	ImGui::SameLine();
+	const bool canRevert = scene.uiShaderGraphSession.CanRevert();
+	if (!canRevert)
+		ImGui::BeginDisabled();
+	if (ImGui::Button("Revert"))
+	{
+		shaderGraphEnabled = scene.materialShaderGraphAppliedEnabled[materialIndex] != 0;
+		shaderGraphPath = scene.materialShaderGraphAppliedPath[materialIndex];
+		shaderGraphFloatParams = scene.materialShaderGraphAppliedFloatParams[materialIndex];
+		SyncShaderGraphParamsToMaterial(*pbr, scene.materialShaderGraphAppliedFloatParams[materialIndex]);
+		pbr->data.texturePad[0] = scene.materialShaderGraphAppliedEnabled[materialIndex] ? 1 : 0;
+		scene.uiShaderGraphSession.Revert();
+		scene.uiShaderGraphCompileReport.Add(
+		    SGCompileMessageSeverity::Warning, int(materialIndex), SGCompileMessagePhase::Compile, "Reverted to last applied.");
+		scene.uiShaderGraphLastError = "Reverted to last applied shader graph.";
+		changed = true;
+	}
+	if (!canRevert)
+		ImGui::EndDisabled();
 	if (!scene.uiShaderGraphLastError.empty())
 		ImGui::TextWrapped("%s", scene.uiShaderGraphLastError.c_str());
 	scene.materialShaderGraphEnabled[materialIndex] = shaderGraphEnabled ? 1u : 0u;
-	pbr->data.texturePad[0] = shaderGraphEnabled ? 1 : 0;
 
 	if (changed)
 	{
@@ -1836,6 +1913,8 @@ EditorSceneUiState CaptureEditorSceneUiState(const Scene& scene)
 	ui.renderGraphVisualizerImportedPath = scene.uiRenderGraphImportedPath;
 	ui.shaderGraphWindowOpen = scene.uiShaderGraphWindowOpen;
 	ui.shaderGraphCurrentPath = scene.uiShaderGraphCurrentPath;
+	ui.shaderGraphFocusedNodeId = scene.uiShaderGraphFocusedNodeId;
+	ui.shaderGraphEditorState = scene.uiShaderGraphSession.State();
 	return ui;
 }
 
@@ -1850,6 +1929,27 @@ void ApplyEditorSceneUiState(Scene& scene, const EditorSceneUiState& ui)
 	scene.uiRenderGraphImportedPath = ui.renderGraphVisualizerImportedPath;
 	scene.uiShaderGraphWindowOpen = ui.shaderGraphWindowOpen;
 	scene.uiShaderGraphCurrentPath = ui.shaderGraphCurrentPath;
+	scene.uiShaderGraphFocusedNodeId = ui.shaderGraphFocusedNodeId;
+	switch (ui.shaderGraphEditorState)
+	{
+	case ShaderGraphEditorState::Clean:
+		scene.uiShaderGraphSession.Revert();
+		break;
+	case ShaderGraphEditorState::Dirty:
+		scene.uiShaderGraphSession.MarkDirty();
+		break;
+	case ShaderGraphEditorState::CompiledNotApplied:
+		scene.uiShaderGraphSession.OnCompileSucceeded();
+		break;
+	case ShaderGraphEditorState::Applied:
+		scene.uiShaderGraphSession.OnApplied();
+		break;
+	case ShaderGraphEditorState::CompileFailed:
+		scene.uiShaderGraphSession.OnCompileFailed();
+		break;
+	default:
+		break;
+	}
 	gRenderGraphImportedSnapshotValid = false;
 	if (!scene.uiRenderGraphImportedPath.empty())
 	{
@@ -2020,12 +2120,19 @@ void ApplyEditorMaterialOverrides(Scene& scene, const std::vector<EditorMaterial
 		if (ov.hasShaderGraphEnabled)
 		{
 			scene.materialShaderGraphEnabled[*materialIndex] = ov.shaderGraphEnabled ? 1u : 0u;
+			scene.materialShaderGraphAppliedEnabled[*materialIndex] = scene.materialShaderGraphEnabled[*materialIndex];
 			pbr->data.texturePad[0] = ov.shaderGraphEnabled ? 1 : 0;
 		}
 		if (ov.hasShaderGraphPath)
+		{
 			scene.materialShaderGraphPath[*materialIndex] = ov.shaderGraphPath;
+			scene.materialShaderGraphAppliedPath[*materialIndex] = ov.shaderGraphPath;
+		}
 		if (ov.hasShaderGraphFloatParams)
+		{
 			scene.materialShaderGraphFloatParams[*materialIndex] = ov.shaderGraphFloatParams;
+			scene.materialShaderGraphAppliedFloatParams[*materialIndex] = ov.shaderGraphFloatParams;
+		}
 		if (*materialIndex < scene.materialShaderGraphFloatParams.size())
 			SyncShaderGraphParamsToMaterial(*pbr, scene.materialShaderGraphFloatParams[*materialIndex]);
 		bool localKeyChanged = false;
@@ -2651,7 +2758,11 @@ bool VulkanContext::ConsumeEditorSceneLoadRequest(std::string& outScenePath)
 
 void VulkanContext::ResetSceneResourcesForReload()
 {
-	VK_CHECK(vkDeviceWaitIdle(device));
+	const VkResult waitIdleResult = vkDeviceWaitIdle(device);
+	if (waitIdleResult != VK_SUCCESS)
+	{
+		LOGE("vkDeviceWaitIdle failed before scene reload with %d", int(waitIdleResult));
+	}
 	ReleaseViewportDumpReadbacks();
 
 	if (raytracingSupported)
@@ -3196,22 +3307,76 @@ bool VulkanContext::DrawFrame()
 				vkDestroyShaderModule(device, shader.module, 0);
 #endif
 
-			std::vector<char> oldSpirv = std::move(shader.spirv);
+			Shader oldShader = shader;
 
 			std::string spirvPath = "/shaders/" + shader.name + ".spv";
 #if defined(WIN32)
-			bool rcs = loadShader(shader, scene->path.c_str(), spirvPath.c_str());
+			bool rcs = false;
+			if (!gRuntimeShaderDirectory.empty() && shader.name == "mesh.frag")
+			{
+				const std::string runtimeShaderPath =
+				    (std::filesystem::path(gRuntimeShaderDirectory) / (shader.name + ".spv")).lexically_normal().string();
+				rcs = loadShader(shader, runtimeShaderPath.c_str());
+			}
+			if (!rcs)
+				rcs = loadShader(shader, scene->path.c_str(), spirvPath.c_str());
 #elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
-			bool rcs = loadShader(shader, device, scene->path.c_str(), spirvPath.c_str());
+			bool rcs = false;
+			if (!gRuntimeShaderDirectory.empty() && shader.name == "mesh.frag")
+			{
+				const std::string runtimeShaderPath =
+				    (std::filesystem::path(gRuntimeShaderDirectory) / (shader.name + ".spv")).lexically_normal().string();
+				rcs = loadShader(shader, device, runtimeShaderPath.c_str());
+			}
+			if (!rcs)
+				rcs = loadShader(shader, device, scene->path.c_str(), spirvPath.c_str());
 #endif
-			assert(rcs);
+			if (!rcs)
+			{
+				LOGE("Failed to reload shader %s from runtime and fallback paths.", shader.name.c_str());
+				// Restore previous shader state to avoid invalid pipeline/program state.
+				shader = std::move(oldShader);
+				continue;
+			}
 
-			changed |= oldSpirv != shader.spirv;
+			bool shaderCompatible = shader.stage == oldShader.stage
+				&& shader.resourceMask == oldShader.resourceMask
+				&& shader.usePushConstants == oldShader.usePushConstants
+				&& shader.useDescriptorArray == oldShader.useDescriptorArray;
+			if (shaderCompatible)
+			{
+				for (uint32_t bi = 0; bi < COUNTOF(shader.resourceTypes); ++bi)
+				{
+					if ((shader.resourceMask & (1u << bi)) == 0)
+						continue;
+					if (shader.resourceTypes[bi] != oldShader.resourceTypes[bi])
+					{
+						shaderCompatible = false;
+						break;
+					}
+				}
+			}
+			if (!shaderCompatible)
+			{
+				LOGE("Rejecting hot-reloaded shader %s due to incompatible reflected resource layout.", shader.name.c_str());
+				shader = std::move(oldShader);
+				reloadShadersColor = 0xff0000;
+				continue;
+			}
+
+			changed |= oldShader.spirv != shader.spirv;
 		}
 
 		if (changed)
 		{
-			VK_CHECK(vkDeviceWaitIdle(device));
+			const VkResult waitIdleResult = vkDeviceWaitIdle(device);
+			if (waitIdleResult != VK_SUCCESS)
+			{
+				LOGE("vkDeviceWaitIdle failed during shader reload with %d", int(waitIdleResult));
+				reloadShadersColor = 0xff0000;
+				reloadShaders = false;
+				return false;
+			}
 			pipelinesReloadedCallback();
 			reloadShadersColor = 0x00ff00;
 		}
@@ -3577,7 +3742,13 @@ bool VulkanContext::DrawFrame()
 
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
 		return true; // attempting to render to an out-of-date swapchain would break semaphore synchronization
-	VK_CHECK_SWAPCHAIN(acquireResult);
+	if (acquireResult == VK_SUBOPTIMAL_KHR)
+		return true;
+	if (acquireResult != VK_SUCCESS)
+	{
+		LOGE("vkAcquireNextImageKHR failed with %d", int(acquireResult));
+		return true;
+	}
 
 	VK_CHECK(vkResetCommandPool(device, commandPool, 0));
 
@@ -5002,7 +5173,17 @@ bool VulkanContext::DrawFrame()
 	submitInfo.signalSemaphoreInfoCount = 1;
 	submitInfo.pSignalSemaphoreInfos = &releaseSemaphoreInfo;
 
-	VK_CHECK_FORCE(vkQueueSubmit2(queue, 1, &submitInfo, frameFence));
+	const VkResult submitResult = vkQueueSubmit2(queue, 1, &submitInfo, frameFence);
+	if (submitResult != VK_SUCCESS)
+	{
+		LOGE("vkQueueSubmit2 failed with %d", int(submitResult));
+		if (submitResult == VK_ERROR_DEVICE_LOST)
+		{
+			reloadShaders = false;
+			LOGE("Disabling shader hot-reload after VK_ERROR_DEVICE_LOST.");
+		}
+		return false;
+	}
 
 	VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
 	presentInfo.waitSemaphoreCount = 1;
@@ -5011,15 +5192,35 @@ bool VulkanContext::DrawFrame()
 	presentInfo.pSwapchains = &swapchain.swapchain;
 	presentInfo.pImageIndices = &imageIndex;
 
-	VK_CHECK_SWAPCHAIN(vkQueuePresentKHR(queue, &presentInfo));
+	const VkResult presentResult = vkQueuePresentKHR(queue, &presentInfo);
+	if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
+	{
+		LOGW("vkQueuePresentKHR returned %d, swapchain will refresh next frame.", int(presentResult));
+		return true;
+	}
+	if (presentResult != VK_SUCCESS)
+	{
+		LOGE("vkQueuePresentKHR failed with %d", int(presentResult));
+		return true;
+	}
 
 	if (frameIndex >= MAX_FRAMES - 1)
 	{
 		int waitIndex = (frameIndex + 1) % MAX_FRAMES;
 		VkFence waitFence = frameFences[waitIndex];
-		VK_CHECK(vkWaitForFences(device, 1, &waitFence, VK_TRUE, ~0ull));
+		const VkResult waitFenceResult = vkWaitForFences(device, 1, &waitFence, VK_TRUE, ~0ull);
+		if (waitFenceResult != VK_SUCCESS)
+		{
+			LOGE("vkWaitForFences failed with %d", int(waitFenceResult));
+			return false;
+		}
 		ProcessCompletedViewportDump(uint32_t(waitIndex));
-		VK_CHECK(vkResetFences(device, 1, &waitFence));
+		const VkResult resetFenceResult = vkResetFences(device, 1, &waitFence);
+		if (resetFenceResult != VK_SUCCESS)
+		{
+			LOGE("vkResetFences failed with %d", int(resetFenceResult));
+			return false;
+		}
 
 		VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolsTimestamp[waitIndex], 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
 #if defined(WIN32)
@@ -5354,34 +5555,12 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 		}
 		ImGui::End();
 
-		if (scene && scene->uiShaderGraphWindowOpen)
+		if (scene)
 		{
 			EnsureImNodesContext();
-			bool windowOpen = scene->uiShaderGraphWindowOpen;
-			if (ImGui::Begin("Shader Graph Editor", &windowOpen))
-			{
-				ImGui::Text("Graph Asset: %s", scene->uiShaderGraphCurrentPath.c_str());
-				ShaderGraphAsset previewGraph{};
-				std::string json;
-				std::string loadError;
-				const std::string resolvedGraphPath = ResolveShaderGraphPathForIO(scene->uiShaderGraphCurrentPath);
-				if (!resolvedGraphPath.empty() &&
-				    ReadTextFileUtf8(resolvedGraphPath, json, &loadError) &&
-				    DeserializeShaderGraphFromJson(json, previewGraph, &loadError))
-				{
-					ImGui::Text("Resolved Path: %s", resolvedGraphPath.c_str());
-					ImGui::Text("Nodes: %d  Edges: %d", int(previewGraph.nodes.size()), int(previewGraph.edges.size()));
-					DrawShaderGraphPreview(previewGraph);
-				}
-				else
-				{
-					ImGui::TextWrapped("Unable to load graph preview: %s", loadError.c_str());
-				}
-				if (!scene->uiShaderGraphLastError.empty())
-					ImGui::TextWrapped("%s", scene->uiShaderGraphLastError.c_str());
-			}
-			ImGui::End();
-			scene->uiShaderGraphWindowOpen = windowOpen;
+			ShaderGraphEditorUiDeps graphUiDeps{};
+			graphUiDeps.resolvePathForIO = [](const std::string& rawPath) { return ResolveShaderGraphPathForIO(rawPath); };
+			DrawShaderGraphEditorBridge(*scene, graphUiDeps);
 		}
 
 		if (scene && scene->uiVisualizeRenderGraph)
@@ -5752,7 +5931,11 @@ void VulkanContext::DestroyInstance()
 
 void VulkanContext::Release()
 {
-	VK_CHECK(vkDeviceWaitIdle(device));
+	const VkResult waitIdleResult = vkDeviceWaitIdle(device);
+	if (waitIdleResult != VK_SUCCESS)
+	{
+		LOGE("vkDeviceWaitIdle failed during VulkanContext::Release with %d", int(waitIdleResult));
+	}
 	ReleaseViewportDumpReadbacks();
 
 	if (depthPyramidHandle.IsValid())

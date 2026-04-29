@@ -27,6 +27,7 @@ if(KALEIDO_BUILD_TESTS)
 endif()
 
 file(GLOB GLSL_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.glsl")
+list(FILTER GLSL_FILES EXCLUDE REGEX ".*\\.inc\\.glsl$")
 file(GLOB GLSL_HEADER_FILES "${CMAKE_SOURCE_DIR}/src/shaders/*.h")
 
 file(GLOB_RECURSE KALEIDO_ALL_CPP "src/*.cpp")

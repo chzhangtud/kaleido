@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include "shader_graph_editor_session.h"
 
 #include "math.h"
 
@@ -54,4 +55,6 @@ struct EditorSceneUiState
 	std::string renderGraphVisualizerImportedPath;
 	bool shaderGraphWindowOpen = false;
 	std::string shaderGraphCurrentPath;
+	int shaderGraphFocusedNodeId = -1;
+	ShaderGraphEditorState shaderGraphEditorState = ShaderGraphEditorState::Clean;
 };

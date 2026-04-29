@@ -11,8 +11,10 @@
 #include <cstdint>
 #include "common.h"
 #include "resources.h"
+#include "shader_graph_compile_report.h"
 #include <cstddef>
 #include <cstring>
+#include "shader_graph_editor_session.h"
 
 struct alignas(16) Meshlet
 {
@@ -214,9 +216,15 @@ struct Scene
 	bool uiShaderGraphWindowOpen = false;
 	std::string uiShaderGraphCurrentPath;
 	std::string uiShaderGraphLastError;
+	ShaderGraphCompileReport uiShaderGraphCompileReport;
+	int uiShaderGraphFocusedNodeId = -1;
 	std::vector<uint8_t> materialShaderGraphEnabled;
 	std::vector<std::string> materialShaderGraphPath;
 	std::vector<std::vector<float>> materialShaderGraphFloatParams;
+	std::vector<uint8_t> materialShaderGraphAppliedEnabled;
+	std::vector<std::string> materialShaderGraphAppliedPath;
+	std::vector<std::vector<float>> materialShaderGraphAppliedFloatParams;
+	ShaderGraphEditorSession uiShaderGraphSession;
 	vec3 sunDirection{ 1.0f };
 	uint32_t meshletVisibilityCount{ 0u };
 	std::pair<VkDescriptorPool, VkDescriptorSet> textureSet{};

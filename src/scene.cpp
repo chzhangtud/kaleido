@@ -800,6 +800,9 @@ bool loadScene(Scene& scene, const char* path, bool buildMeshlets, glm::vec3& eu
 	scene.materialShaderGraphEnabled.assign(scene.materialDb.entries.size(), 0);
 	scene.materialShaderGraphPath.assign(scene.materialDb.entries.size(), std::string{});
 	scene.materialShaderGraphFloatParams.assign(scene.materialDb.entries.size(), std::vector<float>{});
+	scene.materialShaderGraphAppliedEnabled = scene.materialShaderGraphEnabled;
+	scene.materialShaderGraphAppliedPath = scene.materialShaderGraphPath;
+	scene.materialShaderGraphAppliedFloatParams = scene.materialShaderGraphFloatParams;
 
 	for (size_t i = 0; i < data->textures_count; ++i)
 	{

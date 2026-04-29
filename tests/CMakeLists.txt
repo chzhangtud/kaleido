@@ -36,3 +36,11 @@ add_executable(shader_graph_codegen_tests
 )
 target_link_libraries(shader_graph_codegen_tests PRIVATE glm rapidjson)
 add_test(NAME shader_graph_codegen_tests COMMAND shader_graph_codegen_tests)
+
+add_executable(shader_graph_editor_session_tests
+    shader_graph_editor_session_tests.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_editor_session.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_compile_report.cpp
+)
+target_link_libraries(shader_graph_editor_session_tests PRIVATE glm rapidjson)
+add_test(NAME shader_graph_editor_session_tests COMMAND shader_graph_editor_session_tests)

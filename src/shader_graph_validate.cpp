@@ -314,6 +314,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 				result.topoOrder.clear();
 				return result;
 			}
+			outputTypes[nodeId][0] = SGPortType::PortVec3;
 			break;
 		}
 		case SGNodeOp::SplitVec3X:
@@ -335,6 +336,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 				result.topoOrder.clear();
 				return result;
 			}
+			outputTypes[nodeId][0] = SGPortType::PortFloat;
 			break;
 		}
 		case SGNodeOp::Remap:
@@ -361,6 +363,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 					return result;
 				}
 			}
+			outputTypes[nodeId][0] = SGPortType::PortFloat;
 			break;
 		}
 		case SGNodeOp::OutputSurface:

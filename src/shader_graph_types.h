@@ -63,6 +63,10 @@ struct ShaderGraphAsset
 	std::string entry = "material_surface";
 	std::vector<SGNode> nodes;
 	std::vector<SGEdge> edges;
+	bool hasEditorMeta = false;
+	float editorViewX = 0.0f;
+	float editorViewY = 0.0f;
+	float editorZoom = 1.0f;
 };
 
 const char* SGPortTypeToString(SGPortType type);
