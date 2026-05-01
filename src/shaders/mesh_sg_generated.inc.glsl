@@ -7,6 +7,6 @@ vec3 sg_eval_base_color(vec2 uv, vec3 wpos, vec3 nrm, float timeSec, SGParams pa
 {
     float sg_n4_p0 = sin(params.p2);
     float sg_n5_p0 = cos(params.p2);
-    vec3 sg_n2_p0 = vec3(sg_n4_p0, sg_n5_p0, sg_n5_p0);
-    return sg_n2_p0;
+    vec3 sg_n10_p0 = vec3(sg_n4_p0, sg_n5_p0, uv.x);
+    return sg_n10_p0;
 }

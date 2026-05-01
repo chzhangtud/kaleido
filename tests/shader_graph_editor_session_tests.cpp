@@ -27,6 +27,19 @@ static void TestSessionTransitionsFailureAndRevert()
 	assert(session.State() == ShaderGraphEditorState::CompileFailed);
 	session.Revert();
 	assert(session.State() == ShaderGraphEditorState::Clean);
+	assert(session.CanCompile());
+}
+
+static void TestCompileEligibilityIndependentFromRevertAction()
+{
+	ShaderGraphEditorSession session{};
+	session.SetCompileEligible(true);
+	assert(session.CanCompile());
+	session.Revert();
+	assert(session.State() == ShaderGraphEditorState::Clean);
+	assert(session.CanCompile());
+	session.SetCompileEligible(false);
+	assert(!session.CanCompile());
 }
 
 static void TestCompileReportMessageQueries()
@@ -50,6 +63,7 @@ int main()
 {
 	TestSessionTransitionsSuccessPath();
 	TestSessionTransitionsFailureAndRevert();
+	TestCompileEligibilityIndependentFromRevertAction();
 	TestCompileReportMessageQueries();
 	return 0;
 }

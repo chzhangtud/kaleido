@@ -2,6 +2,8 @@
 
 #include "common.h"
 #include "config.h"
+#include <string>
+#include <vector>
 
 struct Shader
 {

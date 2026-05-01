@@ -15,29 +15,35 @@ std::string NodePortLabel(int nodeId, int port)
 	return "node " + std::to_string(nodeId) + " port " + std::to_string(port);
 }
 
-bool IsNumericType(SGPortType t)
-{
-	return t == SGPortType::PortFloat || t == SGPortType::PortVec2 || t == SGPortType::PortVec3;
-}
-
 bool ResolveBroadcastType(SGPortType a, SGPortType b, SGPortType& out)
 {
+	auto rank = [](SGPortType t) -> int
+	{
+		switch (t)
+		{
+		case SGPortType::PortInt: return 1;
+		case SGPortType::PortFloat: return 2;
+		case SGPortType::PortVec2: return 3;
+		case SGPortType::PortVec3: return 4;
+		case SGPortType::PortVec4: return 5;
+		default: return 0;
+		}
+	};
 	if (a == b)
 	{
 		out = a;
 		return true;
 	}
-	if (a == SGPortType::PortFloat && IsNumericType(b))
-	{
-		out = b;
-		return true;
-	}
-	if (b == SGPortType::PortFloat && IsNumericType(a))
-	{
-		out = a;
-		return true;
-	}
-	return false;
+	if (!SGPortTypeIsNumeric(a) || !SGPortTypeIsNumeric(b))
+		return false;
+	if (!SGPortTypeCanImplicitConvert(a, b) && !SGPortTypeCanImplicitConvert(b, a))
+		return false;
+	out = (rank(a) >= rank(b)) ? a : b;
+	if (a == SGPortType::PortInt && b == SGPortType::PortFloat)
+		out = SGPortType::PortFloat;
+	if (a == SGPortType::PortFloat && b == SGPortType::PortInt)
+		out = SGPortType::PortFloat;
+	return true;
 }
 
 bool GetNodeInputType(int nodeId,
@@ -205,19 +211,6 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 		return result;
 	}
 
-	SGPortType dummyType = SGPortType::PortFloat;
-	if (!GetNodeInputType(outputNodeId, 0, inputEdges, nodeById, g, NodeOutputTypeMap{}, dummyType))
-	{
-		// Intentionally deferred until after type propagation, but keep explicit user-facing error now.
-		auto outIt = inputEdges.find(outputNodeId);
-		if (outIt == inputEdges.end() || outIt->second.find(0) == outIt->second.end())
-		{
-			result.error = "OutputSurface.baseColor must be connected.";
-			result.topoOrder.clear();
-			return result;
-		}
-	}
-
 	NodeOutputTypeMap outputTypes;
 	for (int nodeId : result.topoOrder)
 	{
@@ -265,7 +258,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 				result.topoOrder.clear();
 				return result;
 			}
-			if (!IsNumericType(a) || !IsNumericType(b))
+			if (!SGPortTypeIsNumeric(a) || !SGPortTypeIsNumeric(b))
 			{
 				result.error = "Arithmetic node requires numeric input types.";
 				result.topoOrder.clear();
@@ -292,7 +285,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 				result.topoOrder.clear();
 				return result;
 			}
-			if (!IsNumericType(t))
+			if (!SGPortTypeIsNumeric(t))
 			{
 				result.error = "Unary math node requires numeric input.";
 				result.topoOrder.clear();
@@ -311,7 +304,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 				result.topoOrder.clear();
 				return result;
 			}
-			if (t != SGPortType::PortFloat)
+			if (!SGPortTypeCanImplicitConvert(t, SGPortType::PortFloat))
 			{
 				result.error = "Lerp factor must be float.";
 				result.topoOrder.clear();
@@ -337,7 +330,9 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 				result.topoOrder.clear();
 				return result;
 			}
-			if (x != SGPortType::PortFloat || y != SGPortType::PortFloat || z != SGPortType::PortFloat)
+			if (!SGPortTypeCanImplicitConvert(x, SGPortType::PortFloat) ||
+			    !SGPortTypeCanImplicitConvert(y, SGPortType::PortFloat) ||
+			    !SGPortTypeCanImplicitConvert(z, SGPortType::PortFloat))
 			{
 				result.error = "ComposeVec3 requires float inputs on ports 0..2.";
 				result.topoOrder.clear();
@@ -376,7 +371,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 				result.topoOrder.clear();
 				return result;
 			}
-			if (v != SGPortType::PortFloat)
+			if (!SGPortTypeCanImplicitConvert(v, SGPortType::PortFloat))
 			{
 				result.error = "Remap value input must be float.";
 				result.topoOrder.clear();
@@ -385,7 +380,8 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 			for (int p = 1; p <= 4; ++p)
 			{
 				SGPortType t = SGPortType::PortFloat;
-				if (GetNodeInputType(nodeId, p, inputEdges, nodeById, g, outputTypes, t) && t != SGPortType::PortFloat)
+				if (GetNodeInputType(nodeId, p, inputEdges, nodeById, g, outputTypes, t) &&
+				    !SGPortTypeCanImplicitConvert(t, SGPortType::PortFloat))
 				{
 					result.error = "Remap optional ports must be float.";
 					result.topoOrder.clear();
@@ -397,14 +393,9 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 		}
 		case SGNodeOp::OutputSurface:
 		{
-			SGPortType baseColor = SGPortType::PortFloat;
-			if (!requireInputType(0, baseColor))
-			{
-				result.error = "OutputSurface.baseColor must be connected.";
-				result.topoOrder.clear();
-				return result;
-			}
-			if (baseColor != SGPortType::PortVec3)
+			SGPortType baseColor = SGPortType::PortVec3;
+			if (GetNodeInputType(nodeId, 0, inputEdges, nodeById, g, outputTypes, baseColor) &&
+			    baseColor != SGPortType::PortVec3 && !SGPortTypeCanImplicitConvert(baseColor, SGPortType::PortVec3))
 			{
 				result.error = "OutputSurface.baseColor requires vec3 input.";
 				result.topoOrder.clear();

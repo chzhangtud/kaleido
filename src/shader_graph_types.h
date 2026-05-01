@@ -6,9 +6,12 @@
 
 enum class SGPortType : uint8_t
 {
-	PortFloat = 0,
+	PortBool = 0,
+	PortInt,
+	PortFloat,
 	PortVec2,
 	PortVec3,
+	PortVec4,
 };
 
 enum class SGNodeOp : uint16_t
@@ -71,6 +74,8 @@ struct ShaderGraphAsset
 
 const char* SGPortTypeToString(SGPortType type);
 bool SGPortTypeFromString(const std::string& text, SGPortType& outType);
+bool SGPortTypeIsNumeric(SGPortType type);
+bool SGPortTypeCanImplicitConvert(SGPortType from, SGPortType to);
 
 const char* SGNodeOpToString(SGNodeOp op);
 bool SGNodeOpFromString(const std::string& text, SGNodeOp& outOp);

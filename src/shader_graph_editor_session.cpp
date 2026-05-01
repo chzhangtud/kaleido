@@ -8,21 +8,25 @@ ShaderGraphEditorState ShaderGraphEditorSession::State() const
 void ShaderGraphEditorSession::MarkDirty()
 {
 	state_ = ShaderGraphEditorState::Dirty;
+	compileEligible_ = true;
 }
 
 void ShaderGraphEditorSession::OnCompileSucceeded()
 {
 	state_ = ShaderGraphEditorState::CompiledNotApplied;
+	compileEligible_ = true;
 }
 
 void ShaderGraphEditorSession::OnCompileFailed()
 {
 	state_ = ShaderGraphEditorState::CompileFailed;
+	compileEligible_ = true;
 }
 
 void ShaderGraphEditorSession::OnApplied()
 {
 	state_ = ShaderGraphEditorState::Applied;
+	compileEligible_ = true;
 }
 
 void ShaderGraphEditorSession::Revert()
@@ -30,10 +34,14 @@ void ShaderGraphEditorSession::Revert()
 	state_ = ShaderGraphEditorState::Clean;
 }
 
+void ShaderGraphEditorSession::SetCompileEligible(bool eligible)
+{
+	compileEligible_ = eligible;
+}
+
 bool ShaderGraphEditorSession::CanCompile() const
 {
-	return state_ == ShaderGraphEditorState::Dirty || state_ == ShaderGraphEditorState::CompileFailed
-		|| state_ == ShaderGraphEditorState::Applied;
+	return compileEligible_;
 }
 
 bool ShaderGraphEditorSession::CanApply() const

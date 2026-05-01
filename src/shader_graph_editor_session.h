@@ -18,6 +18,7 @@ public:
 	void OnCompileFailed();
 	void OnApplied();
 	void Revert();
+	void SetCompileEligible(bool eligible);
 
 	bool CanCompile() const;
 	bool CanApply() const;
@@ -25,4 +26,5 @@ public:
 
 private:
 	ShaderGraphEditorState state_ = ShaderGraphEditorState::Clean;
+	bool compileEligible_ = false;
 };

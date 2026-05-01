@@ -20,36 +20,61 @@ const char* GlslTypeName(SGPortType t)
 {
 	switch (t)
 	{
+	case SGPortType::PortBool: return "bool";
+	case SGPortType::PortInt: return "int";
 	case SGPortType::PortFloat: return "float";
 	case SGPortType::PortVec2: return "vec2";
 	case SGPortType::PortVec3: return "vec3";
+	case SGPortType::PortVec4: return "vec4";
 	default: return "float";
 	}
 }
 
-bool IsNumericType(SGPortType t)
+std::string ConvertExpr(const std::string& expr, SGPortType from, SGPortType to)
 {
-	return t == SGPortType::PortFloat || t == SGPortType::PortVec2 || t == SGPortType::PortVec3;
-}
-
-bool ResolveBroadcastType(SGPortType a, SGPortType b, SGPortType& out)
-{
-	if (a == b)
+	if (from == to)
+		return expr;
+	if (!SGPortTypeCanImplicitConvert(from, to))
+		return expr;
+	switch (to)
 	{
-		out = a;
-		return true;
+	case SGPortType::PortInt:
+		if (from == SGPortType::PortFloat)
+			return "int(" + expr + ")";
+		if (from == SGPortType::PortVec2 || from == SGPortType::PortVec3 || from == SGPortType::PortVec4)
+			return "int((" + expr + ").x)";
+		return expr;
+	case SGPortType::PortFloat:
+		if (from == SGPortType::PortInt)
+			return "float(" + expr + ")";
+		if (from == SGPortType::PortVec2 || from == SGPortType::PortVec3 || from == SGPortType::PortVec4)
+			return "float((" + expr + ").x)";
+		return expr;
+	case SGPortType::PortVec2:
+		if (from == SGPortType::PortInt || from == SGPortType::PortFloat)
+			return "vec2(" + expr + ")";
+		if (from == SGPortType::PortVec3 || from == SGPortType::PortVec4)
+			return "(" + expr + ").xy";
+		return expr;
+	case SGPortType::PortVec3:
+		if (from == SGPortType::PortInt || from == SGPortType::PortFloat)
+			return "vec3(" + expr + ")";
+		if (from == SGPortType::PortVec2)
+			return "vec3((" + expr + "), 0.0)";
+		if (from == SGPortType::PortVec4)
+			return "(" + expr + ").xyz";
+		return expr;
+	case SGPortType::PortVec4:
+		if (from == SGPortType::PortInt || from == SGPortType::PortFloat)
+			return "vec4(" + expr + ")";
+		if (from == SGPortType::PortVec2)
+			return "vec4((" + expr + "), 0.0, 1.0)";
+		if (from == SGPortType::PortVec3)
+			return "vec4((" + expr + "), 1.0)";
+		return expr;
+	default:
+		return expr;
 	}
-	if (a == SGPortType::PortFloat && IsNumericType(b))
-	{
-		out = b;
-		return true;
-	}
-	if (b == SGPortType::PortFloat && IsNumericType(a))
-	{
-		out = a;
-		return true;
-	}
-	return false;
 }
 
 std::string MakeLiteral(float value)
@@ -88,7 +113,7 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 	for (const SGEdge& e : graph.edges)
 		inputs[e.toNode][e.toPort] = &e;
 
-	auto getInputExpr = [&](int nodeId, int port, const PortExprMap& exprs) -> std::string
+	auto getInputExpr = [&](int nodeId, int port, const PortExprMap& exprs, const PortTypeMap& types, SGPortType requiredType) -> std::string
 	{
 		auto nodeIt = inputs.find(nodeId);
 		if (nodeIt == inputs.end())
@@ -103,7 +128,15 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 		auto fromPortIt = fromNodeIt->second.find(e->fromPort);
 		if (fromPortIt == fromNodeIt->second.end())
 			return "";
-		return fromPortIt->second;
+		SGPortType fromType = SGPortType::PortFloat;
+		auto typeNodeIt = types.find(e->fromNode);
+		if (typeNodeIt != types.end())
+		{
+			auto typePortIt = typeNodeIt->second.find(e->fromPort);
+			if (typePortIt != typeNodeIt->second.end())
+				fromType = typePortIt->second;
+		}
+		return ConvertExpr(fromPortIt->second, fromType, requiredType);
 	};
 
 	auto getInputType = [&](int nodeId, int port, const PortTypeMap& types, SGPortType& out) -> bool
@@ -215,15 +248,19 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 		case SGNodeOp::Mul:
 		case SGNodeOp::Div:
 		{
-			const std::string a = getInputExpr(nodeId, 0, exprs);
-			const std::string b = getInputExpr(nodeId, 1, exprs);
 			SGPortType ta = SGPortType::PortFloat;
 			SGPortType tb = SGPortType::PortFloat;
 			if (!getInputType(nodeId, 0, types, ta) || !getInputType(nodeId, 1, types, tb))
 				continue;
-			SGPortType outType = SGPortType::PortFloat;
-			if (!ResolveBroadcastType(ta, tb, outType))
+			SGPortType outType = ta;
+			if (SGPortTypeCanImplicitConvert(tb, ta))
+				outType = ta;
+			else if (SGPortTypeCanImplicitConvert(ta, tb))
+				outType = tb;
+			else
 				continue;
+			const std::string a = getInputExpr(nodeId, 0, exprs, types, outType);
+			const std::string b = getInputExpr(nodeId, 1, exprs, types, outType);
 			const std::string out = NodeVarName(nodeId, 0);
 			const char* op = (node->op == SGNodeOp::Add) ? "+" : (node->op == SGNodeOp::Sub) ? "-" : (node->op == SGNodeOp::Mul) ? "*" : "/";
 			code << "    " << GlslTypeName(outType) << " " << out << " = (" << a << ") " << op << " (" << b << ");\n";
@@ -236,10 +273,10 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 		case SGNodeOp::Frac:
 		case SGNodeOp::Saturate:
 		{
-			const std::string in = getInputExpr(nodeId, 0, exprs);
 			SGPortType inType = SGPortType::PortFloat;
 			if (!getInputType(nodeId, 0, types, inType))
 				continue;
+			const std::string in = getInputExpr(nodeId, 0, exprs, types, inType);
 			const std::string out = NodeVarName(nodeId, 0);
 			const char* fn = (node->op == SGNodeOp::Sin) ? "sin" : (node->op == SGNodeOp::Cos) ? "cos" : (node->op == SGNodeOp::Frac) ? "fract" : "clamp";
 			if (node->op == SGNodeOp::Saturate)
@@ -252,16 +289,16 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 		}
 		case SGNodeOp::Lerp:
 		{
-			const std::string a = getInputExpr(nodeId, 0, exprs);
-			const std::string b = getInputExpr(nodeId, 1, exprs);
-			const std::string t = getInputExpr(nodeId, 2, exprs);
 			SGPortType ta = SGPortType::PortFloat;
 			SGPortType tb = SGPortType::PortFloat;
 			if (!getInputType(nodeId, 0, types, ta) || !getInputType(nodeId, 1, types, tb))
 				continue;
-			SGPortType outType = SGPortType::PortFloat;
-			if (!ResolveBroadcastType(ta, tb, outType))
+			SGPortType outType = SGPortTypeCanImplicitConvert(tb, ta) ? ta : tb;
+			if (!SGPortTypeCanImplicitConvert(ta, outType) || !SGPortTypeCanImplicitConvert(tb, outType))
 				continue;
+			const std::string a = getInputExpr(nodeId, 0, exprs, types, outType);
+			const std::string b = getInputExpr(nodeId, 1, exprs, types, outType);
+			const std::string t = getInputExpr(nodeId, 2, exprs, types, SGPortType::PortFloat);
 			const std::string out = NodeVarName(nodeId, 0);
 			code << "    " << GlslTypeName(outType) << " " << out << " = mix(" << a << ", " << b << ", " << t << ");\n";
 			exprs[nodeId][0] = out;
@@ -270,9 +307,9 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 		}
 		case SGNodeOp::ComposeVec3:
 		{
-			const std::string x = getInputExpr(nodeId, 0, exprs);
-			const std::string y = getInputExpr(nodeId, 1, exprs);
-			const std::string z = getInputExpr(nodeId, 2, exprs);
+			const std::string x = getInputExpr(nodeId, 0, exprs, types, SGPortType::PortFloat);
+			const std::string y = getInputExpr(nodeId, 1, exprs, types, SGPortType::PortFloat);
+			const std::string z = getInputExpr(nodeId, 2, exprs, types, SGPortType::PortFloat);
 			const std::string out = NodeVarName(nodeId, 0);
 			code << "    vec3 " << out << " = vec3(" << x << ", " << y << ", " << z << ");\n";
 			exprs[nodeId][0] = out;
@@ -283,7 +320,7 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 		case SGNodeOp::SplitVec3Y:
 		case SGNodeOp::SplitVec3Z:
 		{
-			const std::string v3 = getInputExpr(nodeId, 0, exprs);
+			const std::string v3 = getInputExpr(nodeId, 0, exprs, types, SGPortType::PortVec3);
 			const char comp = (node->op == SGNodeOp::SplitVec3X) ? 'x' : (node->op == SGNodeOp::SplitVec3Y) ? 'y' : 'z';
 			const std::string out = NodeVarName(nodeId, 0);
 			code << "    float " << out << " = (" << v3 << ")." << comp << ";\n";
@@ -293,7 +330,7 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 		}
 		case SGNodeOp::NoisePerlin3D:
 		{
-			const std::string p = getInputExpr(nodeId, 0, exprs);
+			const std::string p = getInputExpr(nodeId, 0, exprs, types, SGPortType::PortVec3);
 			const std::string out = NodeVarName(nodeId, 0);
 			code << "    float " << out << " = sg_noise_perlin3d(" << p << ");\n";
 			exprs[nodeId][0] = out;
@@ -302,11 +339,19 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 		}
 		case SGNodeOp::Remap:
 		{
-			const std::string value = getInputExpr(nodeId, 0, exprs);
-			const std::string inMin = getInputExpr(nodeId, 1, exprs).empty() ? MakeLiteral(NodeValueOr(*node, 0, -1.0f)) : getInputExpr(nodeId, 1, exprs);
-			const std::string inMax = getInputExpr(nodeId, 2, exprs).empty() ? MakeLiteral(NodeValueOr(*node, 1, 1.0f)) : getInputExpr(nodeId, 2, exprs);
-			const std::string outMin = getInputExpr(nodeId, 3, exprs).empty() ? MakeLiteral(NodeValueOr(*node, 2, 0.0f)) : getInputExpr(nodeId, 3, exprs);
-			const std::string outMax = getInputExpr(nodeId, 4, exprs).empty() ? MakeLiteral(NodeValueOr(*node, 3, 1.0f)) : getInputExpr(nodeId, 4, exprs);
+			const std::string value = getInputExpr(nodeId, 0, exprs, types, SGPortType::PortFloat);
+			const std::string inMin = getInputExpr(nodeId, 1, exprs, types, SGPortType::PortFloat).empty()
+			                              ? MakeLiteral(NodeValueOr(*node, 0, -1.0f))
+			                              : getInputExpr(nodeId, 1, exprs, types, SGPortType::PortFloat);
+			const std::string inMax = getInputExpr(nodeId, 2, exprs, types, SGPortType::PortFloat).empty()
+			                              ? MakeLiteral(NodeValueOr(*node, 1, 1.0f))
+			                              : getInputExpr(nodeId, 2, exprs, types, SGPortType::PortFloat);
+			const std::string outMin = getInputExpr(nodeId, 3, exprs, types, SGPortType::PortFloat).empty()
+			                               ? MakeLiteral(NodeValueOr(*node, 2, 0.0f))
+			                               : getInputExpr(nodeId, 3, exprs, types, SGPortType::PortFloat);
+			const std::string outMax = getInputExpr(nodeId, 4, exprs, types, SGPortType::PortFloat).empty()
+			                               ? MakeLiteral(NodeValueOr(*node, 3, 1.0f))
+			                               : getInputExpr(nodeId, 4, exprs, types, SGPortType::PortFloat);
 			const std::string out = NodeVarName(nodeId, 0);
 			code << "    float " << out << " = (" << outMin << ") + ((" << value << " - (" << inMin << ")) / max((" << inMax << ") - (" << inMin << "), 1e-6)) * ((" << outMax << ") - (" << outMin << "));\n";
 			exprs[nodeId][0] = out;
@@ -314,8 +359,12 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 			break;
 		}
 		case SGNodeOp::OutputSurface:
-			outputExpr = getInputExpr(nodeId, 0, exprs);
+		{
+			const std::string input = getInputExpr(nodeId, 0, exprs, types, SGPortType::PortVec3);
+			if (!input.empty())
+				outputExpr = input;
 			break;
+		}
 		default:
 			break;
 		}

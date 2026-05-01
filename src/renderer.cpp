@@ -9,6 +9,7 @@
 #include "shader_graph_codegen_glsl.h"
 #include "shader_graph_compile_report.h"
 #include "shader_graph_editor_ui.h"
+#include "graph_canvas_input.h"
 #include "shader_graph_io.h"
 #include "shader_graph_validate.h"
 #include "shader_reload_policy.h"
@@ -80,6 +81,7 @@ bool gRenderGraphImportedSnapshotValid = false;
 bool gRenderGraphNodeEditorInitialized = false;
 uint64_t gRenderGraphNodeEditorLayoutSignature = 0;
 bool g_renderGraphNodeEditorHovered = false;
+float g_renderGraphEditorZoom = 1.0f;
 ImNodesContext* gRenderGraphImNodesContext = nullptr;
 ImNodesContext* gShaderGraphImNodesContext = nullptr;
 std::unordered_set<std::string> gMissingShaderReloadPathsLogged;
@@ -323,11 +325,14 @@ void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot, int graph
 	const bool fullGraphMode = graphMode == 1;
 	const float passX = 80.0f;
 	const float resourceX = 620.0f;
+	std::vector<int> nodeIds;
+	nodeIds.reserve(snapshot.passes.size() + (fullGraphMode ? snapshot.resources.size() : 0));
 
 	for (size_t i = 0; i < snapshot.passes.size(); ++i)
 	{
 		const auto& pass = snapshot.passes[i];
 		const int nodeId = MakeImnodesId(std::string("node:pass:") + pass.id);
+		nodeIds.push_back(nodeId);
 		const int inAttrId = MakeImnodesId(std::string("attr-in:pass:") + pass.id);
 		const int outAttrId = MakeImnodesId(std::string("attr-out:pass:") + pass.id);
 
@@ -366,6 +371,7 @@ void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot, int graph
 		{
 			const auto& resource = snapshot.resources[i];
 			const int nodeId = MakeImnodesId(std::string("node:res:") + resource.id);
+			nodeIds.push_back(nodeId);
 			const int inAttrId = MakeImnodesId(std::string("attr-in:res:") + resource.id);
 			const int outAttrId = MakeImnodesId(std::string("attr-out:res:") + resource.id);
 
@@ -428,7 +434,14 @@ void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot, int graph
 
 	ImNodes::MiniMap(0.2f, ImNodesMiniMapLocation_BottomRight);
 	ImNodes::EndNodeEditor();
-	g_renderGraphNodeEditorHovered = ImNodes::IsEditorHovered();
+	const GraphCanvasRect canvasRect{ ImGui::GetItemRectMin(), ImGui::GetItemRectMax() };
+	if (GraphCanvasContainsPoint(canvasRect, ImGui::GetIO().MousePos) && ImGui::GetIO().MouseWheel != 0.0f)
+		ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+	if (relayout)
+		g_renderGraphEditorZoom = 1.0f;
+	GraphCanvasApplyWheelZoom(canvasRect, nodeIds, g_renderGraphEditorZoom);
+	g_renderGraphNodeEditorHovered =
+	    ImNodes::IsEditorHovered() || GraphCanvasContainsPoint(canvasRect, ImGui::GetIO().MousePos);
 }
 
 bool WriteTextFileUtf8(const std::string& path, const std::string& text, std::string* outError)
@@ -1244,6 +1257,7 @@ static void DrawMaterialDock(Scene& scene)
 		scene.uiShaderGraphCurrentPath = shaderGraphPath;
 	}
 	ImGui::SameLine();
+	scene.uiShaderGraphSession.SetCompileEligible(shaderGraphEnabled && !shaderGraphPath.empty());
 	const bool canCompile = scene.uiShaderGraphSession.CanCompile();
 	if (!canCompile)
 		ImGui::BeginDisabled();

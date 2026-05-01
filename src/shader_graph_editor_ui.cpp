@@ -1,6 +1,7 @@
 #include "shader_graph_editor_ui.h"
 
 #include "shader_graph_io.h"
+#include "graph_canvas_input.h"
 #include "imgui.h"
 #include "imnodes.h"
 
@@ -104,13 +105,23 @@ struct SgAttrRef
 	bool isOutput = false;
 };
 
+std::unordered_map<int, std::unordered_map<int, SGPortType>> BuildOutputTypes(const ShaderGraphAsset& graph);
+bool TryGetExpectedInputType(const SGNode& node, int inputPort, SGPortType& out);
+ImU32 PortTypeColor(SGPortType type);
+
 void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
     int focusedNodeId,
     std::unordered_map<int, SgAttrRef>& outAttrRefs,
     std::unordered_map<int, int>& outImNodeToNode,
     std::unordered_map<int, size_t>& outLinkToEdgeIndex,
-    std::unordered_set<int>& initializedNodes)
+    std::unordered_set<int>& initializedNodes,
+    const std::unordered_map<int, ImVec2>& spawnPositions)
 {
+	const auto outputTypes = BuildOutputTypes(graph);
+	std::unordered_map<int, const SGNode*> nodeById;
+	std::unordered_map<int, int> imNodeIdByGraphNodeId;
+	for (const SGNode& node : graph.nodes)
+		nodeById[node.id] = &node;
 	std::unordered_map<int, int> depthByNode;
 	std::unordered_map<int, std::vector<int>> adjacency;
 	std::unordered_map<int, int> indegree;
@@ -159,9 +170,16 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 		const int depth = depthByNode[node.id];
 		const int row = rowByNode[node.id];
 		const int nodeId = MakeLocalImnodesId("sg:node:" + std::to_string(node.id));
+		imNodeIdByGraphNodeId[node.id] = nodeId;
 		outImNodeToNode[nodeId] = node.id;
 		if (initializedNodes.insert(node.id).second)
-			ImNodes::SetNodeGridSpacePos(nodeId, ImVec2(80.0f + depth * 260.0f, 80.0f + row * 180.0f));
+		{
+			auto customPosIt = spawnPositions.find(node.id);
+			if (customPosIt != spawnPositions.end())
+				ImNodes::SetNodeGridSpacePos(nodeId, customPosIt->second);
+			else
+				ImNodes::SetNodeGridSpacePos(nodeId, ImVec2(80.0f + depth * 260.0f, 80.0f + row * 180.0f));
+		}
 
 		ImNodes::BeginNode(nodeId);
 		ImNodes::BeginNodeTitleBar();
@@ -176,9 +194,23 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 		{
 			const int attrId = MakeLocalImnodesId("sg:in:" + std::to_string(node.id) + ":" + std::to_string(i));
 			outAttrRefs[attrId] = SgAttrRef{ node.id, int(i), false };
+			SGPortType inputType = SGPortType::PortFloat;
+			bool colored = false;
+			if (TryGetExpectedInputType(node, int(i), inputType))
+			{
+				const ImU32 c = PortTypeColor(inputType);
+				ImNodes::PushColorStyle(ImNodesCol_Pin, c);
+				ImNodes::PushColorStyle(ImNodesCol_PinHovered, c);
+				colored = true;
+			}
 			ImNodes::BeginInputAttribute(attrId);
 			ImGui::TextUnformatted(inputs[i]);
 			ImNodes::EndInputAttribute();
+			if (colored)
+			{
+				ImNodes::PopColorStyle();
+				ImNodes::PopColorStyle();
+			}
 		}
 
 		const std::vector<const char*> outputs = GetShaderGraphOutputPortLabels(node.op);
@@ -186,10 +218,23 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 		{
 			const int attrId = MakeLocalImnodesId("sg:out:" + std::to_string(node.id) + ":" + std::to_string(i));
 			outAttrRefs[attrId] = SgAttrRef{ node.id, int(i), true };
+			SGPortType outputType = SGPortType::PortFloat;
+			auto outNodeIt = outputTypes.find(node.id);
+			if (outNodeIt != outputTypes.end())
+			{
+				auto outPortIt = outNodeIt->second.find(int(i));
+				if (outPortIt != outNodeIt->second.end())
+					outputType = outPortIt->second;
+			}
+			const ImU32 c = PortTypeColor(outputType);
+			ImNodes::PushColorStyle(ImNodesCol_Pin, c);
+			ImNodes::PushColorStyle(ImNodesCol_PinHovered, c);
 			ImNodes::BeginOutputAttribute(attrId);
 			ImGui::Indent(64.0f);
 			ImGui::TextUnformatted(outputs[i]);
 			ImNodes::EndOutputAttribute();
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
 		}
 
 		ImNodes::EndNode();
@@ -203,8 +248,34 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 		const int linkId =
 		    MakeLocalImnodesId("sg:link:" + std::to_string(i) + ":" + std::to_string(e.fromNode) + ":" + std::to_string(e.toNode));
 		outLinkToEdgeIndex[linkId] = i;
+		SGPortType fromType = SGPortType::PortFloat;
+		SGPortType toType = SGPortType::PortFloat;
+		auto fromNodeIt = outputTypes.find(e.fromNode);
+		if (fromNodeIt != outputTypes.end())
+		{
+			auto fromPortIt = fromNodeIt->second.find(e.fromPort);
+			if (fromPortIt != fromNodeIt->second.end())
+				fromType = fromPortIt->second;
+		}
+		auto toNodeIt = nodeById.find(e.toNode);
+		if (toNodeIt != nodeById.end())
+			TryGetExpectedInputType(*toNodeIt->second, e.toPort, toType);
+		const ImU32 fromColor = PortTypeColor(fromType);
+		const ImU32 toColor = PortTypeColor(toType);
+		const ImVec4 a = ImGui::ColorConvertU32ToFloat4(fromColor);
+		const ImVec4 b = ImGui::ColorConvertU32ToFloat4(toColor);
+		const ImVec4 mid((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f, 1.0f);
+		const ImU32 midColor = ImGui::ColorConvertFloat4ToU32(mid);
+		ImNodes::PushColorStyle(ImNodesCol_Link, midColor);
+		ImNodes::PushColorStyle(ImNodesCol_LinkHovered, midColor);
+		ImNodes::PushColorStyle(ImNodesCol_LinkSelected, midColor);
 		ImNodes::Link(linkId, fromAttr, toAttr);
+		ImNodes::PopColorStyle();
+		ImNodes::PopColorStyle();
+		ImNodes::PopColorStyle();
 	}
+
+	ImNodes::MiniMap(0.2f, ImNodesMiniMapLocation_BottomRight);
 	ImNodes::EndNodeEditor();
 }
 
@@ -293,16 +364,26 @@ std::vector<SGNodeOp> FilterNodeOps(const std::string& query)
 
 bool IsNumeric(SGPortType t)
 {
-	return t == SGPortType::PortFloat || t == SGPortType::PortVec2 || t == SGPortType::PortVec3;
+	return SGPortTypeIsNumeric(t);
 }
 
 bool IsCompatible(SGPortType from, SGPortType to)
 {
-	if (from == to)
-		return true;
-	if (from == SGPortType::PortFloat && (to == SGPortType::PortVec2 || to == SGPortType::PortVec3))
-		return true;
-	return false;
+	return SGPortTypeCanImplicitConvert(from, to);
+}
+
+ImU32 PortTypeColor(SGPortType type)
+{
+	switch (type)
+	{
+	case SGPortType::PortBool: return IM_COL32(224, 224, 96, 255);
+	case SGPortType::PortInt: return IM_COL32(255, 160, 72, 255);
+	case SGPortType::PortFloat: return IM_COL32(96, 196, 255, 255);
+	case SGPortType::PortVec2: return IM_COL32(148, 122, 255, 255);
+	case SGPortType::PortVec3: return IM_COL32(104, 224, 132, 255);
+	case SGPortType::PortVec4: return IM_COL32(245, 98, 156, 255);
+	default: return IM_COL32(220, 220, 220, 255);
+	}
 }
 
 bool TryGetExpectedInputType(const SGNode& node, int inputPort, SGPortType& out)
@@ -458,16 +539,18 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 	if (!scene.uiShaderGraphWindowOpen)
 		return;
 	bool windowOpen = scene.uiShaderGraphWindowOpen;
-	if (ImGui::Begin("Shader Graph Editor", &windowOpen))
+	if (ImGui::Begin("Shader Graph Editor", &windowOpen, ImGuiWindowFlags_MenuBar))
 	{
 		static char searchBuf[128] = "";
 		static std::vector<SGNodeOp> recentOps;
+		static std::unordered_map<int, ImVec2> spawnPositions;
 		static bool loaded = false;
 		static std::string cachedPath;
 		static ShaderGraphAsset editableGraph{};
 		static SGNode copiedNode{};
 		static bool hasCopiedNode = false;
 		static bool graphDirty = false;
+		static float editorZoom = 1.0f;
 		static std::unordered_set<int> initializedNodes;
 
 		std::string resolvedGraphPath = scene.uiShaderGraphCurrentPath;
@@ -479,6 +562,7 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 			cachedPath = resolvedGraphPath;
 			graphDirty = false;
 			initializedNodes.clear();
+			editorZoom = 1.0f;
 			std::string json;
 			std::string loadError;
 			if (!resolvedGraphPath.empty() && ReadTextFileUtf8Local(resolvedGraphPath, json, &loadError) &&
@@ -520,38 +604,61 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 			return true;
 		};
 
-		ImGui::InputTextWithHint("Search Node", "type node keyword...", searchBuf, sizeof(searchBuf));
-		const std::vector<SGNodeOp> filtered = FilterNodeOps(searchBuf);
-		ImGui::BeginChild("sg_node_lib", ImVec2(0.0f, 120.0f), true);
-		for (SGNodeOp op : filtered)
-		{
-			const char* opName = SGNodeOpToString(op);
-			if (ImGui::Selectable(opName, false))
+		auto addNode = [&](SGNodeOp op, const ImVec2* spawnPos) {
+			recentOps.erase(std::remove(recentOps.begin(), recentOps.end(), op), recentOps.end());
+			recentOps.insert(recentOps.begin(), op);
+			if (recentOps.size() > 8)
+				recentOps.resize(8);
+			if (loaded)
 			{
-				recentOps.erase(std::remove(recentOps.begin(), recentOps.end(), op), recentOps.end());
-				recentOps.insert(recentOps.begin(), op);
-				if (recentOps.size() > 8)
-					recentOps.resize(8);
-				if (loaded)
-				{
-					SGNode n{};
-					n.id = NextNodeId(editableGraph);
-					n.op = op;
-					if (op == SGNodeOp::ConstVec3)
-						n.values = { 1.0f, 1.0f, 1.0f };
-					else if (op == SGNodeOp::ConstFloat)
-						n.values = { 0.0f };
-					editableGraph.nodes.push_back(n);
-					initializedNodes.erase(n.id);
-					scene.uiShaderGraphFocusedNodeId = n.id;
-					graphDirty = true;
-				}
-				scene.uiShaderGraphCompileReport.Add(
-				    SGCompileMessageSeverity::Info, scene.uiShaderGraphFocusedNodeId, SGCompileMessagePhase::Validate,
-				    std::string("Added node: ") + opName);
+				SGNode n{};
+				n.id = NextNodeId(editableGraph);
+				n.op = op;
+				if (op == SGNodeOp::ConstVec3)
+					n.values = { 1.0f, 1.0f, 1.0f };
+				else if (op == SGNodeOp::ConstFloat)
+					n.values = { 0.0f };
+				editableGraph.nodes.push_back(n);
+				initializedNodes.erase(n.id);
+				if (spawnPos)
+					spawnPositions[n.id] = *spawnPos;
+				scene.uiShaderGraphFocusedNodeId = n.id;
+				graphDirty = true;
 			}
+			scene.uiShaderGraphCompileReport.Add(
+			    SGCompileMessageSeverity::Info, scene.uiShaderGraphFocusedNodeId, SGCompileMessagePhase::Validate,
+			    std::string("Added node: ") + SGNodeOpToString(op));
+		};
+		bool requestInsertPopup = false;
+		if (ImGui::BeginMenuBar())
+		{
+			if (ImGui::BeginMenu("File"))
+			{
+				if (ImGui::MenuItem("Save"))
+					persistGraph();
+				if (ImGui::MenuItem("Save To"))
+				{
+					scene.uiShaderGraphCurrentPath = resolvedGraphPath;
+					persistGraph();
+				}
+				if (ImGui::MenuItem("Load From"))
+				{
+					loaded = false;
+					cachedPath.clear();
+				}
+				ImGui::EndMenu();
+			}
+			if (ImGui::BeginMenu("Insert"))
+			{
+				if (ImGui::MenuItem("Open Insert Popup"))
+				{
+					searchBuf[0] = '\0';
+					requestInsertPopup = true;
+				}
+				ImGui::EndMenu();
+			}
+			ImGui::EndMenuBar();
 		}
-		ImGui::EndChild();
 		if (!recentOps.empty())
 		{
 			ImGui::TextUnformatted("Recent Nodes:");
@@ -625,9 +732,6 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 				    SGCompileMessageSeverity::Warning, removeId, SGCompileMessagePhase::Validate, "Deleted node.");
 			}
 		}
-		if (ImGui::Button("Save Graph"))
-			persistGraph();
-
 		ImGui::Separator();
 		ImGui::Text("Graph Asset: %s", scene.uiShaderGraphCurrentPath.c_str());
 		if (loaded)
@@ -638,7 +742,23 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 			ImGui::Text("Resolved Path: %s", resolvedGraphPath.c_str());
 			ImGui::Text("Nodes: %d  Edges: %d", int(editableGraph.nodes.size()), int(editableGraph.edges.size()));
 			DrawShaderGraphPreview(
-			    editableGraph, scene.uiShaderGraphFocusedNodeId, attrRefs, imNodeToNode, linkToEdgeIndex, initializedNodes);
+			    editableGraph, scene.uiShaderGraphFocusedNodeId, attrRefs, imNodeToNode, linkToEdgeIndex, initializedNodes, spawnPositions);
+			const GraphCanvasRect canvasRect{ ImGui::GetItemRectMin(), ImGui::GetItemRectMax() };
+			std::vector<int> imNodeIds;
+			imNodeIds.reserve(imNodeToNode.size());
+			for (const auto& kv : imNodeToNode)
+				imNodeIds.push_back(kv.first);
+			GraphCanvasApplyWheelZoom(canvasRect, imNodeIds, editorZoom);
+			const bool mouseInCanvas = GraphCanvasContainsPoint(canvasRect, ImGui::GetIO().MousePos);
+			if (mouseInCanvas && ImGui::GetIO().MouseWheel != 0.0f)
+				ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+			if (mouseInCanvas && ImGui::IsMouseReleased(ImGuiMouseButton_Right))
+			{
+				searchBuf[0] = '\0';
+				requestInsertPopup = true;
+			}
+			if (requestInsertPopup)
+				ImGui::OpenPopup("sg_insert_popup");
 
 			{
 				std::vector<int> selectedImNodes(static_cast<size_t>(ImNodes::NumSelectedNodes()));
@@ -719,6 +839,23 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 					scene.uiShaderGraphCompileReport.Add(
 					    SGCompileMessageSeverity::Info, inRef.nodeId, SGCompileMessagePhase::Validate, "Link created.");
 				}
+			}
+			if (ImGui::BeginPopup("sg_insert_popup"))
+			{
+				ImGui::InputTextWithHint("##sg_insert_search_canvas", "Search node...", searchBuf, sizeof(searchBuf));
+				const std::vector<SGNodeOp> filtered = FilterNodeOps(searchBuf);
+				const ImVec2 mousePos = ImGui::GetMousePos();
+				const ImVec2 panning = ImNodes::EditorContextGetPanning();
+				const ImVec2 gridPos(mousePos.x - canvasRect.min.x - panning.x, mousePos.y - canvasRect.min.y - panning.y);
+				for (SGNodeOp op : filtered)
+				{
+					if (ImGui::Selectable(SGNodeOpToString(op), false))
+					{
+						addNode(op, &gridPos);
+						ImGui::CloseCurrentPopup();
+					}
+				}
+				ImGui::EndPopup();
 			}
 		after_link_create:
 			{
@@ -823,16 +960,14 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 			persistGraph();
 
 		ImGui::Separator();
-		ImGui::TextUnformatted("Compile Log");
 		std::string logText;
+		ImGui::TextUnformatted("Compile Log");
 		for (const SGCompileMessage& message : scene.uiShaderGraphCompileReport.Messages())
 		{
 			std::string label = std::string("[") + SeverityName(message.severity) + "] node#" + std::to_string(message.nodeId) +
 			                    " " + message.text;
 			logText += label;
 			logText += "\n";
-			if (ImGui::Selectable(label.c_str(), scene.uiShaderGraphFocusedNodeId == message.nodeId))
-				scene.uiShaderGraphFocusedNodeId = message.nodeId;
 		}
 		if (!scene.uiShaderGraphLastError.empty())
 		{
@@ -844,7 +979,8 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 		}
 		if (logText.empty())
 			logText = "(empty)";
-		if (ImGui::Button("Copy Log"))
+		ImGui::SameLine();
+		if (ImGui::Button("Copy"))
 			ImGui::SetClipboardText(logText.c_str());
 		ImGui::BeginChild("sg_compile_log_text", ImVec2(0.0f, 140.0f), true);
 		ImGui::InputTextMultiline("##sg_compile_log_text_readonly", const_cast<char*>(logText.c_str()),

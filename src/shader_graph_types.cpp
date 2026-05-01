@@ -12,9 +12,12 @@ struct SGEnumName
 };
 
 const SGEnumName<SGPortType> kPortTypes[] = {
+	{ SGPortType::PortBool, "bool" },
+	{ SGPortType::PortInt, "int" },
 	{ SGPortType::PortFloat, "float" },
 	{ SGPortType::PortVec2, "vec2" },
 	{ SGPortType::PortVec3, "vec3" },
+	{ SGPortType::PortVec4, "vec4" },
 };
 
 const SGEnumName<SGNodeOp> kNodeOps[] = {
@@ -78,6 +81,36 @@ const char* SGPortTypeToString(SGPortType type)
 bool SGPortTypeFromString(const std::string& text, SGPortType& outType)
 {
 	return EnumFromString(kPortTypes, text, outType);
+}
+
+bool SGPortTypeIsNumeric(SGPortType type)
+{
+	return type == SGPortType::PortInt || type == SGPortType::PortFloat || type == SGPortType::PortVec2 ||
+	       type == SGPortType::PortVec3 || type == SGPortType::PortVec4;
+}
+
+bool SGPortTypeCanImplicitConvert(SGPortType from, SGPortType to)
+{
+	if (from == to)
+		return true;
+	if (from == SGPortType::PortBool || to == SGPortType::PortBool)
+		return false;
+	if (from == SGPortType::PortInt)
+		return to == SGPortType::PortFloat || to == SGPortType::PortVec2 || to == SGPortType::PortVec3 ||
+		       to == SGPortType::PortVec4;
+	if (from == SGPortType::PortFloat)
+		return to == SGPortType::PortInt || to == SGPortType::PortVec2 || to == SGPortType::PortVec3 ||
+		       to == SGPortType::PortVec4;
+	if (from == SGPortType::PortVec2)
+		return to == SGPortType::PortFloat || to == SGPortType::PortInt || to == SGPortType::PortVec3 ||
+		       to == SGPortType::PortVec4;
+	if (from == SGPortType::PortVec3)
+		return to == SGPortType::PortFloat || to == SGPortType::PortInt || to == SGPortType::PortVec2 ||
+		       to == SGPortType::PortVec4;
+	if (from == SGPortType::PortVec4)
+		return to == SGPortType::PortFloat || to == SGPortType::PortInt || to == SGPortType::PortVec2 ||
+		       to == SGPortType::PortVec3;
+	return false;
 }
 
 const char* SGNodeOpToString(SGNodeOp op)
