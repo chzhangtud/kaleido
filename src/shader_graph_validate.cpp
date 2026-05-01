@@ -2,6 +2,7 @@
 
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace
 {
@@ -104,10 +105,8 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 	}
 
 	NodeInputMap inputEdges;
-	std::unordered_map<int, int> indegree;
 	std::unordered_map<int, std::vector<int>> adjacency;
-	for (const SGNode& node : g.nodes)
-		indegree[node.id] = 0;
+	std::unordered_map<int, std::vector<int>> reverseAdjacency;
 
 	for (const SGEdge& edge : g.edges)
 	{
@@ -129,35 +128,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 		}
 		dstPorts[edge.toPort] = &edge;
 		adjacency[edge.fromNode].push_back(edge.toNode);
-		indegree[edge.toNode] += 1;
-	}
-
-	std::queue<int> q;
-	for (const SGNode& node : g.nodes)
-		if (indegree[node.id] == 0)
-			q.push(node.id);
-
-	while (!q.empty())
-	{
-		const int nodeId = q.front();
-		q.pop();
-		result.topoOrder.push_back(nodeId);
-		auto adjIt = adjacency.find(nodeId);
-		if (adjIt == adjacency.end())
-			continue;
-		for (int next : adjIt->second)
-		{
-			int deg = --indegree[next];
-			if (deg == 0)
-				q.push(next);
-		}
-	}
-
-	if (result.topoOrder.size() != g.nodes.size())
-	{
-		result.error = "Graph contains cycle.";
-		result.topoOrder.clear();
-		return result;
+		reverseAdjacency[edge.toNode].push_back(edge.fromNode);
 	}
 
 	int outputNodeId = -1;
@@ -172,6 +143,64 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 	if (outputNodeId < 0)
 	{
 		result.error = "Graph missing OutputSurface node.";
+		result.topoOrder.clear();
+		return result;
+	}
+
+	std::unordered_set<int> activeNodeSet;
+	std::queue<int> activeSearchQueue;
+	activeNodeSet.insert(outputNodeId);
+	activeSearchQueue.push(outputNodeId);
+	while (!activeSearchQueue.empty())
+	{
+		const int nodeId = activeSearchQueue.front();
+		activeSearchQueue.pop();
+		auto reverseIt = reverseAdjacency.find(nodeId);
+		if (reverseIt == reverseAdjacency.end())
+			continue;
+		for (int prev : reverseIt->second)
+		{
+			if (activeNodeSet.insert(prev).second)
+				activeSearchQueue.push(prev);
+		}
+	}
+
+	std::unordered_map<int, int> indegree;
+	for (int nodeId : activeNodeSet)
+		indegree[nodeId] = 0;
+	for (const SGEdge& edge : g.edges)
+	{
+		if (activeNodeSet.count(edge.fromNode) == 0 || activeNodeSet.count(edge.toNode) == 0)
+			continue;
+		indegree[edge.toNode] += 1;
+	}
+
+	std::queue<int> q;
+	for (int nodeId : activeNodeSet)
+	{
+		if (indegree[nodeId] == 0)
+			q.push(nodeId);
+	}
+	while (!q.empty())
+	{
+		const int nodeId = q.front();
+		q.pop();
+		result.topoOrder.push_back(nodeId);
+		auto adjIt = adjacency.find(nodeId);
+		if (adjIt == adjacency.end())
+			continue;
+		for (int next : adjIt->second)
+		{
+			if (activeNodeSet.count(next) == 0)
+				continue;
+			int deg = --indegree[next];
+			if (deg == 0)
+				q.push(next);
+		}
+	}
+	if (result.topoOrder.size() != activeNodeSet.size())
+	{
+		result.error = "Active output-reachable subgraph contains cycle.";
 		result.topoOrder.clear();
 		return result;
 	}

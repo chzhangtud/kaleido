@@ -7,12 +7,16 @@ static void TestSessionTransitionsSuccessPath()
 {
 	ShaderGraphEditorSession session{};
 	assert(session.State() == ShaderGraphEditorState::Clean);
+	assert(!session.CanCompile());
 	session.MarkDirty();
 	assert(session.State() == ShaderGraphEditorState::Dirty);
+	assert(session.CanCompile());
 	session.OnCompileSucceeded();
 	assert(session.State() == ShaderGraphEditorState::CompiledNotApplied);
+	assert(session.CanApply());
 	session.OnApplied();
 	assert(session.State() == ShaderGraphEditorState::Applied);
+	assert(session.CanCompile());
 }
 
 static void TestSessionTransitionsFailureAndRevert()

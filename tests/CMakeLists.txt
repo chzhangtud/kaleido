@@ -44,3 +44,39 @@ add_executable(shader_graph_editor_session_tests
 )
 target_link_libraries(shader_graph_editor_session_tests PRIVATE glm rapidjson)
 add_test(NAME shader_graph_editor_session_tests COMMAND shader_graph_editor_session_tests)
+
+add_executable(shader_graph_edge_delete_tests
+    shader_graph_edge_delete_tests.cpp
+)
+target_link_libraries(shader_graph_edge_delete_tests PRIVATE glm rapidjson)
+add_test(NAME shader_graph_edge_delete_tests COMMAND shader_graph_edge_delete_tests)
+
+add_executable(shader_reload_policy_tests
+    shader_reload_policy_tests.cpp
+)
+target_link_libraries(shader_reload_policy_tests PRIVATE glm rapidjson)
+add_test(NAME shader_reload_policy_tests COMMAND shader_reload_policy_tests)
+
+add_executable(shader_graph_reachability_compile_tests
+    shader_graph_reachability_compile_tests.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_types.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_validate.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_codegen_glsl.cpp
+)
+target_link_libraries(shader_graph_reachability_compile_tests PRIVATE glm rapidjson)
+add_test(NAME shader_graph_reachability_compile_tests COMMAND shader_graph_reachability_compile_tests)
+
+set(_kaleido_test_targets
+    transform_graph_smoke
+    editor_scene_io_smoke
+    shader_graph_validate_tests
+    shader_graph_io_tests
+    shader_graph_codegen_tests
+    shader_graph_editor_session_tests
+    shader_graph_edge_delete_tests
+    shader_reload_policy_tests
+    shader_graph_reachability_compile_tests
+)
+foreach(_t IN LISTS _kaleido_test_targets)
+    set_property(TARGET ${_t} PROPERTY FOLDER "tests")
+endforeach()

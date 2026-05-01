@@ -444,8 +444,17 @@ int NextNodeId(const ShaderGraphAsset& graph)
 }
 } // namespace
 
+ImNodesContext* gShaderGraphImNodesContext = nullptr;
+
+void SetShaderGraphImNodesContext(ImNodesContext* context)
+{
+	gShaderGraphImNodesContext = context;
+}
+
 void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& deps)
 {
+	if (gShaderGraphImNodesContext)
+		ImNodes::SetCurrentContext(gShaderGraphImNodesContext);
 	if (!scene.uiShaderGraphWindowOpen)
 		return;
 	bool windowOpen = scene.uiShaderGraphWindowOpen;
@@ -577,7 +586,31 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 				scene.uiShaderGraphCompileReport.Add(
 				    SGCompileMessageSeverity::Info, pasted.id, SGCompileMessagePhase::Validate, "Pasted node.");
 			}
-			if (loaded && ImGui::IsKeyPressed(ImGuiKey_Delete) && scene.uiShaderGraphFocusedNodeId >= 0)
+			bool deletedSelectedLink = false;
+			if (loaded && ImGui::IsKeyPressed(ImGuiKey_Delete))
+			{
+				std::unordered_map<int, size_t> localLinkToEdgeIndex;
+				for (size_t i = 0; i < editableGraph.edges.size(); ++i)
+				{
+					const SGEdge& e = editableGraph.edges[i];
+					const int linkId = MakeLocalImnodesId(
+					    "sg:link:" + std::to_string(i) + ":" + std::to_string(e.fromNode) + ":" + std::to_string(e.toNode));
+					localLinkToEdgeIndex[linkId] = i;
+				}
+				std::vector<int> selectedLinks(static_cast<size_t>(ImNodes::NumSelectedLinks()));
+				if (!selectedLinks.empty())
+				{
+					ImNodes::GetSelectedLinks(selectedLinks.data());
+					deletedSelectedLink = DeleteSelectedShaderGraphLinks(editableGraph, selectedLinks, localLinkToEdgeIndex);
+				}
+				if (deletedSelectedLink)
+				{
+					graphDirty = true;
+					scene.uiShaderGraphCompileReport.Add(
+					    SGCompileMessageSeverity::Warning, -1, SGCompileMessagePhase::Validate, "Deleted selected link(s).");
+				}
+			}
+			if (!deletedSelectedLink && loaded && ImGui::IsKeyPressed(ImGuiKey_Delete) && scene.uiShaderGraphFocusedNodeId >= 0)
 			{
 				const int removeId = scene.uiShaderGraphFocusedNodeId;
 				editableGraph.nodes.erase(std::remove_if(editableGraph.nodes.begin(), editableGraph.nodes.end(),
@@ -618,7 +651,6 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 						scene.uiShaderGraphFocusedNodeId = selectedIt->second;
 				}
 			}
-
 			int createdA = -1;
 			int createdB = -1;
 			if (ImNodes::IsLinkCreated(&createdA, &createdB))

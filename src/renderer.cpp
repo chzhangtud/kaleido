@@ -11,6 +11,7 @@
 #include "shader_graph_editor_ui.h"
 #include "shader_graph_io.h"
 #include "shader_graph_validate.h"
+#include "shader_reload_policy.h"
 #include "imnodes.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -79,6 +80,9 @@ bool gRenderGraphImportedSnapshotValid = false;
 bool gRenderGraphNodeEditorInitialized = false;
 uint64_t gRenderGraphNodeEditorLayoutSignature = 0;
 bool g_renderGraphNodeEditorHovered = false;
+ImNodesContext* gRenderGraphImNodesContext = nullptr;
+ImNodesContext* gShaderGraphImNodesContext = nullptr;
+std::unordered_set<std::string> gMissingShaderReloadPathsLogged;
 int MakeImnodesId(std::string_view text);
 
 std::string ResolveShaderGraphPathForIO(const std::string& rawPath)
@@ -255,11 +259,15 @@ bool EnsureDefaultEmptyShaderGraphAsset(const std::string& rawPath, std::string*
 	return true;
 }
 
-void EnsureImNodesContext()
+void EnsureImNodesContexts()
 {
 	if (!gRenderGraphNodeEditorInitialized)
 	{
-		ImNodes::CreateContext();
+		gRenderGraphImNodesContext = ImNodes::CreateContext();
+		ImNodes::SetCurrentContext(gRenderGraphImNodesContext);
+		ImNodes::StyleColorsDark();
+		gShaderGraphImNodesContext = ImNodes::CreateContext();
+		ImNodes::SetCurrentContext(gShaderGraphImNodesContext);
 		ImNodes::StyleColorsDark();
 		gRenderGraphNodeEditorInitialized = true;
 	}
@@ -293,7 +301,9 @@ uint64_t BuildRenderGraphLayoutSignature(const RenderGraphVizSnapshot& snapshot,
 
 void DrawRenderGraphNodeEditor(const RenderGraphVizSnapshot& snapshot, int graphMode)
 {
-	EnsureImNodesContext();
+	EnsureImNodesContexts();
+	if (gRenderGraphImNodesContext)
+		ImNodes::SetCurrentContext(gRenderGraphImNodesContext);
 
 	const uint64_t signature = BuildRenderGraphLayoutSignature(snapshot, graphMode);
 	const bool relayout = (signature != gRenderGraphNodeEditorLayoutSignature);
@@ -3236,6 +3246,15 @@ bool VulkanContext::DrawFrame()
 
 	const auto& guiRenderer = GuiRenderer::GetInstance();
 	const bool shouldRenderRuntimeUi = runtimeUiEnabled;
+	bool runtimeUiFrameOpen = false;
+	auto closeRuntimeUiFrameIfNeeded = [&]()
+	{
+		if (runtimeUiFrameOpen)
+		{
+			guiRenderer->EndFrame();
+			runtimeUiFrameOpen = false;
+		}
+	};
 	g_editorViewportInputMode = editorViewportMode;
 	if (!editorViewportMode)
 		g_editorViewportRectValid = false;
@@ -3245,6 +3264,7 @@ bool VulkanContext::DrawFrame()
 	if (shouldRenderRuntimeUi)
 	{
 		guiRenderer->BeginFrame();
+		runtimeUiFrameOpen = true;
 		ImVec2 windowSize = ImVec2(800, 600);
 		ImGui::SetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
 	}
@@ -3296,7 +3316,8 @@ bool VulkanContext::DrawFrame()
 #endif
 
 #if defined(WIN32)
-	if (reloadShaders && glfwGetTime() >= reloadShadersTimer)
+	const bool isWindowIconified = glfwGetWindowAttrib(window, GLFW_ICONIFIED) == GLFW_TRUE;
+	if (reloadShaders && !isWindowIconified && glfwGetTime() >= reloadShadersTimer)
 	{
 		bool changed = false;
 
@@ -3309,31 +3330,54 @@ bool VulkanContext::DrawFrame()
 
 			Shader oldShader = shader;
 
-			std::string spirvPath = "/shaders/" + shader.name + ".spv";
+			const std::string shaderFile = shader.name + ".spv";
 #if defined(WIN32)
 			bool rcs = false;
-			if (!gRuntimeShaderDirectory.empty() && shader.name == "mesh.frag")
+			bool attemptedReload = false;
+			const std::vector<std::string> candidates =
+			    BuildShaderHotReloadCandidates(shader.name, scene->path, gRuntimeShaderDirectory);
+			for (const std::string& candidate : candidates)
 			{
-				const std::string runtimeShaderPath =
-				    (std::filesystem::path(gRuntimeShaderDirectory) / (shader.name + ".spv")).lexically_normal().string();
-				rcs = loadShader(shader, runtimeShaderPath.c_str());
+				std::error_code ec;
+				if (!std::filesystem::exists(candidate, ec) || ec)
+					continue;
+				attemptedReload = true;
+				rcs = loadShader(shader, candidate.c_str());
+				if (rcs)
+					break;
 			}
-			if (!rcs)
-				rcs = loadShader(shader, scene->path.c_str(), spirvPath.c_str());
 #elif defined(__ANDROID__) // Remove this when upgrading to Vulkan 1.4
 			bool rcs = false;
+			bool attemptedReload = false;
 			if (!gRuntimeShaderDirectory.empty() && shader.name == "mesh.frag")
 			{
 				const std::string runtimeShaderPath =
-				    (std::filesystem::path(gRuntimeShaderDirectory) / (shader.name + ".spv")).lexically_normal().string();
-				rcs = loadShader(shader, device, runtimeShaderPath.c_str());
+				    (std::filesystem::path(gRuntimeShaderDirectory) / shaderFile).lexically_normal().string();
+				std::error_code ec;
+				if (std::filesystem::exists(runtimeShaderPath, ec) && !ec)
+				{
+					attemptedReload = true;
+					rcs = loadShader(shader, device, runtimeShaderPath.c_str());
+				}
 			}
 			if (!rcs)
-				rcs = loadShader(shader, device, scene->path.c_str(), spirvPath.c_str());
+			{
+				const std::filesystem::path sceneCandidate =
+				    (std::filesystem::path(scene->path).parent_path() / "shaders" / shaderFile).lexically_normal();
+				std::error_code ec;
+				if (std::filesystem::exists(sceneCandidate, ec) && !ec)
+				{
+					attemptedReload = true;
+					rcs = loadShader(shader, device, sceneCandidate.string().c_str());
+				}
+			}
 #endif
 			if (!rcs)
 			{
-				LOGE("Failed to reload shader %s from runtime and fallback paths.", shader.name.c_str());
+				if (attemptedReload)
+					LOGE("Failed to reload shader %s from resolved paths.", shader.name.c_str());
+				else if (gMissingShaderReloadPathsLogged.insert(shader.name).second)
+					LOGW("Skipping hot-reload for shader %s because no candidate SPIR-V path exists.", shader.name.c_str());
 				// Restore previous shader state to avoid invalid pipeline/program state.
 				shader = std::move(oldShader);
 				continue;
@@ -3375,6 +3419,7 @@ bool VulkanContext::DrawFrame()
 				LOGE("vkDeviceWaitIdle failed during shader reload with %d", int(waitIdleResult));
 				reloadShadersColor = 0xff0000;
 				reloadShaders = false;
+				closeRuntimeUiFrameIfNeeded();
 				return false;
 			}
 			pipelinesReloadedCallback();
@@ -3398,7 +3443,10 @@ bool VulkanContext::DrawFrame()
 	SwapchainStatus swapchainStatus = updateSwapchain(swapchain, physicalDevice, device, surface, graphicsFamily, window, swapchainFormat);
 
 	if (swapchainStatus == Swapchain_NotReady)
+	{
+		closeRuntimeUiFrameIfNeeded();
 		return true;
+	}
 
 	if (!editorViewportMode && editorViewportDescriptorSet != VK_NULL_HANDLE)
 	{
@@ -3741,12 +3789,19 @@ bool VulkanContext::DrawFrame()
 	VkImageView finalOutputImageView = finalOutputImage ? finalOutputImage->imageView : swapchainImageViews[imageIndex];
 
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+	{
+		closeRuntimeUiFrameIfNeeded();
 		return true; // attempting to render to an out-of-date swapchain would break semaphore synchronization
+	}
 	if (acquireResult == VK_SUBOPTIMAL_KHR)
+	{
+		closeRuntimeUiFrameIfNeeded();
 		return true;
+	}
 	if (acquireResult != VK_SUCCESS)
 	{
 		LOGE("vkAcquireNextImageKHR failed with %d", int(acquireResult));
+		closeRuntimeUiFrameIfNeeded();
 		return true;
 	}
 
@@ -5122,6 +5177,7 @@ bool VulkanContext::DrawFrame()
 			editorViewportDumpRequestPath.clear();
 		}
 		guiRenderer->EndFrame();
+		runtimeUiFrameOpen = false;
 		const VkPipelineStageFlags2 uiSrcStage = sceneRenderedToSwapchain ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
 		const VkAccessFlags2 uiSrcAccess = sceneRenderedToSwapchain ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_2_NONE;
 		const VkImageLayout uiSrcLayout = sceneRenderedToSwapchain ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
@@ -5557,7 +5613,8 @@ void VulkanContext::BuildRuntimeUi(float deltaTime,
 
 		if (scene)
 		{
-			EnsureImNodesContext();
+			EnsureImNodesContexts();
+			SetShaderGraphImNodesContext(gShaderGraphImNodesContext);
 			ShaderGraphEditorUiDeps graphUiDeps{};
 			graphUiDeps.resolvePathForIO = [](const std::string& rawPath) { return ResolveShaderGraphPathForIO(rawPath); };
 			DrawShaderGraphEditorBridge(*scene, graphUiDeps);

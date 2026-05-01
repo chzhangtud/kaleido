@@ -32,7 +32,8 @@ void ShaderGraphEditorSession::Revert()
 
 bool ShaderGraphEditorSession::CanCompile() const
 {
-	return state_ == ShaderGraphEditorState::Dirty || state_ == ShaderGraphEditorState::CompileFailed;
+	return state_ == ShaderGraphEditorState::Dirty || state_ == ShaderGraphEditorState::CompileFailed
+		|| state_ == ShaderGraphEditorState::Applied;
 }
 
 bool ShaderGraphEditorSession::CanApply() const
