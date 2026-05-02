@@ -221,7 +221,7 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 				ImNodes::SetNodeGridSpacePos(nodeId, ImVec2(80.0f + depth * 260.0f, 80.0f + row * 180.0f));
 		}
 
-		ImNodes::BeginNode(nodeId);
+		// ImNodes snapshots title bar colors in BeginNode(); PushColorStyle must run before BeginNode.
 		if (colorizeNodeTitlesByHash)
 		{
 			ImU32 tN = 0, tH = 0, tS = 0;
@@ -230,18 +230,13 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 			ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, tH);
 			ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, tS);
 		}
+		ImNodes::BeginNode(nodeId);
 		ImNodes::BeginNodeTitleBar();
 		if (node.id == focusedNodeId)
 			ImGui::Text(">> %s  #%d", SGNodeOpToString(node.op), node.id);
 		else
 			ImGui::Text("%s  #%d", SGNodeOpToString(node.op), node.id);
 		ImNodes::EndNodeTitleBar();
-		if (colorizeNodeTitlesByHash)
-		{
-			ImNodes::PopColorStyle();
-			ImNodes::PopColorStyle();
-			ImNodes::PopColorStyle();
-		}
 
 		const std::vector<const char*> inputs = GetShaderGraphInputPortLabels(node.op);
 		for (size_t i = 0; i < inputs.size(); ++i)
@@ -292,6 +287,12 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 		}
 
 		ImNodes::EndNode();
+		if (colorizeNodeTitlesByHash)
+		{
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+		}
 	}
 
 	for (size_t i = 0; i < graph.edges.size(); ++i)
