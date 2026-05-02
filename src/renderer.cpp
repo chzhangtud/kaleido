@@ -1044,7 +1044,7 @@ static void EnsureSceneShaderGraphRuntimeCompiled(Scene& scene)
 		std::string runtimeError;
 		if (!EnsureRuntimeShaderGraphCompiled(path, false, &runtimeError))
 			scene.uiShaderGraphLastError = "Auto runtime shader update failed: " + runtimeError;
-		return;
+		continue;
 	}
 }
 

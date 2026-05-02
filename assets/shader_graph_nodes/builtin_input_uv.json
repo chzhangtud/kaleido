@@ -1,0 +1,24 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/input/uv",
+  "version": 1,
+  "evalKind": "InputUV",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "u",
+      "type": "float"
+    },
+    {
+      "id": 2,
+      "name": "v",
+      "type": "float"
+    },
+    {
+      "id": 3,
+      "name": "uv",
+      "type": "vec2"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/param/float",
+  "version": 1,
+  "evalKind": "ParamFloat",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "float"
+    }
+  ]
+}

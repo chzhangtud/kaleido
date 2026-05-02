@@ -122,3 +122,84 @@ bool SGNodeOpFromString(const std::string& text, SGNodeOp& outOp)
 {
 	return EnumFromString(kNodeOps, text, outOp);
 }
+
+bool SGNodeOpToDescriptorId(SGNodeOp op, std::string& outId)
+{
+	switch (op)
+	{
+	case SGNodeOp::InputUV: outId = "builtin/input/uv"; return true;
+	case SGNodeOp::InputTime: outId = "builtin/input/time"; return true;
+	case SGNodeOp::InputWorldPos: outId = "builtin/input/world_pos"; return true;
+	case SGNodeOp::InputNormal: outId = "builtin/input/normal"; return true;
+	case SGNodeOp::ConstFloat: outId = "builtin/const/float"; return true;
+	case SGNodeOp::ConstVec2: outId = "builtin/const/vec2"; return true;
+	case SGNodeOp::ConstVec3: outId = "builtin/const/vec3"; return true;
+	case SGNodeOp::ParamFloat: outId = "builtin/param/float"; return true;
+	case SGNodeOp::Add: outId = "builtin/math/add"; return true;
+	case SGNodeOp::Sub: outId = "builtin/math/sub"; return true;
+	case SGNodeOp::Mul: outId = "builtin/math/mul"; return true;
+	case SGNodeOp::Div: outId = "builtin/math/div"; return true;
+	case SGNodeOp::Sin: outId = "builtin/math/sin"; return true;
+	case SGNodeOp::Cos: outId = "builtin/math/cos"; return true;
+	case SGNodeOp::Frac: outId = "builtin/math/frac"; return true;
+	case SGNodeOp::Lerp: outId = "builtin/math/lerp"; return true;
+	case SGNodeOp::Saturate: outId = "builtin/math/saturate"; return true;
+	case SGNodeOp::ComposeVec3: outId = "builtin/vector/compose_vec3"; return true;
+	case SGNodeOp::SplitVec3X: outId = "builtin/vector/split_vec3_x"; return true;
+	case SGNodeOp::SplitVec3Y: outId = "builtin/vector/split_vec3_y"; return true;
+	case SGNodeOp::SplitVec3Z: outId = "builtin/vector/split_vec3_z"; return true;
+	case SGNodeOp::NoisePerlin3D: outId = "builtin/noise/perlin3d"; return true;
+	case SGNodeOp::Remap: outId = "builtin/math/remap"; return true;
+	case SGNodeOp::OutputSurface: outId = "builtin/output/surface"; return true;
+	default: return false;
+	}
+}
+
+bool SGNodeOpFromDescriptorId(const std::string& id, SGNodeOp& outOp)
+{
+	static const char kLegacy[] = "builtin/legacy/";
+	const size_t legacyLen = sizeof(kLegacy) - 1u;
+	if (id.size() > legacyLen && id.compare(0, legacyLen, kLegacy) == 0)
+		return SGNodeOpFromString(id.substr(legacyLen), outOp);
+
+	struct Entry
+	{
+		const char* idStr;
+		SGNodeOp op;
+	};
+	static const Entry kCanonical[] = {
+		{ "builtin/input/uv", SGNodeOp::InputUV },
+		{ "builtin/input/time", SGNodeOp::InputTime },
+		{ "builtin/input/world_pos", SGNodeOp::InputWorldPos },
+		{ "builtin/input/normal", SGNodeOp::InputNormal },
+		{ "builtin/const/float", SGNodeOp::ConstFloat },
+		{ "builtin/const/vec2", SGNodeOp::ConstVec2 },
+		{ "builtin/const/vec3", SGNodeOp::ConstVec3 },
+		{ "builtin/param/float", SGNodeOp::ParamFloat },
+		{ "builtin/math/add", SGNodeOp::Add },
+		{ "builtin/math/sub", SGNodeOp::Sub },
+		{ "builtin/math/mul", SGNodeOp::Mul },
+		{ "builtin/math/div", SGNodeOp::Div },
+		{ "builtin/math/sin", SGNodeOp::Sin },
+		{ "builtin/math/cos", SGNodeOp::Cos },
+		{ "builtin/math/frac", SGNodeOp::Frac },
+		{ "builtin/math/lerp", SGNodeOp::Lerp },
+		{ "builtin/math/saturate", SGNodeOp::Saturate },
+		{ "builtin/vector/compose_vec3", SGNodeOp::ComposeVec3 },
+		{ "builtin/vector/split_vec3_x", SGNodeOp::SplitVec3X },
+		{ "builtin/vector/split_vec3_y", SGNodeOp::SplitVec3Y },
+		{ "builtin/vector/split_vec3_z", SGNodeOp::SplitVec3Z },
+		{ "builtin/noise/perlin3d", SGNodeOp::NoisePerlin3D },
+		{ "builtin/math/remap", SGNodeOp::Remap },
+		{ "builtin/output/surface", SGNodeOp::OutputSurface },
+	};
+	for (const Entry& e : kCanonical)
+	{
+		if (id == e.idStr)
+		{
+			outOp = e.op;
+			return true;
+		}
+	}
+	return false;
+}

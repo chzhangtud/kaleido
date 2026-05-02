@@ -1,5 +1,6 @@
 #include "shader_graph_codegen_glsl.h"
 
+#include "shader_graph_node_registry.h"
 #include "shader_graph_validate.h"
 
 #include <sstream>
@@ -92,12 +93,33 @@ float NodeValueOr(const SGNode& node, size_t index, float fallback)
 		return node.values[index];
 	return fallback;
 }
+
 } // namespace
 
 SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 {
 	SGCodegenResult result{};
-	const SGValidateResult v = ValidateShaderGraph(graph);
+	ShaderGraphAsset runtime = graph;
+	if (runtime.version == 3 && runtime.nodes.empty())
+	{
+		ShaderGraphNodeRegistry builtinReg;
+		const bool regOk = ShaderGraphTryLoadBuiltinNodeRegistry(builtinReg, nullptr);
+		for (const ShaderGraphNodeInstance& instance : runtime.nodeInstances)
+		{
+			const ShaderGraphNodeDescriptor* desc = regOk ? builtinReg.Find(instance.descriptorId) : nullptr;
+			SGNode node{};
+			node.id = instance.id;
+			node.values = instance.numericOverrides;
+			node.text = instance.textOverride;
+			if (!ShaderGraphResolveNodeOp(desc, instance.descriptorId, node.op))
+			{
+				result.error = "Unsupported descriptor id in codegen: " + instance.descriptorId;
+				return result;
+			}
+			runtime.nodes.push_back(std::move(node));
+		}
+	}
+	const SGValidateResult v = ValidateShaderGraph(runtime);
 	if (!v.ok)
 	{
 		result.error = v.error;
@@ -105,12 +127,12 @@ SGCodegenResult GenerateShaderGraphGlsl(const ShaderGraphAsset& graph)
 	}
 
 	std::unordered_map<int, const SGNode*> nodeById;
-	nodeById.reserve(graph.nodes.size());
-	for (const SGNode& n : graph.nodes)
+	nodeById.reserve(runtime.nodes.size());
+	for (const SGNode& n : runtime.nodes)
 		nodeById[n.id] = &n;
 
 	InputEdgeMap inputs;
-	for (const SGEdge& e : graph.edges)
+	for (const SGEdge& e : runtime.edges)
 		inputs[e.toNode][e.toPort] = &e;
 
 	auto getInputExpr = [&](int nodeId, int port, const PortExprMap& exprs, const PortTypeMap& types, SGPortType requiredType) -> std::string

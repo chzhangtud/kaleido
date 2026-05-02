@@ -1,5 +1,7 @@
 #include "shader_graph_validate.h"
 
+#include "shader_graph_node_registry.h"
+
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -77,27 +79,77 @@ bool GetNodeInputType(int nodeId,
 SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 {
 	SGValidateResult result{};
+	ShaderGraphAsset runtime = g;
 	if (g.format != "kaleido_shader_graph")
 	{
 		result.error = "Unsupported graph format: " + g.format;
 		return result;
 	}
-	if (g.version != 1)
+	if (g.version != 1 && g.version != 3)
 	{
 		result.error = "Unsupported graph version: " + std::to_string(g.version);
 		return result;
 	}
-	if (g.nodes.empty())
+	if (g.version == 3 && !g.nodeInstances.empty())
+	{
+		ShaderGraphNodeRegistry builtinReg;
+		const bool regOk = ShaderGraphTryLoadBuiltinNodeRegistry(builtinReg, nullptr);
+		for (const ShaderGraphNodeInstance& instance : g.nodeInstances)
+		{
+			const ShaderGraphNodeDescriptor* desc = regOk ? builtinReg.Find(instance.descriptorId) : nullptr;
+			if (desc)
+			{
+				for (size_t pi = 0; pi < desc->inputs.size(); ++pi)
+				{
+					if (desc->inputs[pi].optional)
+						continue;
+					bool connected = false;
+					for (const SGEdge& ed : g.edges)
+					{
+						if (ed.toNode == instance.id && ed.toPort == static_cast<int>(pi))
+						{
+							connected = true;
+							break;
+						}
+					}
+					if (!connected)
+					{
+						result.error = "Required input '" + desc->inputs[pi].name + "' is not connected on node " +
+						               std::to_string(instance.id) + " (" + instance.descriptorId + ").";
+						return result;
+					}
+				}
+			}
+		}
+		if (runtime.nodes.empty())
+		{
+			for (const ShaderGraphNodeInstance& instance : g.nodeInstances)
+			{
+				const ShaderGraphNodeDescriptor* desc = regOk ? builtinReg.Find(instance.descriptorId) : nullptr;
+				SGNode node{};
+				node.id = instance.id;
+				node.values = instance.numericOverrides;
+				node.text = instance.textOverride;
+				if (!ShaderGraphResolveNodeOp(desc, instance.descriptorId, node.op))
+				{
+					result.error = "Unsupported descriptor id in validator: " + instance.descriptorId;
+					return result;
+				}
+				runtime.nodes.push_back(std::move(node));
+			}
+		}
+	}
+	if (runtime.nodes.empty())
 	{
 		result.error = "Graph has no nodes.";
 		return result;
 	}
 
 	NodeIndexMap nodeById;
-	nodeById.reserve(g.nodes.size());
-	for (size_t i = 0; i < g.nodes.size(); ++i)
+	nodeById.reserve(runtime.nodes.size());
+	for (size_t i = 0; i < runtime.nodes.size(); ++i)
 	{
-		const SGNode& node = g.nodes[i];
+		const SGNode& node = runtime.nodes[i];
 		if (node.id < 0)
 		{
 			result.error = "Node id must be non-negative.";
@@ -114,7 +166,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 	std::unordered_map<int, std::vector<int>> adjacency;
 	std::unordered_map<int, std::vector<int>> reverseAdjacency;
 
-	for (const SGEdge& edge : g.edges)
+	for (const SGEdge& edge : runtime.edges)
 	{
 		if (edge.fromNode == edge.toNode)
 		{
@@ -138,7 +190,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 	}
 
 	int outputNodeId = -1;
-	for (const SGNode& node : g.nodes)
+	for (const SGNode& node : runtime.nodes)
 	{
 		if (node.op == SGNodeOp::OutputSurface)
 		{
@@ -174,7 +226,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 	std::unordered_map<int, int> indegree;
 	for (int nodeId : activeNodeSet)
 		indegree[nodeId] = 0;
-	for (const SGEdge& edge : g.edges)
+	for (const SGEdge& edge : runtime.edges)
 	{
 		if (activeNodeSet.count(edge.fromNode) == 0 || activeNodeSet.count(edge.toNode) == 0)
 			continue;
@@ -214,11 +266,11 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 	NodeOutputTypeMap outputTypes;
 	for (int nodeId : result.topoOrder)
 	{
-		const SGNode& node = g.nodes[nodeById[nodeId]];
+		const SGNode& node = runtime.nodes[nodeById[nodeId]];
 
 		auto requireInputType = [&](int port, SGPortType& t) -> bool
 		{
-			if (!GetNodeInputType(nodeId, port, inputEdges, nodeById, g, outputTypes, t))
+			if (!GetNodeInputType(nodeId, port, inputEdges, nodeById, runtime, outputTypes, t))
 			{
 				result.error = "Missing or invalid input on " + NodePortLabel(nodeId, port);
 				return false;
@@ -380,7 +432,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 			for (int p = 1; p <= 4; ++p)
 			{
 				SGPortType t = SGPortType::PortFloat;
-				if (GetNodeInputType(nodeId, p, inputEdges, nodeById, g, outputTypes, t) &&
+				if (GetNodeInputType(nodeId, p, inputEdges, nodeById, runtime, outputTypes, t) &&
 				    !SGPortTypeCanImplicitConvert(t, SGPortType::PortFloat))
 				{
 					result.error = "Remap optional ports must be float.";
@@ -394,7 +446,7 @@ SGValidateResult ValidateShaderGraph(const ShaderGraphAsset& g)
 		case SGNodeOp::OutputSurface:
 		{
 			SGPortType baseColor = SGPortType::PortVec3;
-			if (GetNodeInputType(nodeId, 0, inputEdges, nodeById, g, outputTypes, baseColor) &&
+			if (GetNodeInputType(nodeId, 0, inputEdges, nodeById, runtime, outputTypes, baseColor) &&
 			    baseColor != SGPortType::PortVec3 && !SGPortTypeCanImplicitConvert(baseColor, SGPortType::PortVec3))
 			{
 				result.error = "OutputSurface.baseColor requires vec3 input.";

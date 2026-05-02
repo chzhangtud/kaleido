@@ -1,0 +1,14 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/input/normal",
+  "version": 1,
+  "evalKind": "InputNormal",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "vec3"
+    }
+  ]
+}

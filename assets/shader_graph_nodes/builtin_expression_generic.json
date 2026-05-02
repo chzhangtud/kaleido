@@ -1,0 +1,12 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/expression/generic",
+  "version": 1,
+  "inputs": [],
+  "outputs": [
+    { "id": 1, "name": "out", "type": "float" }
+  ],
+  "compat": {
+    "fallback": "builtin/expression/generic"
+  }
+}

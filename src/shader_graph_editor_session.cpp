@@ -54,3 +54,22 @@ bool ShaderGraphEditorSession::CanRevert() const
 	return state_ == ShaderGraphEditorState::Dirty || state_ == ShaderGraphEditorState::CompileFailed ||
 	       state_ == ShaderGraphEditorState::CompiledNotApplied;
 }
+
+bool ShaderGraphEditorSession::AddNodeByDescriptor(const std::string& descriptorId)
+{
+	if (descriptorId.empty())
+		return false;
+	ShaderGraphNodeInstance instance{};
+	instance.id = static_cast<int>(graph_.nodeInstances.size()) + 1;
+	instance.descriptorId = descriptorId;
+	instance.descriptorVersion = 1;
+	graph_.version = 3;
+	graph_.nodeInstances.push_back(std::move(instance));
+	MarkDirty();
+	return true;
+}
+
+const ShaderGraphAsset& ShaderGraphEditorSession::GetGraph() const
+{
+	return graph_;
+}

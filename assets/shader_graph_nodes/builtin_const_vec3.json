@@ -1,0 +1,14 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/const/vec3",
+  "version": 1,
+  "evalKind": "ConstVec3",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "vec3"
+    }
+  ]
+}

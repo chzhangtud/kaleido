@@ -1,4 +1,5 @@
 #include "shader_graph_io.h"
+#include "shader_graph_migration.h"
 
 #include "rapidjson/document.h"
 #include "rapidjson/error/en.h"
@@ -19,45 +20,70 @@ bool SerializeShaderGraphToJson(const ShaderGraphAsset& g, std::string& outJson,
 {
 	if (g.format != "kaleido_shader_graph")
 		return AppendError(outError, "graph.format must be kaleido_shader_graph.");
-	if (g.version != 1)
-		return AppendError(outError, "graph.version must be 1.");
 	if (g.domain != "spatial_fragment")
 		return AppendError(outError, "graph.domain must be spatial_fragment.");
+
+	ShaderGraphAsset toWrite{};
+	if (!g.nodes.empty())
+	{
+		ShaderGraphAsset legacy{};
+		legacy.format = g.format;
+		legacy.version = 1;
+		legacy.domain = g.domain;
+		legacy.entry = g.entry;
+		legacy.nodes = g.nodes;
+		legacy.edges = g.edges;
+		legacy.hasEditorMeta = g.hasEditorMeta;
+		legacy.editorViewX = g.editorViewX;
+		legacy.editorViewY = g.editorViewY;
+		legacy.editorZoom = g.editorZoom;
+		if (!MigrateLegacyShaderGraph(legacy, toWrite, outError))
+			return false;
+	}
+	else if (!g.nodeInstances.empty())
+	{
+		toWrite = g;
+		toWrite.version = 3;
+	}
+	else
+		return AppendError(outError, "Graph has no nodes.");
 
 	rapidjson::StringBuffer sb;
 	rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(sb);
 	writer.SetIndent(' ', 2);
 	writer.StartObject();
 	writer.Key("format");
-	writer.String(g.format.c_str());
+	writer.String(toWrite.format.c_str());
 	writer.Key("version");
-	writer.Int(g.version);
+	writer.Int(toWrite.version);
 	writer.Key("domain");
-	writer.String(g.domain.c_str());
+	writer.String(toWrite.domain.c_str());
 	writer.Key("entry");
-	writer.String(g.entry.c_str());
+	writer.String(toWrite.entry.c_str());
 
-	writer.Key("nodes");
+	writer.Key("nodeInstances");
 	writer.StartArray();
-	for (const SGNode& n : g.nodes)
+	for (const ShaderGraphNodeInstance& n : toWrite.nodeInstances)
 	{
 		writer.StartObject();
 		writer.Key("id");
 		writer.Int(n.id);
-		writer.Key("op");
-		writer.String(SGNodeOpToString(n.op));
-		if (!n.values.empty())
+		writer.Key("descriptorId");
+		writer.String(n.descriptorId.c_str());
+		writer.Key("descriptorVersion");
+		writer.Int(n.descriptorVersion);
+		if (!n.numericOverrides.empty())
 		{
-			writer.Key("values");
+			writer.Key("numericOverrides");
 			writer.StartArray();
-			for (float v : n.values)
+			for (float v : n.numericOverrides)
 				writer.Double(double(v));
 			writer.EndArray();
 		}
-		if (!n.text.empty())
+		if (!n.textOverride.empty())
 		{
-			writer.Key("text");
-			writer.String(n.text.c_str());
+			writer.Key("textOverride");
+			writer.String(n.textOverride.c_str());
 		}
 		writer.EndObject();
 	}
@@ -65,7 +91,7 @@ bool SerializeShaderGraphToJson(const ShaderGraphAsset& g, std::string& outJson,
 
 	writer.Key("edges");
 	writer.StartArray();
-	for (const SGEdge& e : g.edges)
+	for (const SGEdge& e : toWrite.edges)
 	{
 		writer.StartObject();
 		writer.Key("fromNode");
@@ -79,16 +105,16 @@ bool SerializeShaderGraphToJson(const ShaderGraphAsset& g, std::string& outJson,
 		writer.EndObject();
 	}
 	writer.EndArray();
-	if (g.hasEditorMeta)
+	if (toWrite.hasEditorMeta)
 	{
 		writer.Key("editorMeta");
 		writer.StartObject();
 		writer.Key("viewX");
-		writer.Double(double(g.editorViewX));
+		writer.Double(double(toWrite.editorViewX));
 		writer.Key("viewY");
-		writer.Double(double(g.editorViewY));
+		writer.Double(double(toWrite.editorViewY));
 		writer.Key("zoom");
-		writer.Double(double(g.editorZoom));
+		writer.Double(double(toWrite.editorZoom));
 		writer.EndObject();
 	}
 	writer.EndObject();
@@ -115,6 +141,7 @@ bool DeserializeShaderGraphFromJson(const std::string& json, ShaderGraphAsset& o
 	const auto domainIt = doc.FindMember("domain");
 	const auto entryIt = doc.FindMember("entry");
 	const auto nodesIt = doc.FindMember("nodes");
+	const auto instancesIt = doc.FindMember("nodeInstances");
 	const auto edgesIt = doc.FindMember("edges");
 	const auto editorMetaIt = doc.FindMember("editorMeta");
 
@@ -122,60 +149,120 @@ bool DeserializeShaderGraphFromJson(const std::string& json, ShaderGraphAsset& o
 		return AppendError(outError, "graph.format missing.");
 	if (std::string(fmtIt->value.GetString()) != "kaleido_shader_graph")
 		return AppendError(outError, "graph.format mismatch.");
-	if (verIt == doc.MemberEnd() || !verIt->value.IsInt() || verIt->value.GetInt() != 1)
-		return AppendError(outError, "graph.version must be 1.");
+	if (verIt == doc.MemberEnd() || !verIt->value.IsInt())
+		return AppendError(outError, "graph.version missing.");
 	if (domainIt == doc.MemberEnd() || !domainIt->value.IsString() || std::string(domainIt->value.GetString()) != "spatial_fragment")
 		return AppendError(outError, "graph.domain must be spatial_fragment.");
 	if (entryIt == doc.MemberEnd() || !entryIt->value.IsString())
 		return AppendError(outError, "graph.entry missing.");
-	if (nodesIt == doc.MemberEnd() || !nodesIt->value.IsArray())
-		return AppendError(outError, "graph.nodes must be array.");
 	if (edgesIt == doc.MemberEnd() || !edgesIt->value.IsArray())
 		return AppendError(outError, "graph.edges must be array.");
 
 	ShaderGraphAsset graph{};
 	graph.format = fmtIt->value.GetString();
-	graph.version = verIt->value.GetInt();
+	const int version = verIt->value.GetInt();
+	graph.version = version;
 	graph.domain = domainIt->value.GetString();
 	graph.entry = entryIt->value.GetString();
 
-	for (rapidjson::SizeType i = 0; i < nodesIt->value.Size(); ++i)
+	if (version == 1)
 	{
-		const rapidjson::Value& n = nodesIt->value[i];
-		if (!n.IsObject())
-			return AppendError(outError, "graph.nodes entry must be object.");
-		const auto idIt = n.FindMember("id");
-		const auto opIt = n.FindMember("op");
-		if (idIt == n.MemberEnd() || !idIt->value.IsInt())
-			return AppendError(outError, "graph.nodes.id missing or invalid.");
-		if (opIt == n.MemberEnd() || !opIt->value.IsString())
-			return AppendError(outError, "graph.nodes.op missing or invalid.");
-		SGNodeOp op = SGNodeOp::InputUV;
-		if (!SGNodeOpFromString(opIt->value.GetString(), op))
-			return AppendError(outError, "graph.nodes.op unknown.");
-		SGNode node{};
-		node.id = idIt->value.GetInt();
-		node.op = op;
-		const auto valuesIt = n.FindMember("values");
-		if (valuesIt != n.MemberEnd())
+		if (nodesIt == doc.MemberEnd() || !nodesIt->value.IsArray())
+			return AppendError(outError, "graph.nodes must be array for version 1.");
+		for (rapidjson::SizeType i = 0; i < nodesIt->value.Size(); ++i)
 		{
-			if (!valuesIt->value.IsArray())
-				return AppendError(outError, "graph.nodes.values must be an array.");
-			for (rapidjson::SizeType j = 0; j < valuesIt->value.Size(); ++j)
+			const rapidjson::Value& n = nodesIt->value[i];
+			if (!n.IsObject())
+				return AppendError(outError, "graph.nodes entry must be object.");
+			const auto idIt = n.FindMember("id");
+			const auto opIt = n.FindMember("op");
+			if (idIt == n.MemberEnd() || !idIt->value.IsInt())
+				return AppendError(outError, "graph.nodes.id missing or invalid.");
+			if (opIt == n.MemberEnd() || !opIt->value.IsString())
+				return AppendError(outError, "graph.nodes.op missing or invalid.");
+			SGNodeOp op = SGNodeOp::InputUV;
+			if (!SGNodeOpFromString(opIt->value.GetString(), op))
+				return AppendError(outError, "graph.nodes.op unknown.");
+			SGNode node{};
+			node.id = idIt->value.GetInt();
+			node.op = op;
+			const auto valuesIt = n.FindMember("values");
+			if (valuesIt != n.MemberEnd())
 			{
-				if (!valuesIt->value[j].IsNumber())
-					return AppendError(outError, "graph.nodes.values entries must be numbers.");
-				node.values.push_back(valuesIt->value[j].GetFloat());
+				if (!valuesIt->value.IsArray())
+					return AppendError(outError, "graph.nodes.values must be an array.");
+				for (rapidjson::SizeType j = 0; j < valuesIt->value.Size(); ++j)
+				{
+					if (!valuesIt->value[j].IsNumber())
+						return AppendError(outError, "graph.nodes.values entries must be numbers.");
+					node.values.push_back(valuesIt->value[j].GetFloat());
+				}
 			}
+			const auto textIt = n.FindMember("text");
+			if (textIt != n.MemberEnd())
+			{
+				if (!textIt->value.IsString())
+					return AppendError(outError, "graph.nodes.text must be string.");
+				node.text = textIt->value.GetString();
+			}
+			graph.nodes.push_back(node);
 		}
-		const auto textIt = n.FindMember("text");
-		if (textIt != n.MemberEnd())
+		ShaderGraphAsset migrated{};
+		if (!MigrateLegacyShaderGraph(graph, migrated, outError))
+			return false;
+		graph = std::move(migrated);
+	}
+	else if (version == 3)
+	{
+		if (instancesIt == doc.MemberEnd() || !instancesIt->value.IsArray())
+			return AppendError(outError, "graph.nodeInstances must be array for version 3.");
+		for (rapidjson::SizeType i = 0; i < instancesIt->value.Size(); ++i)
 		{
-			if (!textIt->value.IsString())
-				return AppendError(outError, "graph.nodes.text must be string.");
-			node.text = textIt->value.GetString();
+			const rapidjson::Value& n = instancesIt->value[i];
+			if (!n.IsObject())
+				return AppendError(outError, "graph.nodeInstances entry must be object.");
+			const auto idIt = n.FindMember("id");
+			const auto didIt = n.FindMember("descriptorId");
+			if (idIt == n.MemberEnd() || !idIt->value.IsInt())
+				return AppendError(outError, "graph.nodeInstances.id missing or invalid.");
+			if (didIt == n.MemberEnd() || !didIt->value.IsString())
+				return AppendError(outError, "graph.nodeInstances.descriptorId missing or invalid.");
+			ShaderGraphNodeInstance instance{};
+			instance.id = idIt->value.GetInt();
+			instance.descriptorId = didIt->value.GetString();
+			const auto dverIt = n.FindMember("descriptorVersion");
+			if (dverIt != n.MemberEnd())
+			{
+				if (!dverIt->value.IsInt())
+					return AppendError(outError, "graph.nodeInstances.descriptorVersion must be int.");
+				instance.descriptorVersion = dverIt->value.GetInt();
+			}
+			const auto valuesIt = n.FindMember("numericOverrides");
+			if (valuesIt != n.MemberEnd())
+			{
+				if (!valuesIt->value.IsArray())
+					return AppendError(outError, "graph.nodeInstances.numericOverrides must be array.");
+				for (rapidjson::SizeType j = 0; j < valuesIt->value.Size(); ++j)
+				{
+					if (!valuesIt->value[j].IsNumber())
+						return AppendError(outError, "graph.nodeInstances.numericOverrides entries must be numbers.");
+					instance.numericOverrides.push_back(valuesIt->value[j].GetFloat());
+				}
+			}
+			const auto textIt = n.FindMember("textOverride");
+			if (textIt != n.MemberEnd())
+			{
+				if (!textIt->value.IsString())
+					return AppendError(outError, "graph.nodeInstances.textOverride must be string.");
+				instance.textOverride = textIt->value.GetString();
+			}
+			graph.nodeInstances.push_back(std::move(instance));
 		}
-		graph.nodes.push_back(node);
+		PopulateLegacyNodesFromInstances(graph);
+	}
+	else
+	{
+		return AppendError(outError, "graph.version unsupported.");
 	}
 
 	for (rapidjson::SizeType i = 0; i < edgesIt->value.Size(); ++i)

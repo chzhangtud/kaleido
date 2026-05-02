@@ -1,6 +1,8 @@
 #include "shader_graph_editor_ui.h"
 
+#include "common.h"
 #include "shader_graph_io.h"
+#include "shader_graph_node_registry.h"
 #include "graph_canvas_input.h"
 #include "imgui.h"
 #include "imnodes.h"
@@ -96,6 +98,25 @@ std::vector<const char*> GetShaderGraphOutputPortLabels(SGNodeOp op)
 	default:
 		return {};
 	}
+}
+
+bool ShaderGraphEdgeConnectsValidPins(const std::unordered_map<int, const SGNode*>& nodeById, const SGEdge& e)
+{
+	const auto fromIt = nodeById.find(e.fromNode);
+	const auto toIt = nodeById.find(e.toNode);
+	if (fromIt == nodeById.end() || toIt == nodeById.end())
+		return false;
+	const SGNode* fromNode = fromIt->second;
+	const SGNode* toNode = toIt->second;
+	if (!fromNode || !toNode)
+		return false;
+	const std::vector<const char*> outLabels = GetShaderGraphOutputPortLabels(fromNode->op);
+	const std::vector<const char*> inLabels = GetShaderGraphInputPortLabels(toNode->op);
+	if (e.fromPort < 0 || static_cast<size_t>(e.fromPort) >= outLabels.size())
+		return false;
+	if (e.toPort < 0 || static_cast<size_t>(e.toPort) >= inLabels.size())
+		return false;
+	return true;
 }
 
 struct SgAttrRef
@@ -243,6 +264,12 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 	for (size_t i = 0; i < graph.edges.size(); ++i)
 	{
 		const SGEdge& e = graph.edges[i];
+		if (!ShaderGraphEdgeConnectsValidPins(nodeById, e))
+		{
+			LOGD("Skipping shader graph link: invalid endpoints or port indices (from %d:%d -> to %d:%d).",
+			    e.fromNode, e.fromPort, e.toNode, e.toPort);
+			continue;
+		}
 		const int fromAttr = MakeLocalImnodesId("sg:out:" + std::to_string(e.fromNode) + ":" + std::to_string(e.fromPort));
 		const int toAttr = MakeLocalImnodesId("sg:in:" + std::to_string(e.toNode) + ":" + std::to_string(e.toPort));
 		const int linkId =
@@ -340,6 +367,25 @@ std::string ToLowerAscii(std::string text)
 	for (char& c : text)
 		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 	return text;
+}
+
+std::vector<std::string> FilterResolvableDescriptorIds(const ShaderGraphNodeRegistry& reg, const char* query)
+{
+	std::vector<std::string> all;
+	reg.ListDescriptorIds(all);
+	const std::string q = ToLowerAscii(std::string(query ? query : ""));
+	std::vector<std::string> out;
+	for (const std::string& id : all)
+	{
+		const ShaderGraphNodeDescriptor* d = reg.Find(id);
+		SGNodeOp probe = SGNodeOp::InputUV;
+		if (!ShaderGraphResolveNodeOp(d, id, probe))
+			continue;
+		if (!q.empty() && ToLowerAscii(id).find(q) == std::string::npos)
+			continue;
+		out.push_back(id);
+	}
+	return out;
 }
 
 std::vector<SGNodeOp> FilterNodeOps(const std::string& query)
@@ -552,6 +598,8 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 		static bool graphDirty = false;
 		static float editorZoom = 1.0f;
 		static std::unordered_set<int> initializedNodes;
+		static ShaderGraphNodeRegistry builtinDescriptorRegistry;
+		static bool builtinDescriptorRegistryLoaded = false;
 
 		std::string resolvedGraphPath = scene.uiShaderGraphCurrentPath;
 		if (deps.resolvePathForIO)
@@ -842,6 +890,11 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 			}
 			if (ImGui::BeginPopup("sg_insert_popup"))
 			{
+				if (!builtinDescriptorRegistryLoaded)
+				{
+					builtinDescriptorRegistryLoaded = true;
+					ShaderGraphTryLoadBuiltinNodeRegistry(builtinDescriptorRegistry, nullptr);
+				}
 				ImGui::InputTextWithHint("##sg_insert_search_canvas", "Search node...", searchBuf, sizeof(searchBuf));
 				const std::vector<SGNodeOp> filtered = FilterNodeOps(searchBuf);
 				const ImVec2 mousePos = ImGui::GetMousePos();
@@ -853,6 +906,23 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 					{
 						addNode(op, &gridPos);
 						ImGui::CloseCurrentPopup();
+					}
+				}
+				const std::vector<std::string> filteredDesc = FilterResolvableDescriptorIds(builtinDescriptorRegistry, searchBuf);
+				if (!filteredDesc.empty())
+				{
+					ImGui::Separator();
+					ImGui::TextUnformatted("Built-in descriptors");
+					for (const std::string& did : filteredDesc)
+					{
+						if (ImGui::Selectable(did.c_str(), false))
+						{
+							const ShaderGraphNodeDescriptor* d = builtinDescriptorRegistry.Find(did);
+							SGNodeOp op = SGNodeOp::InputUV;
+							if (ShaderGraphResolveNodeOp(d, did, op))
+								addNode(op, &gridPos);
+							ImGui::CloseCurrentPopup();
+						}
 					}
 				}
 				ImGui::EndPopup();

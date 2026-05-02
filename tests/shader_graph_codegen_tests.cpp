@@ -43,10 +43,36 @@ static void TestVec3ToFloatImplicitCastInCodegen()
 	assert(r.fragmentFunction.find(".x") != std::string::npos);
 }
 
+static void TestNoRuntimeDependenceOnLegacyOpInV3()
+{
+	ShaderGraphAsset g{};
+	g.version = 3;
+	g.nodeInstances.push_back({ 1, "builtin/input/uv", 1, {}, "" });
+	g.nodeInstances.push_back({ 2, "builtin/output/surface", 1, {}, "" });
+	g.edges.push_back({ 1, 2, 2, 0 });
+	SGCodegenResult r = GenerateShaderGraphGlsl(g);
+	assert(r.error.empty());
+	assert(r.ok);
+}
+
+static void TestCodegenV3ConstFloatToSurface()
+{
+	ShaderGraphAsset g{};
+	g.version = 3;
+	g.nodeInstances.push_back({ 1, "builtin/const/float", 1, { 0.25f }, "" });
+	g.nodeInstances.push_back({ 2, "builtin/output/surface", 1, {}, "" });
+	g.edges.push_back({ 1, 0, 2, 0 });
+	SGCodegenResult r = GenerateShaderGraphGlsl(g);
+	assert(r.ok);
+	assert(r.fragmentFunction.find("0.250000") != std::string::npos);
+}
+
 int main()
 {
 	TestEmitTimeNoiseGraph();
 	TestGeneratedHookSignature();
 	TestVec3ToFloatImplicitCastInCodegen();
+	TestNoRuntimeDependenceOnLegacyOpInV3();
+	TestCodegenV3ConstFloatToSurface();
 	return 0;
 }

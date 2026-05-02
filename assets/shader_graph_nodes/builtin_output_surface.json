@@ -1,0 +1,15 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/output/surface",
+  "version": 1,
+  "evalKind": "OutputSurface",
+  "inputs": [
+    {
+      "id": 1,
+      "name": "baseColor",
+      "type": "vec3",
+      "optional": true
+    }
+  ],
+  "outputs": []
+}

@@ -1,0 +1,20 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/vector/split_vec3_x",
+  "version": 1,
+  "evalKind": "SplitVec3X",
+  "inputs": [
+    {
+      "id": 1,
+      "name": "vec3",
+      "type": "vec3"
+    }
+  ],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "float"
+    }
+  ]
+}

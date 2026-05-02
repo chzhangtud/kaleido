@@ -59,11 +59,21 @@ static void TestCompileReportMessageQueries()
 	assert(report.HasErrors());
 }
 
+static void TestEditorAddsNodeByDescriptorId()
+{
+	ShaderGraphEditorSession s{};
+	bool ok = s.AddNodeByDescriptor("builtin/expression/generic");
+	assert(ok);
+	assert(!s.GetGraph().nodeInstances.empty());
+	assert(s.GetGraph().nodeInstances.back().descriptorId == "builtin/expression/generic");
+}
+
 int main()
 {
 	TestSessionTransitionsSuccessPath();
 	TestSessionTransitionsFailureAndRevert();
 	TestCompileEligibilityIndependentFromRevertAction();
 	TestCompileReportMessageQueries();
+	TestEditorAddsNodeByDescriptorId();
 	return 0;
 }

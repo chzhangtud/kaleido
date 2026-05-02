@@ -1,0 +1,20 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/math/frac",
+  "version": 1,
+  "evalKind": "Frac",
+  "inputs": [
+    {
+      "id": 1,
+      "name": "in",
+      "type": "float"
+    }
+  ],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "float"
+    }
+  ]
+}

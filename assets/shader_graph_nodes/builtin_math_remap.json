@@ -1,0 +1,44 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/math/remap",
+  "version": 1,
+  "evalKind": "Remap",
+  "inputs": [
+    {
+      "id": 1,
+      "name": "value",
+      "type": "float"
+    },
+    {
+      "id": 2,
+      "name": "inMin",
+      "type": "float",
+      "optional": true
+    },
+    {
+      "id": 3,
+      "name": "inMax",
+      "type": "float",
+      "optional": true
+    },
+    {
+      "id": 4,
+      "name": "outMin",
+      "type": "float",
+      "optional": true
+    },
+    {
+      "id": 5,
+      "name": "outMax",
+      "type": "float",
+      "optional": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "float"
+    }
+  ]
+}

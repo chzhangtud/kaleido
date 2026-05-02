@@ -1,0 +1,20 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/noise/perlin3d",
+  "version": 1,
+  "evalKind": "NoisePerlin3D",
+  "inputs": [
+    {
+      "id": 1,
+      "name": "p",
+      "type": "vec3"
+    }
+  ],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "float"
+    }
+  ]
+}

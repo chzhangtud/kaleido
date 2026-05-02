@@ -50,6 +50,15 @@ struct SGNode
 	std::string text;
 };
 
+struct ShaderGraphNodeInstance
+{
+	int id = -1;
+	std::string descriptorId;
+	int descriptorVersion = 1;
+	std::vector<float> numericOverrides;
+	std::string textOverride;
+};
+
 struct SGEdge
 {
 	int fromNode = -1;
@@ -65,6 +74,7 @@ struct ShaderGraphAsset
 	std::string domain = "spatial_fragment";
 	std::string entry = "material_surface";
 	std::vector<SGNode> nodes;
+	std::vector<ShaderGraphNodeInstance> nodeInstances;
 	std::vector<SGEdge> edges;
 	bool hasEditorMeta = false;
 	float editorViewX = 0.0f;
@@ -79,3 +89,5 @@ bool SGPortTypeCanImplicitConvert(SGPortType from, SGPortType to);
 
 const char* SGNodeOpToString(SGNodeOp op);
 bool SGNodeOpFromString(const std::string& text, SGNodeOp& outOp);
+bool SGNodeOpToDescriptorId(SGNodeOp op, std::string& outId);
+bool SGNodeOpFromDescriptorId(const std::string& id, SGNodeOp& outOp);

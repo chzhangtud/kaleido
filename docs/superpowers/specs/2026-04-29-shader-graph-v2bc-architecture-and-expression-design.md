@@ -196,3 +196,19 @@
 - 无 `TODO/TBD` 占位项。
 - 已覆盖架构、表达式约束、迁移、测试和风险。
 - 与 V2A 分层清晰，便于按阶段执行。
+
+---
+
+## 12. 2026-05-01 Node Assetization Delta
+
+- Introduce `ShaderGraphNodeDescriptor` JSON schema and runtime `ShaderGraphNodeInstance` model for graph `version=3`.
+- Keep backward compatibility by dual-read IO:
+  - Load `version=1` legacy `nodes` and auto-migrate to in-memory `nodeInstances`.
+  - Save as `version=3` with `nodeInstances` payload.
+- Migration policy:
+  - Preserve node ID, edges, numeric/text payload.
+  - Map legacy op to descriptor IDs using `builtin/legacy/<SGNodeOpName>`.
+  - Keep `nodes` only as compatibility runtime bridge during rollout.
+- Registry loading priority:
+  - Built-in descriptors are loaded from `assets/shader_graph_nodes`.
+  - Project override path support is reserved for follow-up incremental work.

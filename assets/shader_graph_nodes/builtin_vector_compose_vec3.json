@@ -1,0 +1,30 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/vector/compose_vec3",
+  "version": 1,
+  "evalKind": "ComposeVec3",
+  "inputs": [
+    {
+      "id": 1,
+      "name": "x",
+      "type": "float"
+    },
+    {
+      "id": 2,
+      "name": "y",
+      "type": "float"
+    },
+    {
+      "id": 3,
+      "name": "z",
+      "type": "float"
+    }
+  ],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "vec3"
+    }
+  ]
+}

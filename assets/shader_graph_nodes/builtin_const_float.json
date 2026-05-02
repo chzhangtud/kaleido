@@ -1,0 +1,15 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/const/float",
+  "version": 1,
+  "evalKind": "ConstFloat",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "float"
+    }
+  ],
+  "glslTemplate": "    float {{OUT}} = {{V0}};\n"
+}

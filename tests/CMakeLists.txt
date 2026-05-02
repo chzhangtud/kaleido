@@ -16,6 +16,8 @@ add_executable(shader_graph_validate_tests
     shader_graph_validate_tests.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_types.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_validate.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_descriptor.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_registry.cpp
 )
 target_link_libraries(shader_graph_validate_tests PRIVATE glm rapidjson)
 add_test(NAME shader_graph_validate_tests COMMAND shader_graph_validate_tests)
@@ -24,6 +26,9 @@ add_executable(shader_graph_io_tests
     shader_graph_io_tests.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_types.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_io.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_migration.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_descriptor.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_registry.cpp
 )
 target_link_libraries(shader_graph_io_tests PRIVATE glm rapidjson)
 add_test(NAME shader_graph_io_tests COMMAND shader_graph_io_tests)
@@ -33,6 +38,8 @@ add_executable(shader_graph_codegen_tests
     ${CMAKE_SOURCE_DIR}/src/shader_graph_types.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_validate.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_codegen_glsl.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_descriptor.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_registry.cpp
 )
 target_link_libraries(shader_graph_codegen_tests PRIVATE glm rapidjson)
 add_test(NAME shader_graph_codegen_tests COMMAND shader_graph_codegen_tests)
@@ -62,6 +69,8 @@ add_executable(shader_graph_reachability_compile_tests
     ${CMAKE_SOURCE_DIR}/src/shader_graph_types.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_validate.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_codegen_glsl.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_descriptor.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_registry.cpp
 )
 target_link_libraries(shader_graph_reachability_compile_tests PRIVATE glm rapidjson)
 add_test(NAME shader_graph_reachability_compile_tests COMMAND shader_graph_reachability_compile_tests)
@@ -71,6 +80,8 @@ add_executable(shader_graph_output_rules_tests
     ${CMAKE_SOURCE_DIR}/src/shader_graph_types.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_validate.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_graph_codegen_glsl.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_descriptor.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_registry.cpp
 )
 target_link_libraries(shader_graph_output_rules_tests PRIVATE glm rapidjson)
 add_test(NAME shader_graph_output_rules_tests COMMAND shader_graph_output_rules_tests)
@@ -81,6 +92,25 @@ add_executable(shader_graph_type_link_tests
 )
 target_link_libraries(shader_graph_type_link_tests PRIVATE glm rapidjson)
 add_test(NAME shader_graph_type_link_tests COMMAND shader_graph_type_link_tests)
+
+add_executable(shader_graph_node_descriptor_tests
+    shader_graph_node_descriptor_tests.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_types.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_descriptor.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_registry.cpp
+)
+target_link_libraries(shader_graph_node_descriptor_tests PRIVATE glm rapidjson)
+add_test(NAME shader_graph_node_descriptor_tests COMMAND shader_graph_node_descriptor_tests)
+
+add_executable(shader_graph_migration_tests
+    shader_graph_migration_tests.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_types.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_migration.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_descriptor.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_graph_node_registry.cpp
+)
+target_link_libraries(shader_graph_migration_tests PRIVATE glm rapidjson)
+add_test(NAME shader_graph_migration_tests COMMAND shader_graph_migration_tests)
 
 add_executable(graph_canvas_input_tests
     graph_canvas_input_tests.cpp
@@ -101,6 +131,8 @@ set(_kaleido_test_targets
     shader_graph_reachability_compile_tests
     shader_graph_output_rules_tests
     shader_graph_type_link_tests
+    shader_graph_node_descriptor_tests
+    shader_graph_migration_tests
     graph_canvas_input_tests
 )
 foreach(_t IN LISTS _kaleido_test_targets)

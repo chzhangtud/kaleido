@@ -1,0 +1,30 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/math/lerp",
+  "version": 1,
+  "evalKind": "Lerp",
+  "inputs": [
+    {
+      "id": 1,
+      "name": "a",
+      "type": "float"
+    },
+    {
+      "id": 2,
+      "name": "b",
+      "type": "float"
+    },
+    {
+      "id": 3,
+      "name": "t",
+      "type": "float"
+    }
+  ],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "float"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "format": "kaleido_shader_graph_node",
+  "id": "builtin/input/time",
+  "version": 1,
+  "evalKind": "InputTime",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": 1,
+      "name": "out",
+      "type": "float"
+    }
+  ]
+}
