@@ -60,6 +60,18 @@ inline ImVec2 EvalCubicBezier(
         b0 * P0.y + b1 * P1.y + b2 * P2.y + b3 * P3.y);
 }
 
+inline ImU32 ImNodesLerpU32(const ImU32 a, const ImU32 b, const float t)
+{
+    const ImVec4 ca = ImGui::ColorConvertU32ToFloat4(a);
+    const ImVec4 cb = ImGui::ColorConvertU32ToFloat4(b);
+    const float  u = ImClamp(t, 0.0f, 1.0f);
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(
+        ca.x + (cb.x - ca.x) * u,
+        ca.y + (cb.y - ca.y) * u,
+        ca.z + (cb.z - ca.z) * u,
+        ca.w + (cb.w - ca.w) * u));
+}
+
 // Calculates the closest point along each bezier curve segment.
 ImVec2 GetClosestPointOnCubicBezier(const int num_segments, const ImVec2& p, const CubicBezier& cb)
 {
@@ -1617,6 +1629,23 @@ void DrawLink(ImNodesEditorContext& editor, const int link_idx)
         link_color = link.ColorStyle.Hovered;
     }
 
+    if (link.UseGradient && !editor.SelectedLinkIndices.contains(link_idx) && !link_hovered)
+    {
+        const int   n = ImMax(cubic_bezier.NumSegments * 3, 24);
+        const float invN = 1.0f / (float)n;
+        ImVec2      prev = EvalCubicBezier(0.f, cubic_bezier.P0, cubic_bezier.P1, cubic_bezier.P2, cubic_bezier.P3);
+        for (int i = 1; i <= n; ++i)
+        {
+            const float t1 = invN * (float)i;
+            ImVec2      cur = EvalCubicBezier(t1, cubic_bezier.P0, cubic_bezier.P1, cubic_bezier.P2, cubic_bezier.P3);
+            const float tcol = ((float)i - 0.5f) * invN;
+            const ImU32 seg_col = ImNodesLerpU32(link.GradientStart, link.GradientEnd, tcol);
+            GImNodes->CanvasDrawList->AddLine(prev, cur, seg_col, GImNodes->Style.LinkThickness);
+            prev = cur;
+        }
+        return;
+    }
+
 #if IMGUI_VERSION_NUM < 18000
     GImNodes->CanvasDrawList->AddBezierCurve(
 #else
@@ -1843,10 +1872,12 @@ static void MiniMapDrawLink(ImNodesEditorContext& editor, const int link_idx)
         return;
     }
 
-    const ImU32 link_color =
+    ImU32 link_color =
         GImNodes->Style.Colors
             [editor.SelectedLinkIndices.contains(link_idx) ? ImNodesCol_MiniMapLinkSelected
                                                            : ImNodesCol_MiniMapLink];
+    if (link.UseGradient && !editor.SelectedLinkIndices.contains(link_idx))
+        link_color = ImNodesLerpU32(link.GradientStart, link.GradientEnd, 0.5f);
 
 #if IMGUI_VERSION_NUM < 18000
     GImNodes->CanvasDrawList->AddBezierCurve(
@@ -2608,11 +2639,39 @@ void Link(const int id, const int start_attr_id, const int end_attr_id)
     link.Id = id;
     link.StartPinIdx = ObjectPoolFindOrCreateIndex(editor.Pins, start_attr_id);
     link.EndPinIdx = ObjectPoolFindOrCreateIndex(editor.Pins, end_attr_id);
+    link.UseGradient = false;
     link.ColorStyle.Base = GImNodes->Style.Colors[ImNodesCol_Link];
     link.ColorStyle.Hovered = GImNodes->Style.Colors[ImNodesCol_LinkHovered];
     link.ColorStyle.Selected = GImNodes->Style.Colors[ImNodesCol_LinkSelected];
 
     // Check if this link was created by the current link event
+    if ((editor.ClickInteraction.Type == ImNodesClickInteractionType_LinkCreation &&
+         editor.Pins.Pool[link.EndPinIdx].Flags & ImNodesAttributeFlags_EnableLinkCreationOnSnap &&
+         editor.ClickInteraction.LinkCreation.StartPinIdx == link.StartPinIdx &&
+         editor.ClickInteraction.LinkCreation.EndPinIdx == link.EndPinIdx) ||
+        (editor.ClickInteraction.LinkCreation.StartPinIdx == link.EndPinIdx &&
+         editor.ClickInteraction.LinkCreation.EndPinIdx == link.StartPinIdx))
+    {
+        GImNodes->SnapLinkIdx = ObjectPoolFindOrCreateIndex(editor.Links, id);
+    }
+}
+
+void LinkGradient(const int id, const int start_attr_id, const int end_attr_id, const ImU32 color_at_start, const ImU32 color_at_end)
+{
+    IM_ASSERT(GImNodes->CurrentScope == ImNodesScope_Editor);
+
+    ImNodesEditorContext& editor = EditorContextGet();
+    ImLinkData&           link = ObjectPoolFindOrCreateObject(editor.Links, id);
+    link.Id = id;
+    link.StartPinIdx = ObjectPoolFindOrCreateIndex(editor.Pins, start_attr_id);
+    link.EndPinIdx = ObjectPoolFindOrCreateIndex(editor.Pins, end_attr_id);
+    link.UseGradient = true;
+    link.GradientStart = color_at_start;
+    link.GradientEnd = color_at_end;
+    link.ColorStyle.Base = ImNodesLerpU32(color_at_start, color_at_end, 0.5f);
+    link.ColorStyle.Hovered = GImNodes->Style.Colors[ImNodesCol_LinkHovered];
+    link.ColorStyle.Selected = GImNodes->Style.Colors[ImNodesCol_LinkSelected];
+
     if ((editor.ClickInteraction.Type == ImNodesClickInteractionType_LinkCreation &&
          editor.Pins.Pool[link.EndPinIdx].Flags & ImNodesAttributeFlags_EnableLinkCreationOnSnap &&
          editor.ClickInteraction.LinkCreation.StartPinIdx == link.StartPinIdx &&

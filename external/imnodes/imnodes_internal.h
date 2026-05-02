@@ -194,6 +194,10 @@ struct ImLinkData
         ImU32 Base, Hovered, Selected;
     } ColorStyle;
 
+    bool UseGradient = false;
+    ImU32 GradientStart = 0;
+    ImU32 GradientEnd = 0;
+
     ImLinkData(const int link_id) : Id(link_id), StartPinIdx(), EndPinIdx(), ColorStyle() {}
 };
 

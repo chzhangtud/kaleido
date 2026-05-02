@@ -130,13 +130,32 @@ std::unordered_map<int, std::unordered_map<int, SGPortType>> BuildOutputTypes(co
 bool TryGetExpectedInputType(const SGNode& node, int inputPort, SGPortType& out);
 ImU32 PortTypeColor(SGPortType type);
 
+static void ShaderGraphTitleBarColorsFromNodeId(int nodeId, ImU32* outNormal, ImU32* outHovered, ImU32* outSelected)
+{
+	unsigned x = static_cast<unsigned>(nodeId) * 374761393u + 2654435761u;
+	x ^= x >> 13u;
+	x ^= x >> 7u;
+	const float hue = float(x & 0xFFFFFFu) * (1.0f / float(0x1000000));
+	float r0, g0, b0, r1, g1, b1, r2, g2, b2;
+	ImGui::ColorConvertHSVtoRGB(hue, 0.52f, 0.48f, r0, g0, b0);
+	ImGui::ColorConvertHSVtoRGB(hue, 0.48f, 0.60f, r1, g1, b1);
+	ImGui::ColorConvertHSVtoRGB(hue, 0.45f, 0.72f, r2, g2, b2);
+	*outNormal = IM_COL32(
+	    std::clamp(int(r0 * 255.f), 0, 255), std::clamp(int(g0 * 255.f), 0, 255), std::clamp(int(b0 * 255.f), 0, 255), 255);
+	*outHovered = IM_COL32(
+	    std::clamp(int(r1 * 255.f), 0, 255), std::clamp(int(g1 * 255.f), 0, 255), std::clamp(int(b1 * 255.f), 0, 255), 255);
+	*outSelected = IM_COL32(
+	    std::clamp(int(r2 * 255.f), 0, 255), std::clamp(int(g2 * 255.f), 0, 255), std::clamp(int(b2 * 255.f), 0, 255), 255);
+}
+
 void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
     int focusedNodeId,
     std::unordered_map<int, SgAttrRef>& outAttrRefs,
     std::unordered_map<int, int>& outImNodeToNode,
     std::unordered_map<int, size_t>& outLinkToEdgeIndex,
     std::unordered_set<int>& initializedNodes,
-    const std::unordered_map<int, ImVec2>& spawnPositions)
+    const std::unordered_map<int, ImVec2>& spawnPositions,
+    bool colorizeNodeTitlesByHash)
 {
 	const auto outputTypes = BuildOutputTypes(graph);
 	std::unordered_map<int, const SGNode*> nodeById;
@@ -203,12 +222,26 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 		}
 
 		ImNodes::BeginNode(nodeId);
+		if (colorizeNodeTitlesByHash)
+		{
+			ImU32 tN = 0, tH = 0, tS = 0;
+			ShaderGraphTitleBarColorsFromNodeId(node.id, &tN, &tH, &tS);
+			ImNodes::PushColorStyle(ImNodesCol_TitleBar, tN);
+			ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, tH);
+			ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, tS);
+		}
 		ImNodes::BeginNodeTitleBar();
 		if (node.id == focusedNodeId)
 			ImGui::Text(">> %s  #%d", SGNodeOpToString(node.op), node.id);
 		else
 			ImGui::Text("%s  #%d", SGNodeOpToString(node.op), node.id);
 		ImNodes::EndNodeTitleBar();
+		if (colorizeNodeTitlesByHash)
+		{
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+		}
 
 		const std::vector<const char*> inputs = GetShaderGraphInputPortLabels(node.op);
 		for (size_t i = 0; i < inputs.size(); ++i)
@@ -293,13 +326,29 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 		const ImVec4 b = ImGui::ColorConvertU32ToFloat4(toColor);
 		const ImVec4 mid((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f, 1.0f);
 		const ImU32 midColor = ImGui::ColorConvertFloat4ToU32(mid);
-		ImNodes::PushColorStyle(ImNodesCol_Link, midColor);
-		ImNodes::PushColorStyle(ImNodesCol_LinkHovered, midColor);
-		ImNodes::PushColorStyle(ImNodesCol_LinkSelected, midColor);
-		ImNodes::Link(linkId, fromAttr, toAttr);
-		ImNodes::PopColorStyle();
-		ImNodes::PopColorStyle();
-		ImNodes::PopColorStyle();
+		if (fromType != toType)
+		{
+			ImVec4 ha((a.x + b.x) * 0.5f + 0.08f, (a.y + b.y) * 0.5f + 0.08f, (a.z + b.z) * 0.5f + 0.08f, 1.0f);
+			ha.x = std::clamp(ha.x, 0.0f, 1.0f);
+			ha.y = std::clamp(ha.y, 0.0f, 1.0f);
+			ha.z = std::clamp(ha.z, 0.0f, 1.0f);
+			const ImU32 hoverColor = ImGui::ColorConvertFloat4ToU32(ha);
+			ImNodes::PushColorStyle(ImNodesCol_LinkHovered, hoverColor);
+			ImNodes::PushColorStyle(ImNodesCol_LinkSelected, hoverColor);
+			ImNodes::LinkGradient(linkId, fromAttr, toAttr, fromColor, toColor);
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+		}
+		else
+		{
+			ImNodes::PushColorStyle(ImNodesCol_Link, midColor);
+			ImNodes::PushColorStyle(ImNodesCol_LinkHovered, midColor);
+			ImNodes::PushColorStyle(ImNodesCol_LinkSelected, midColor);
+			ImNodes::Link(linkId, fromAttr, toAttr);
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+			ImNodes::PopColorStyle();
+		}
 	}
 
 	ImNodes::MiniMap(0.2f, ImNodesMiniMapLocation_BottomRight);
@@ -598,6 +647,7 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 		static bool graphDirty = false;
 		static float editorZoom = 1.0f;
 		static std::unordered_set<int> initializedNodes;
+		static bool colorizeShaderGraphNodeTitlesByHash = false;
 		static ShaderGraphNodeRegistry builtinDescriptorRegistry;
 		static bool builtinDescriptorRegistryLoaded = false;
 
@@ -789,8 +839,10 @@ void DrawShaderGraphEditorBridge(Scene& scene, const ShaderGraphEditorUiDeps& de
 			std::unordered_map<int, size_t> linkToEdgeIndex;
 			ImGui::Text("Resolved Path: %s", resolvedGraphPath.c_str());
 			ImGui::Text("Nodes: %d  Edges: %d", int(editableGraph.nodes.size()), int(editableGraph.edges.size()));
+			ImGui::Checkbox("Colorize node titles by id", &colorizeShaderGraphNodeTitlesByHash);
 			DrawShaderGraphPreview(
-			    editableGraph, scene.uiShaderGraphFocusedNodeId, attrRefs, imNodeToNode, linkToEdgeIndex, initializedNodes, spawnPositions);
+			    editableGraph, scene.uiShaderGraphFocusedNodeId, attrRefs, imNodeToNode, linkToEdgeIndex, initializedNodes, spawnPositions,
+			    colorizeShaderGraphNodeTitlesByHash);
 			const GraphCanvasRect canvasRect{ ImGui::GetItemRectMin(), ImGui::GetItemRectMax() };
 			std::vector<int> imNodeIds;
 			imNodeIds.reserve(imNodeToNode.size());
