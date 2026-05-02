@@ -329,14 +329,17 @@ void DrawShaderGraphPreview(const ShaderGraphAsset& graph,
 		const ImU32 midColor = ImGui::ColorConvertFloat4ToU32(mid);
 		if (fromType != toType)
 		{
+			// Type mismatch: use a blended solid link color (upstream imnodes has no gradient Link API).
 			ImVec4 ha((a.x + b.x) * 0.5f + 0.08f, (a.y + b.y) * 0.5f + 0.08f, (a.z + b.z) * 0.5f + 0.08f, 1.0f);
 			ha.x = std::clamp(ha.x, 0.0f, 1.0f);
 			ha.y = std::clamp(ha.y, 0.0f, 1.0f);
 			ha.z = std::clamp(ha.z, 0.0f, 1.0f);
 			const ImU32 hoverColor = ImGui::ColorConvertFloat4ToU32(ha);
+			ImNodes::PushColorStyle(ImNodesCol_Link, midColor);
 			ImNodes::PushColorStyle(ImNodesCol_LinkHovered, hoverColor);
 			ImNodes::PushColorStyle(ImNodesCol_LinkSelected, hoverColor);
-			ImNodes::LinkGradient(linkId, fromAttr, toAttr, fromColor, toColor);
+			ImNodes::Link(linkId, fromAttr, toAttr);
+			ImNodes::PopColorStyle();
 			ImNodes::PopColorStyle();
 			ImNodes::PopColorStyle();
 		}
